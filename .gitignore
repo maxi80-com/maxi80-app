@@ -1,0 +1,12 @@
+# Xcode
+.DS_Store
+*.xcuserstate
+DerivedData/
+.build/
+
+# Skip
+.skip/
+Android/.gradle
+
+# API secrets — never commit real keys
+Sources/Maxi80/Resources/Configuration.plist
