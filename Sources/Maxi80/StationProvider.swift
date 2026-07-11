@@ -8,7 +8,7 @@ import Maxi80Services
 /// 3. Return hardcoded default station
 @MainActor
 public final class StationProvider {
-    private let apiClient: APIClient
+    private let apiClient: any APIClientProtocol
     private var cachedStation: Station?
 
     /// Hardcoded fallback station used when API fails and no cache is available.
@@ -23,7 +23,7 @@ public final class StationProvider {
         defaultCoverUrl: ""
     )
 
-    public init(apiClient: APIClient) {
+    public init(apiClient: any APIClientProtocol) {
         self.apiClient = apiClient
     }
 
@@ -37,11 +37,7 @@ public final class StationProvider {
     ///   the previously cached station on failure,
     ///   or the hardcoded default if no cache exists.
     public func loadStation() async -> Station {
-        let jsonString: String? = await withCheckedContinuation { continuation in
-            apiClient.fetchStation { result in
-                continuation.resume(returning: result)
-            }
-        }
+        let jsonString = try? await apiClient.fetchStation()
 
         if let jsonString,
            let data = jsonString.data(using: .utf8) {

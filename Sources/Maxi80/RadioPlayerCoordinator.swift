@@ -17,7 +17,7 @@ public final class RadioPlayerCoordinator {
     @ObservationIgnored
     private let nowPlaying: NowPlayingController
     @ObservationIgnored
-    private let apiClient: APIClient
+    private let apiClient: any APIClientProtocol
     @ObservationIgnored
     private let artworkService: ArtworkService
 
@@ -47,7 +47,7 @@ public final class RadioPlayerCoordinator {
     public init(
         player: AudioStreamPlayer,
         nowPlaying: NowPlayingController,
-        apiClient: APIClient,
+        apiClient: any APIClientProtocol,
         artworkService: ArtworkService
     ) {
         self.player = player
@@ -95,11 +95,7 @@ public final class RadioPlayerCoordinator {
 
     /// Fetch station metadata on launch with fallback chain.
     public func loadStation() async {
-        let stationJSON: String? = await withCheckedContinuation { continuation in
-            apiClient.fetchStation { result in
-                continuation.resume(returning: result)
-            }
-        }
+        let stationJSON = try? await apiClient.fetchStation()
 
         if let json = stationJSON, let parsed = parseStation(from: json) {
             station = parsed
@@ -235,13 +231,7 @@ public final class RadioPlayerCoordinator {
     // MARK: - History Fetching
 
     private func fetchHistory() async {
-        let historyJSON: String? = await withCheckedContinuation { continuation in
-            apiClient.fetchHistory { result in
-                continuation.resume(returning: result)
-            }
-        }
-
-        guard let json = historyJSON else { return }
+        guard let json = try? await apiClient.fetchHistory() else { return }
 
         if let entries = parseHistoryEntries(from: json) {
             // Only seed history if it's currently empty (don't overwrite live entries)

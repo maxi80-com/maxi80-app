@@ -33,7 +33,7 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 
 // MARK: - APIClient Unit Tests
 
-@Suite("APIClient Response Handling")
+@Suite("APIClient Response Handling", .serialized)
 struct APIClientTests {
 
     private let baseURL = "https://api.test.maxi80.com"
@@ -55,7 +55,7 @@ struct APIClientTests {
     // MARK: - fetchStation
 
     @Test("fetchStation returns valid JSON string on HTTP 200")
-    func fetchStationValidJSON() async {
+    func fetchStationValidJSON() async throws {
         registerMock()
         defer { unregisterMock() }
 
@@ -72,16 +72,12 @@ struct APIClientTests {
         MockURLProtocol.mockResponses["station"] = (data, response, nil)
 
         let client = makeClient()
-        let result: String? = await withCheckedContinuation { continuation in
-            client.fetchStation { json in
-                continuation.resume(returning: json)
-            }
-        }
+        let result = try await client.fetchStation()
 
         #expect(result == stationJSON)
     }
 
-    @Test("fetchStation returns nil on HTTP 401 (authentication failure)")
+    @Test("fetchStation throws on HTTP 401 (authentication failure)")
     func fetchStationUnauthorized() async {
         registerMock()
         defer { unregisterMock() }
@@ -95,16 +91,12 @@ struct APIClientTests {
         MockURLProtocol.mockResponses["station"] = (nil, response, nil)
 
         let client = makeClient()
-        let result: String? = await withCheckedContinuation { continuation in
-            client.fetchStation { json in
-                continuation.resume(returning: json)
-            }
+        await #expect(throws: APIClientError.self) {
+            try await client.fetchStation()
         }
-
-        #expect(result == nil)
     }
 
-    @Test("fetchStation returns nil on HTTP 403 (forbidden)")
+    @Test("fetchStation throws on HTTP 403 (forbidden)")
     func fetchStationForbidden() async {
         registerMock()
         defer { unregisterMock() }
@@ -118,40 +110,33 @@ struct APIClientTests {
         MockURLProtocol.mockResponses["station"] = (nil, response, nil)
 
         let client = makeClient()
-        let result: String? = await withCheckedContinuation { continuation in
-            client.fetchStation { json in
-                continuation.resume(returning: json)
-            }
+        await #expect(throws: APIClientError.self) {
+            try await client.fetchStation()
         }
-
-        #expect(result == nil)
     }
 
-    @Test("fetchStation returns nil on malformed/invalid response data")
+    @Test("fetchStation throws on malformed/invalid response data")
     func fetchStationMalformedResponse() async {
         registerMock()
         defer { unregisterMock() }
 
-        // Return 200 but with nil data (simulates empty body that can't be decoded as UTF-8 string)
+        // Return 200 with a body that is not valid UTF-8, so it can't be decoded to a String.
         let response = HTTPURLResponse(
             url: URL(string: "\(baseURL)/station")!,
             statusCode: 200,
             httpVersion: nil,
             headerFields: nil
         )
-        MockURLProtocol.mockResponses["station"] = (nil, response, nil)
+        let invalidUTF8 = Data([0xFF, 0xFE, 0xFD])
+        MockURLProtocol.mockResponses["station"] = (invalidUTF8, response, nil)
 
         let client = makeClient()
-        let result: String? = await withCheckedContinuation { continuation in
-            client.fetchStation { json in
-                continuation.resume(returning: json)
-            }
+        await #expect(throws: APIClientError.self) {
+            try await client.fetchStation()
         }
-
-        #expect(result == nil)
     }
 
-    @Test("fetchStation returns nil on network timeout/error")
+    @Test("fetchStation throws on network timeout/error")
     func fetchStationNetworkError() async {
         registerMock()
         defer { unregisterMock() }
@@ -164,18 +149,14 @@ struct APIClientTests {
         MockURLProtocol.mockResponses["station"] = (nil, nil, timeoutError)
 
         let client = makeClient()
-        let result: String? = await withCheckedContinuation { continuation in
-            client.fetchStation { json in
-                continuation.resume(returning: json)
-            }
+        await #expect(throws: APIClientError.self) {
+            try await client.fetchStation()
         }
-
-        #expect(result == nil)
     }
 
     // MARK: - fetchArtworkURL
 
-    @Test("fetchArtworkURL returns nil on HTTP 204 (no content)")
+    @Test("fetchArtworkURL throws on HTTP 204 (no content)")
     func fetchArtworkNoContent() async {
         registerMock()
         defer { unregisterMock() }
@@ -189,12 +170,8 @@ struct APIClientTests {
         MockURLProtocol.mockResponses["artwork"] = (nil, response, nil)
 
         let client = makeClient()
-        let result: String? = await withCheckedContinuation { continuation in
-            client.fetchArtworkURL(artist: "Test", title: "Song") { json in
-                continuation.resume(returning: json)
-            }
+        await #expect(throws: APIClientError.self) {
+            try await client.fetchArtworkURL(artist: "Test", title: "Song")
         }
-
-        #expect(result == nil)
     }
 }

@@ -9,17 +9,29 @@ struct StationProviderTests {
 
     // MARK: - Helpers
 
-    /// A mock APIClient subclass that returns a controllable JSON response.
-    final class MockAPIClient: APIClient {
-        var stationJSON: String?
+    /// A fake APIClient that returns a controllable JSON response.
+    actor MockAPIClient: APIClientProtocol {
+        private var stationJSON: String?
 
         init(stationJSON: String? = nil) {
             self.stationJSON = stationJSON
-            super.init(baseURL: "https://test.example.com", authToken: "test-key")
         }
 
-        override func fetchStation(completion: @escaping (String?) -> Void) {
-            completion(stationJSON)
+        func setStationJSON(_ json: String?) {
+            stationJSON = json
+        }
+
+        func fetchStation() async throws(APIClientError) -> String {
+            guard let stationJSON else { throw .noContent }
+            return stationJSON
+        }
+
+        func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
+            throw .noContent
+        }
+
+        func fetchHistory() async throws(APIClientError) -> String {
+            throw .noContent
         }
     }
 
@@ -75,7 +87,7 @@ struct StationProviderTests {
         #expect(provider.currentStation.name == "Cached Station")
 
         // Now simulate API failure
-        mockClient.stationJSON = nil
+        await mockClient.setStationJSON(nil)
         let station = await provider.loadStation()
 
         // Should return cached station

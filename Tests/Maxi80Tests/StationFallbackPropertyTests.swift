@@ -9,18 +9,30 @@ struct StationFallbackPropertyTests {
 
     // MARK: - Helpers
 
-    /// A mock APIClient that returns a controllable JSON response for station requests.
+    /// A fake APIClient that returns a controllable JSON response for station requests.
     /// Uses a distinct name to avoid conflicts with StationProviderTests.MockAPIClient.
-    final class FallbackMockAPIClient: APIClient, @unchecked Sendable {
-        var stationJSON: String?
+    actor FallbackMockAPIClient: APIClientProtocol {
+        private var stationJSON: String?
 
         init(stationJSON: String? = nil) {
             self.stationJSON = stationJSON
-            super.init(baseURL: "https://test.example.com", authToken: "test-key")
         }
 
-        override func fetchStation(completion: @escaping (String?) -> Void) {
-            completion(stationJSON)
+        func setStationJSON(_ json: String?) {
+            stationJSON = json
+        }
+
+        func fetchStation() async throws(APIClientError) -> String {
+            guard let stationJSON else { throw .noContent }
+            return stationJSON
+        }
+
+        func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
+            throw .noContent
+        }
+
+        func fetchHistory() async throws(APIClientError) -> String {
+            throw .noContent
         }
     }
 
@@ -60,7 +72,7 @@ struct StationFallbackPropertyTests {
             guard firstResult.name == name else { continue }
 
             // Simulate API failure
-            mockClient.stationJSON = nil
+            await mockClient.setStationJSON(nil)
             let fallbackResult = await provider.loadStation()
 
             // Property: cached station is returned on failure

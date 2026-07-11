@@ -10,12 +10,12 @@ import AppKit
 
 @MainActor
 public final class ArtworkService {
-    private let apiClient: APIClient
+    private let apiClient: any APIClientProtocol
     private var cache: [String: ArtworkResult] = [:]
 
     private static let defaultColor = Color(red: 0.15, green: 0.15, blue: 0.25)
 
-    public init(apiClient: APIClient) {
+    public init(apiClient: any APIClientProtocol) {
         self.apiClient = apiClient
     }
 
@@ -28,11 +28,7 @@ public final class ArtworkService {
             return cached
         }
 
-        let artworkURLString: String? = await withCheckedContinuation { continuation in
-            apiClient.fetchArtworkURL(artist: artist, title: title) { urlString in
-                continuation.resume(returning: urlString)
-            }
-        }
+        let artworkURLString = try? await apiClient.fetchArtworkURL(artist: artist, title: title)
 
         guard let urlString = artworkURLString,
               let artworkURL = URL(string: urlString) else {
