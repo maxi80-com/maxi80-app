@@ -1,0 +1,28 @@
+{
+    "configurations": [
+        {
+            "type": "wendy",
+            "name": "Debug Maxi80 with Wendy",
+            "request": "attach",
+            "target": "Maxi80",
+            "cwd": "${workspaceFolder:Maxi80}",
+            "preLaunchTask": "wendy: Run Maxi80"
+        },
+        {
+            "type": "wendy",
+            "name": "Debug Maxi80Model with Wendy",
+            "request": "attach",
+            "target": "Maxi80Model",
+            "cwd": "${workspaceFolder:Maxi80}",
+            "preLaunchTask": "wendy: Run Maxi80Model"
+        },
+        {
+            "type": "wendy",
+            "name": "Debug Maxi80Services with Wendy",
+            "request": "attach",
+            "target": "Maxi80Services",
+            "cwd": "${workspaceFolder:Maxi80}",
+            "preLaunchTask": "wendy: Run Maxi80Services"
+        }
+    ]
+}

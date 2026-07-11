@@ -2,6 +2,14 @@
 // This is a Skip (https://skip.tools) package for the Maxi80 radio player.
 import PackageDescription
 
+// The SwiftUI `#Preview` macro is expanded by the `PreviewsMacros` compiler
+// plugin, which ships only with Xcode's toolchain — not the bare toolchain used
+// by `swift build`. Detect an Xcode-driven build (Xcode sets its bundle id in
+// the manifest environment) so we can gate preview code behind ENABLE_PREVIEWS
+// and keep command-line / Android builds compiling.
+let isXcodeBuild = Context.environment["__CFBundleIdentifier"] == "com.apple.dt.Xcode"
+let previewSettings: [SwiftSetting] = isXcodeBuild ? [.define("ENABLE_PREVIEWS")] : []
+
 let package = Package(
     name: "Maxi80",
     defaultLocalization: "en",
@@ -33,7 +41,7 @@ let package = Package(
             "Maxi80Model",
             "Maxi80Services",
             .product(name: "SkipFuseUI", package: "skip-fuse-ui"),
-        ], resources: [.process("Resources")], plugins: [.plugin(name: "skipstone", package: "skip")]),
+        ], resources: [.process("Resources")], swiftSettings: previewSettings, plugins: [.plugin(name: "skipstone", package: "skip")]),
 
         .testTarget(name: "Maxi80Tests", dependencies: [
             "Maxi80",

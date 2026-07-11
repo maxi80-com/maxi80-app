@@ -22,11 +22,11 @@ extension Maxi80App {
 
 /// Internal root view that creates and owns all dependencies.
 /// Acts as the composition root / dependency injection container for the app.
-public struct Maxi80RootView: View {
+/* SKIP @bridge */public struct Maxi80RootView: View {
     @State var viewModel: RadioPlayerViewModel
     @State var coordinator: RadioPlayerCoordinator
 
-    public init() {
+    /* SKIP @bridge */public init() {
         // 1. Create platform-appropriate AudioStreamPlayer
         let player = AudioStreamPlayer()
 
@@ -67,15 +67,15 @@ public struct Maxi80RootView: View {
 // MARK: - App Delegate (required by Skip scaffold)
 
 /// Minimal app delegate providing lifecycle hooks for the Skip Darwin entry point.
-public final class Maxi80AppDelegate: Sendable {
-    public static let shared = Maxi80AppDelegate()
+/* SKIP @bridge */public final class Maxi80AppDelegate: Sendable {
+    /* SKIP @bridge */public static let shared = Maxi80AppDelegate()
     private init() {}
 
-    public func onInit() {}
-    public func onLaunch() {}
-    public func onResume() {}
-    public func onPause() {}
-    public func onStop() {}
-    public func onDestroy() {}
-    public func onLowMemory() {}
+    /* SKIP @bridge */public func onInit() {}
+    /* SKIP @bridge */public func onLaunch() {}
+    /* SKIP @bridge */public func onResume() {}
+    /* SKIP @bridge */public func onPause() {}
+    /* SKIP @bridge */public func onStop() {}
+    /* SKIP @bridge */public func onDestroy() {}
+    /* SKIP @bridge */public func onLowMemory() {}
 }

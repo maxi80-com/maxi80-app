@@ -27,7 +27,7 @@ struct VolumeSliderView: View {
 
 // MARK: - Preview
 
-#if DEBUG && !SKIP_BRIDGE
+#if ENABLE_PREVIEWS
 #Preview("Volume Slider") {
     VolumeSliderView(viewModel: PreviewMocks.makeViewModel())
         .padding()

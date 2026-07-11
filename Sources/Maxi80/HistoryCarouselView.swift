@@ -93,7 +93,7 @@ struct HistoryCarouselView: View {
 
 // MARK: - Preview
 
-#if DEBUG && !SKIP_BRIDGE
+#if ENABLE_PREVIEWS
 #Preview("History Carousel") {
     HistoryCarouselView(viewModel: PreviewMocks.makeViewModel())
         .padding()

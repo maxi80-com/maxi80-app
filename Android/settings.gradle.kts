@@ -22,4 +22,5 @@ pluginManagement {
 
 plugins {
     id("skip-plugin") apply true
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }

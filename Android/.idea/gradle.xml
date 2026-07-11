@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="GradleMigrationSettings" migrationVersion="1" />
+  <component name="GradleSettings">
+    <option name="linkedExternalProjectsSettings">
+      <GradleProjectSettings>
+        <compositeConfiguration>
+          <compositeBuild compositeDefinitionSource="SCRIPT">
+            <builds>
+              <build path="$PROJECT_DIR$/../.build/Android/skip-gradle" name="skip-gradle">
+                <projects>
+                  <project path="$PROJECT_DIR$/../.build/Android/skip-gradle" />
+                </projects>
+              </build>
+              <build path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone" name="maxi80.module">
+                <projects>
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80Model" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80Services" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipAndroidBridge" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipBridge" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipFoundation" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipLib" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipModel" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipSwiftUI" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipUI" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipUnit" />
+                </projects>
+              </build>
+            </builds>
+          </compositeBuild>
+        </compositeConfiguration>
+        <option name="testRunner" value="CHOOSE_PER_TEST" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/../.build/Android/skip-gradle" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80Model" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80Services" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipAndroidBridge" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipBridge" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipFoundation" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipLib" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipModel" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipSwiftUI" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipUI" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipUnit" />
+            <option value="$PROJECT_DIR$" />
+            <option value="$PROJECT_DIR$/app" />
+          </set>
+        </option>
+      </GradleProjectSettings>
+    </option>
+  </component>
+</project>

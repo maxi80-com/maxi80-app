@@ -5,8 +5,8 @@ import Maxi80Services
 // MARK: - Preview Helpers
 
 /// Creates a RadioPlayerViewModel with mock data for SwiftUI previews.
-/// Only available in DEBUG builds.
-#if DEBUG && !SKIP_BRIDGE
+/// Only compiled for Xcode preview builds (ENABLE_PREVIEWS).
+#if ENABLE_PREVIEWS
 @MainActor
 enum PreviewMocks {
 

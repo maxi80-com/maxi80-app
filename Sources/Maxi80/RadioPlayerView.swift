@@ -244,7 +244,7 @@ struct AirPlayButton: View {
 
 // MARK: - Previews
 
-#if DEBUG && !SKIP_BRIDGE
+#if ENABLE_PREVIEWS
 #Preview("Playing — Portrait") {
     RadioPlayerView(viewModel: PreviewMocks.makeViewModel(isPlaying: true))
         .tint(.orange)

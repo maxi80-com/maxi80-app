@@ -39,7 +39,7 @@ public struct ArtworkView: View {
     }
 }
 
-#if DEBUG && !SKIP_BRIDGE
+#if ENABLE_PREVIEWS
 #Preview("With Artwork") {
     ArtworkView(artwork: Image(systemName: "music.note"))
         .frame(width: 300, height: 300)

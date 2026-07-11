@@ -58,7 +58,7 @@ struct PlaybackControlsView: View {
 
 // MARK: - Preview
 
-#if DEBUG && !SKIP_BRIDGE
+#if ENABLE_PREVIEWS
 #Preview("Playing with Metadata") {
     PlaybackControlsView(viewModel: PreviewMocks.makeViewModel(isPlaying: true))
         .padding()
