@@ -98,29 +98,30 @@ struct RadioPlayerViewModelTests {
 
     // MARK: - Requirement 6.7: Displayed metadata switches on history index change
 
-    @Test("Displayed metadata switches on history index change")
+    @Test("Displayed metadata switches when the selected cover changes")
     @MainActor
-    func displayedMetadataSwitchesOnIndexChange() {
+    func displayedMetadataSwitchesOnSelection() {
         let (vm, coordinator) = makeViewModel()
-        coordinator.history = [
-            HistoryEntry(id: "0", artist: "First Artist", title: "First Song", artwork: nil, timestamp: 1000),
-            HistoryEntry(id: "1", artist: "Second Artist", title: "Second Song", artwork: nil, timestamp: 2000),
-            HistoryEntry(id: "2", artist: "Current", title: "Live Song", artwork: nil, timestamp: 3000)
+        let entries = [
+            HistoryEntry(artist: "First Artist", title: "First Song", timestamp: "1000"),
+            HistoryEntry(artist: "Second Artist", title: "Second Song", timestamp: "2000"),
+            HistoryEntry(artist: "Current", title: "Live Song", timestamp: "3000")
         ]
+        coordinator.history = entries
         coordinator.currentSong = SongMetadata(artist: "Current", title: "Live Song")
 
-        // Select first entry (historical)
-        vm.selectedHistoryIndex = 0
+        // Select first cover (historical)
+        vm.selectedCoverID = entries[0].id
         #expect(vm.displayedArtist == "First Artist")
         #expect(vm.displayedTitle == "First Song")
 
-        // Switch to second entry (historical)
-        vm.selectedHistoryIndex = 1
+        // Switch to second cover (historical)
+        vm.selectedCoverID = entries[1].id
         #expect(vm.displayedArtist == "Second Artist")
         #expect(vm.displayedTitle == "Second Song")
 
-        // Switch to last entry (live position) — falls back to currentSong
-        vm.selectedHistoryIndex = 2
+        // Switch to the live (last) cover — falls back to currentSong
+        vm.selectedCoverID = entries[2].id
         #expect(vm.displayedArtist == "Current")
         #expect(vm.displayedTitle == "Live Song")
     }
@@ -139,14 +140,15 @@ struct RadioPlayerViewModelTests {
             donationUrl: "",
             defaultCoverUrl: ""
         )
-        coordinator.history = [
-            HistoryEntry(id: "0", artist: "Old Song", title: "Old Title", artwork: nil, timestamp: 1000),
-            HistoryEntry(id: "1", artist: "Live", title: "Live Title", artwork: nil, timestamp: 2000)
+        let entries = [
+            HistoryEntry(artist: "Old Song", title: "Old Title", timestamp: "1000"),
+            HistoryEntry(artist: "Prev", title: "Prev Title", timestamp: "2000")
         ]
+        coordinator.history = entries
         coordinator.currentSong = nil
-        vm.selectedHistoryIndex = 1  // live position (last index)
+        // The "now" slot (rightmost), with no current song, falls back to station info.
+        vm.selectedCoverID = RadioPlayerViewModel.nowSlotID
 
-        // At live position with no currentSong, falls back to station
         #expect(vm.displayedArtist == "Maxi 80")
         #expect(vm.displayedTitle == "La radio de toute une génération")
     }

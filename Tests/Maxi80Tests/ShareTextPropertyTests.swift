@@ -29,10 +29,10 @@ struct ShareTextPropertyTests {
             // Skip empty strings — property only applies to non-empty artist and title
             guard !artist.isEmpty && !title.isEmpty else { return true }
 
-            // Set up live song state (empty history = live position)
+            // Set up live song state (empty history = live position, no cover selected)
             coordinator.currentSong = SongMetadata(artist: artist, title: title)
             coordinator.history = []
-            vm.selectedHistoryIndex = 0
+            vm.selectedCoverID = nil
 
             let shareContent = vm.shareCurrentTrack()
             let expected = "I'm listening to \(title) by \(artist) on Maxi 80 via Maxi80 for iOS. Check it out at https://www.maxi80.com"

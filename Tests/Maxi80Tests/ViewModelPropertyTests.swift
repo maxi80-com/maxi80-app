@@ -34,15 +34,13 @@ struct ViewModelPropertyTests {
             var entries: [HistoryEntry] = []
             for i in 0..<n {
                 entries.append(HistoryEntry(
-                    id: "\(i)",
                     artist: "Artist_\(i)_\(iteration)",
                     title: "Title_\(i)_\(iteration)",
-                    artwork: nil,
-                    timestamp: Double(i)
+                    timestamp: "\(i)"
                 ))
             }
             coordinator.history = entries
-            vm.selectedHistoryIndex = index
+            vm.selectedCoverID = entries[index].id
 
             #expect(vm.displayedArtist == entries[index].artist,
                     "iteration \(iteration): expected \(entries[index].artist) at index \(index)")

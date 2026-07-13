@@ -32,6 +32,14 @@ public final class AudioStreamPlayer {
 
     public init() { }
 
+    /// Forward newly-loaded metadata to the registered callback. Called from the iOS metadata
+    /// delegate after asynchronously loading the value off the main actor.
+    func emitMetadata(_ value: String) {
+        if let callback = onMetadataChanged {
+            callback(value)
+        }
+    }
+
     /// Start streaming from the given URL.
     /// Implementation provided by platform extension files.
     public func play(url: String) {

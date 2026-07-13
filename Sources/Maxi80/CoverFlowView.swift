@@ -1,0 +1,147 @@
+import SwiftUI
+
+/// A horizontally-swipeable, Cover Flow–style carousel of album artwork.
+///
+/// The centered cover faces the viewer flat; covers to either side tilt back in 3D,
+/// evoking the classic iTunes Cover Flow. Covers are ordered oldest → newest (left →
+/// right), so the live song sits at the rightmost edge. Swiping right browses back in
+/// time; the tracks never play back — this is a visual history only.
+///
+/// Selection is tracked by stable item id (not index) so appending a new song on the
+/// right never shifts the browsing position.
+struct CoverFlowView: View {
+
+    struct Cover: Identifiable, Equatable {
+        let id: String
+        /// Remote artwork URL (played songs). `nil` for the startup placeholder.
+        var artworkURL: String? = nil
+        /// Bundled asset name (startup placeholder). `nil` for played songs.
+        var assetName: String? = nil
+    }
+
+    let covers: [Cover]
+    /// The focused cover's id. Typed as `AnyHashable?` because that's what
+    /// `scrollPosition(id:)` binds to on the Android/transpiled path.
+    @Binding var selection: AnyHashable?
+    /// Id the carousel should programmatically scroll to. Changing this value (via `pinToken`)
+    /// triggers a `scrollTo`. `scrollPosition(id:)` is read-only across platforms, so an
+    /// explicit ScrollViewReader is required to actually move the scroll offset.
+    let pinTarget: AnyHashable?
+    /// Changes to request a (re-)scroll to `pinTarget` — e.g. when history loads to the left
+    /// or the now-slot artwork swaps in.
+    let pinToken: String
+
+    /// Edge length of the focused (centered) cover.
+    var coverSize: CGFloat = 260
+    /// Maximum tilt applied to fully off-center covers.
+    private let maxRotation: Double = 55
+    /// How much off-center covers shrink (1.0 = no shrink).
+    private let minScale: CGFloat = 0.72
+    /// Spacing between covers.
+    private let spacing: CGFloat = -40
+    /// Vertical breathing room inside the scroll view so the cover's drop shadow is fully
+    /// contained. Without it, the ScrollView clips the soft shadow into a hard "separator"
+    /// line at its bottom edge.
+    private let verticalMargin: CGFloat = 40
+
+    var body: some View {
+        GeometryReader { outer in
+            let center = outer.frame(in: .global).midX
+
+            ScrollViewReader { proxy in
+              ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: spacing) {
+                    ForEach(covers) { cover in
+                        coverCell(cover, containerCenter: center)
+                            .id(cover.id)
+                    }
+                }
+                .scrollTargetLayout()
+                // Symmetric padding so the first and last covers can center; vertical margin
+                // keeps the shadow away from the (clipping) scroll edges.
+                .padding(.horizontal, (outer.size.width - coverSize) / 2)
+                .padding(.vertical, verticalMargin)
+              }
+              .scrollTargetBehavior(.viewAligned)
+              // scrollPosition(id:) only *reports* the focused cover; ScrollViewReader does the
+              // actual scrolling. Pin on first appearance and whenever pinToken changes.
+              .task(id: pinToken) {
+                  guard let target = pinTarget else { return }
+                  // Let layout settle after content changes, then jump (NOT animate) to center
+                  // the target. anchor: .center avoids landing off-center + tilting. A
+                  // *non-animated* jump is deliberate: an animated scrollTo sweeps the
+                  // LazyHStack across every intermediate cover, kicking off then cancelling
+                  // their AsyncImage loads, which then never restart → older covers stuck on the
+                  // placeholder. Jumping lands directly without instantiating the cells between.
+                  try? await Task.sleep(nanoseconds: 60_000_000)
+                  proxy.scrollTo(target, anchor: .center)
+              }
+              // No anchor: scrollPosition(id:anchor:) only supports a nil anchor on Android.
+              // Read-only here — reports which cover the user swiped to.
+              .scrollPosition(id: $selection)
+            }
+        }
+        .frame(height: coverSize + verticalMargin * 2)
+    }
+
+    @ViewBuilder
+    private func coverCell(_ cover: Cover, containerCenter: CGFloat) -> some View {
+        GeometryReader { geo in
+            // Signed distance of this cover's center from the container center,
+            // normalized to [-1, 1] over roughly one cover width.
+            let cellCenter = geo.frame(in: .global).midX
+            let offset = Double(cellCenter - containerCenter)
+            let normalized = max(-1, min(1, offset / Double(coverSize)))
+
+            let rotation = -normalized * maxRotation
+            let scale = 1 - (1 - minScale) * CGFloat(abs(normalized))
+
+            CoverImage(url: cover.artworkURL, assetName: cover.assetName)
+                .frame(width: coverSize, height: coverSize)
+                .clipShape(.rect(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.45), radius: 18, x: 0, y: 12)
+                .scaleEffect(scale)
+                .rotation3DEffect(
+                    .degrees(rotation),
+                    axis: (x: 0, y: 1, z: 0),
+                    anchor: .center,
+                    perspective: 0.6
+                )
+                // Off-center covers sit behind the focused one.
+                .zIndex(1 - abs(normalized))
+        }
+        .frame(width: coverSize, height: coverSize)
+    }
+}
+
+/// A single cover image: a remote artwork URL for played songs, or a bundled asset for the
+/// startup placeholder. Falls back to the default generic cover if neither loads.
+struct CoverImage: View {
+    var url: String? = nil
+    var assetName: String? = nil
+
+    var body: some View {
+        if let url, let imageURL = URL(string: url) {
+            AsyncImage(url: imageURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .empty:
+                    placeholder.overlay { ProgressView().tint(.white) }
+                case .failure:
+                    placeholder
+                @unknown default:
+                    placeholder
+                }
+            }
+        } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
+        Image(assetName ?? "NoCover-a", bundle: .module)
+            .resizable()
+            .scaledToFill()
+    }
+}

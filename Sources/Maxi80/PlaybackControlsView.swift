@@ -15,25 +15,35 @@ struct PlaybackControlsView: View {
     @State var showShareSheet = false
 
     var body: some View {
-        HStack(spacing: 32) {
+        HStack(spacing: 36) {
             // Share button — presents platform share sheet
             Button {
                 showShareSheet = true
             } label: {
                 Image(systemName: "square.and.arrow.up")
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(viewModel.canShare ? 1.0 : 0.4))
+                    .foregroundStyle(.primary.opacity(viewModel.canShare ? 1.0 : 0.35))
             }
             .disabled(!viewModel.canShare)
+            .accessibilityLabel("Share current track")
 
-            // Play/pause button
+            // Play/pause button — the primary control
             Button {
                 viewModel.togglePlayback()
             } label: {
-                Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 64))
-                    .foregroundStyle(.white)
+                Group {
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .tint(.primary)
+                    } else {
+                        Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 68))
+                            .foregroundStyle(.primary)
+                    }
+                }
+                .frame(width: 68, height: 68)
             }
+            .accessibilityLabel(viewModel.isPlaying ? "Pause" : "Play")
 
             // Donation button
             if let donationUrl = viewModel.station?.donationUrl,
@@ -42,12 +52,14 @@ struct PlaybackControlsView: View {
                 Link(destination: url) {
                     Image(systemName: "heart.circle")
                         .font(.title2)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
                 }
+                .accessibilityLabel("Support Maxi 80")
             } else {
                 Image(systemName: "heart.circle")
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(.primary.opacity(0.35))
+                    .accessibilityHidden(true)
             }
         }
         .shareSheet(isPresented: $showShareSheet) {

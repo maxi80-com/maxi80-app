@@ -5,21 +5,24 @@ import SwiftUI
 struct VolumeSliderView: View {
     @Bindable var viewModel: RadioPlayerViewModel
 
+    private var volume: Binding<Double> {
+        Binding(
+            get: { viewModel.volume },
+            set: { viewModel.setVolume($0) }
+        )
+    }
+
     var body: some View {
         HStack {
             Image(systemName: "speaker.fill")
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundStyle(.secondary)
 
-            Slider(value: Binding(
-                get: { viewModel.volume },
-                set: { newValue in
-                    viewModel.setVolume(newValue)
-                }
-            ), in: 0...1)
-            .tint(.white)
+            Slider(value: volume, in: 0...1)
+                .tint(.primary)
+                .accessibilityLabel("Volume")
 
             Image(systemName: "speaker.wave.3.fill")
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal)
     }

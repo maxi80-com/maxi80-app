@@ -1,27 +1,67 @@
 import Foundation
 
-public struct HistoryEntry: Sendable, Identifiable, Codable {
-    public let id: String
+/// A single played song. Decoded from the backend `/history` response, which returns
+/// `{"entries": [{artist, title, artwork, timestamp}]}` where `artwork` is an S3 key
+/// (not a loadable URL) and `timestamp` is an ISO-8601 string. The backend has no `id`,
+/// so a stable one is derived from timestamp + artist + title.
+public struct HistoryEntry: Sendable, Identifiable, Decodable {
     public let artist: String
     public let title: String
-    public let artwork: String?
-    public let timestamp: Double
+    /// S3 key of the artwork from the backend (e.g. "collected/Artist/Title/artwork.jpg").
+    /// Not directly loadable — resolve to a presigned URL via the `/artwork` endpoint.
+    public let artworkKey: String?
+    /// Opaque timestamp string from the backend (ISO-8601), or a synthesized value for
+    /// live entries. Used only to derive a stable id and preserve ordering.
+    public let timestamp: String
+    /// A resolvable artwork URL. Set directly for live entries (already resolved), or
+    /// populated after resolving `artworkKey` via the `/artwork` endpoint.
+    public var artworkURL: String?
+    /// Dominant color of the artwork, driving the background gradient when this entry is shown.
+    /// Supplied by the backend if available (decoded from a `"color"` hex field), otherwise
+    /// resolved client-side after the artwork loads.
+    public var dominantColor: RGBColor?
+
+    /// Stable identity derived from the backend fields (the API provides no id).
+    public var id: String { "\(timestamp)|\(artist)|\(title)" }
 
     public var songMetadata: SongMetadata {
         SongMetadata(artist: artist, title: title)
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case artist, title, timestamp
+        case artworkKey = "artwork"
+        case dominantColor = "color"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        artist = try container.decode(String.self, forKey: .artist)
+        title = try container.decode(String.self, forKey: .title)
+        artworkKey = try container.decodeIfPresent(String.self, forKey: .artworkKey)
+        timestamp = try container.decode(String.self, forKey: .timestamp)
+        dominantColor = try container.decodeIfPresent(RGBColor.self, forKey: .dominantColor)
+        artworkURL = nil
+    }
+
     public init(
-        id: String,
         artist: String,
         title: String,
-        artwork: String?,
-        timestamp: Double
+        artworkKey: String? = nil,
+        timestamp: String,
+        artworkURL: String? = nil,
+        dominantColor: RGBColor? = nil
     ) {
-        self.id = id
         self.artist = artist
         self.title = title
-        self.artwork = artwork
+        self.artworkKey = artworkKey
         self.timestamp = timestamp
+        self.artworkURL = artworkURL
+        self.dominantColor = dominantColor
     }
+}
+
+/// Wrapper matching the backend `/history` response shape.
+public struct HistoryResponse: Decodable, Sendable {
+    public let entries: [HistoryEntry]
 }

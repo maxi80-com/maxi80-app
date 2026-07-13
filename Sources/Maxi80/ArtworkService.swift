@@ -1,4 +1,5 @@
 import SwiftUI
+import SkipFuse
 import Maxi80Model
 import Maxi80Services
 
@@ -7,6 +8,8 @@ import UIKit
 #elseif canImport(AppKit)
 import AppKit
 #endif
+
+private let logger = Logger(subsystem: "com.stormacq.maxi80", category: "ArtworkService")
 
 @MainActor
 public final class ArtworkService {
@@ -28,9 +31,7 @@ public final class ArtworkService {
             return cached
         }
 
-        let artworkURLString = try? await apiClient.fetchArtworkURL(artist: artist, title: title)
-
-        guard let urlString = artworkURLString,
+        guard let urlString = await resolveArtworkURL(artist: artist, title: title),
               let artworkURL = URL(string: urlString) else {
             let defaultResult = makeDefaultResult()
             cache[cacheKey] = defaultResult
@@ -47,7 +48,7 @@ public final class ArtworkService {
                 return defaultResult
             }
 
-            let result = makeResult(from: data)
+            let result = makeResult(from: data, url: urlString)
             cache[cacheKey] = result
             return result
         } catch {
@@ -57,53 +58,67 @@ public final class ArtworkService {
         }
     }
 
+    /// Resolves a song's presigned artwork URL from the `/artwork` endpoint.
+    /// The endpoint returns `{"url": "..."}` on success, or an empty body when no artwork
+    /// exists — both handled here. Returns `nil` when unavailable.
+    public func resolveArtworkURL(artist: String, title: String) async -> String? {
+        guard let json = try? await apiClient.fetchArtworkURL(artist: artist, title: title),
+              let data = json.data(using: .utf8),
+              !data.isEmpty,
+              let response = try? JSONDecoder().decode(ArtworkURLResponse.self, from: data) else {
+            logger.debug("no artwork for \(artist) — \(title)")
+            return nil
+        }
+        return response.url
+    }
+
     // MARK: - Private Helpers
 
     private func makeDefaultResult() -> ArtworkResult {
         ArtworkResult(image: nil, dominantColor: Self.defaultColor, isDefault: true)
     }
 
-    private func makeResult(from data: Data) -> ArtworkResult {
+    private func makeResult(from data: Data, url: String) -> ArtworkResult {
         #if canImport(UIKit)
         guard let uiImage = UIImage(data: data) else {
             return makeDefaultResult()
         }
-        let color = extractDominantColor(from: uiImage)
+        let rgb = extractDominantColor(from: uiImage)
         let swiftUIImage = Image(uiImage: uiImage)
-        return ArtworkResult(image: swiftUIImage, dominantColor: color, isDefault: false)
+        return ArtworkResult(image: swiftUIImage, dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
         #elseif canImport(AppKit)
         guard let nsImage = NSImage(data: data) else {
             return makeDefaultResult()
         }
-        let color = extractDominantColor(from: nsImage)
+        let rgb = extractDominantColor(from: nsImage)
         let swiftUIImage = Image(nsImage: nsImage)
-        return ArtworkResult(image: swiftUIImage, dominantColor: color, isDefault: false)
+        return ArtworkResult(image: swiftUIImage, dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
         #else
-        // Android: no platform image APIs available — return default color with no image
-        return ArtworkResult(image: nil, dominantColor: Self.defaultColor, isDefault: false)
+        // Android: no platform image APIs available — carry the URL so AsyncImage can load it.
+        return ArtworkResult(image: nil, dominantColor: Self.defaultColor, isDefault: false, url: url)
         #endif
+    }
+
+    private static func color(_ rgb: Maxi80Model.RGBColor) -> Color {
+        Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
 
     // MARK: - Color Extraction (Apple platforms only)
 
     #if canImport(UIKit)
-    private func extractDominantColor(from image: UIImage) -> Color {
-        guard let cgImage = image.cgImage else {
-            return Self.defaultColor
-        }
+    private func extractDominantColor(from image: UIImage) -> Maxi80Model.RGBColor? {
+        guard let cgImage = image.cgImage else { return nil }
         return averageColor(from: cgImage)
     }
     #elseif canImport(AppKit)
-    private func extractDominantColor(from image: NSImage) -> Color {
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            return Self.defaultColor
-        }
+    private func extractDominantColor(from image: NSImage) -> Maxi80Model.RGBColor? {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         return averageColor(from: cgImage)
     }
     #endif
 
     #if canImport(CoreGraphics)
-    private func averageColor(from cgImage: CGImage) -> Color {
+    private func averageColor(from cgImage: CGImage) -> Maxi80Model.RGBColor? {
         let size = 40
         let bytesPerPixel = 4
         let bytesPerRow = bytesPerPixel * size
@@ -120,7 +135,7 @@ public final class ArtworkService {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
-            return Self.defaultColor
+            return nil
         }
 
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
@@ -137,11 +152,11 @@ public final class ArtworkService {
             totalB += Double(pixelData[offset + 2])
         }
 
-        let avgR = totalR / Double(pixelCount) / 255.0
-        let avgG = totalG / Double(pixelCount) / 255.0
-        let avgB = totalB / Double(pixelCount) / 255.0
-
-        return Color(red: avgR, green: avgG, blue: avgB)
+        return Maxi80Model.RGBColor(
+            red: totalR / Double(pixelCount) / 255.0,
+            green: totalG / Double(pixelCount) / 255.0,
+            blue: totalB / Double(pixelCount) / 255.0
+        )
     }
     #endif
 }

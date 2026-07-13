@@ -60,18 +60,14 @@ enum PreviewMocks {
 
         if hasHistory {
             coordinator.history = [
-                HistoryEntry(id: "1", artist: "A-ha", title: "Take On Me", artwork: nil, timestamp: 1000),
-                HistoryEntry(id: "2", artist: "Tears for Fears", title: "Shout", artwork: nil, timestamp: 2000),
-                HistoryEntry(id: "3", artist: "Depeche Mode", title: "Enjoy the Silence", artwork: nil, timestamp: 3000),
+                HistoryEntry(artist: "A-ha", title: "Take On Me", timestamp: "2025-01-15T14:30:00Z"),
+                HistoryEntry(artist: "Tears for Fears", title: "Shout", timestamp: "2025-01-15T14:33:00Z"),
+                HistoryEntry(artist: "Depeche Mode", title: "Enjoy the Silence", timestamp: "2025-01-15T14:36:00Z"),
             ]
         }
 
         let vm = RadioPlayerViewModel(coordinator: coordinator)
         vm.volume = 0.75
-        if hasHistory {
-            vm.selectedHistoryIndex = 2
-        }
-
         return vm
     }
 }

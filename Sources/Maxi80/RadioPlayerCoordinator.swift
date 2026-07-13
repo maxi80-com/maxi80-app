@@ -1,7 +1,10 @@
 import SwiftUI
 import Foundation
+import SkipFuse
 import Maxi80Model
 import Maxi80Services
+
+private let logger = Logger(subsystem: "com.stormacq.maxi80", category: "Coordinator")
 
 /// Central coordinator for the Maxi80 radio player.
 /// Lives in the native (Fuse) module — uses full Swift concurrency (async/await, Task).
@@ -30,6 +33,10 @@ public final class RadioPlayerCoordinator {
     public var station: Station?
     public var errorMessage: String?
 
+    /// The generic cover shown before any song has played. Chosen once per launch.
+    @ObservationIgnored
+    let placeholderCover: PlaceholderCover = .random()
+
     // MARK: - Internal State
 
     @ObservationIgnored
@@ -45,6 +52,10 @@ public final class RadioPlayerCoordinator {
     /// How long to wait after issuing a reconnect `play()` before checking whether the
     /// stream actually resumed.
     private let reconnectConfirmationDelay: UInt64 = 3_000_000_000
+
+    /// Produces backend-compatible ISO-8601 timestamps for live history entries so they
+    /// sort consistently against entries fetched from the API.
+    private static let isoTimestampFormatter = ISO8601DateFormatter()
 
     // MARK: - Initialization
 
@@ -75,7 +86,13 @@ public final class RadioPlayerCoordinator {
         let streamURL = station?.streamUrl ?? defaultStreamURL
         player.play(url: streamURL)
 
-        // Launch history fetch concurrently — don't block audio start
+        // Refresh history concurrently — don't block audio start.
+        refreshHistory()
+    }
+
+    /// Fetch the play history off the main flow. Non-blocking: launches an unstructured
+    /// `@MainActor` task and cancels any in-flight refresh so overlapping calls don't race.
+    public func refreshHistory() {
         historyTask?.cancel()
         historyTask = Task { [weak self] in
             await self?.fetchHistory()
@@ -105,14 +122,18 @@ public final class RadioPlayerCoordinator {
 
     /// Fetch station metadata on launch with fallback chain.
     public func loadStation() async {
+        logger.info("loadStation: GET /station")
         let stationJSON = try? await apiClient.fetchStation()
 
         if let json = stationJSON, let parsed = parseStation(from: json) {
+            logger.info("loadStation: station loaded — name=\(parsed.name), streamUrl=\(parsed.streamUrl)")
             station = parsed
             cachedStation = parsed
         } else if let cached = cachedStation {
+            logger.notice("loadStation: /station failed, using cached station")
             station = cached
         } else {
+            logger.notice("loadStation: /station failed, using hardcoded fallback")
             // Hardcoded fallback
             station = Station(
                 name: "Maxi 80",
@@ -125,6 +146,9 @@ public final class RadioPlayerCoordinator {
                 defaultCoverUrl: ""
             )
         }
+
+        // Populate the history carousel at launch without blocking station display.
+        refreshHistory()
     }
 
     // MARK: - Callback Setup
@@ -170,33 +194,39 @@ public final class RadioPlayerCoordinator {
         reconnectionManager.reset()
 
         let metadata = MetadataParser.parse(rawMetadata)
+        logger.info("metadata received: \(metadata.artist) — \(metadata.title)")
 
         // Skip if same as current song
         if metadata == currentSong {
+            logger.debug("metadata unchanged, skipping")
             return
         }
 
         currentSong = metadata
 
         // Fetch artwork asynchronously
+        logger.info("fetching artwork for current song")
         let artwork = await artworkService.fetchArtwork(artist: metadata.artist, title: metadata.title)
         currentArtwork = artwork
+        logger.info("artwork resolved — hasImage=\(artwork.image != nil), url=\(artwork.url ?? "nil")")
 
         // Update platform now-playing info
         nowPlaying.updateNowPlaying(
             artist: metadata.artist,
             title: metadata.title,
-            artworkURL: nil,
+            artworkURL: artwork.url,
             isPlaying: true
         )
 
-        // Append to history
+        // Append to history, carrying the already-resolved artwork URL so the carousel can
+        // render this song's cover immediately.
         let entry = HistoryEntry(
-            id: UUID().uuidString,
             artist: metadata.artist,
             title: metadata.title,
-            artwork: nil,
-            timestamp: Date().timeIntervalSince1970
+            artworkKey: nil,
+            timestamp: Self.isoTimestampFormatter.string(from: Date()),
+            artworkURL: artwork.url,
+            dominantColor: artwork.rgb
         )
         history.append(entry)
     }
@@ -269,19 +299,49 @@ public final class RadioPlayerCoordinator {
     // MARK: - History Fetching
 
     private func fetchHistory() async {
-        guard let json = try? await apiClient.fetchHistory() else { return }
+        logger.info("fetchHistory: GET /history")
+        guard let json = try? await apiClient.fetchHistory(),
+              let entries = parseHistoryEntries(from: json) else {
+            logger.notice("fetchHistory: no data or decode failed")
+            return
+        }
+        logger.info("fetchHistory: decoded \(entries.count) entries, resolving artwork URLs")
 
-        if let entries = parseHistoryEntries(from: json) {
-            // Only seed history if it's currently empty (don't overwrite live entries)
-            if history.isEmpty {
-                history = entries
-            } else {
-                // Prepend API entries before any live entries
-                let existingIds = Set(history.map { $0.id })
-                let newEntries = entries.filter { !existingIds.contains($0.id) }
-                history = newEntries + history
+        // Resolve each entry's artwork (backend gives an S3 key, not a loadable URL) into a
+        // lightweight presigned URL, concurrently. AsyncImage loads the image lazily — we do NOT
+        // download it here. The dominant color comes from the backend `color` field (decoded on
+        // the entry); if absent it simply stays nil (background falls back).
+        let resolved = await withTaskGroup(of: (Int, String?).self) { group in
+            for (index, entry) in entries.enumerated() {
+                group.addTask { [artworkService] in
+                    let url = await artworkService.resolveArtworkURL(artist: entry.artist, title: entry.title)
+                    return (index, url)
+                }
+            }
+            var urlByIndex = [Int: String?]()
+            for await (index, url) in group {
+                urlByIndex[index] = url
+            }
+            return entries.enumerated().map { index, entry -> HistoryEntry in
+                var copy = entry
+                copy.artworkURL = urlByIndex[index] ?? nil
+                return copy
             }
         }
+
+        let withArtwork = resolved.filter { $0.artworkURL != nil }.count
+        logger.info("fetchHistory: \(withArtwork)/\(resolved.count) entries have artwork URLs")
+
+        // Only seed history if it's currently empty (don't overwrite live entries)
+        if history.isEmpty {
+            history = resolved
+        } else {
+            // Prepend API entries before any live entries
+            let existingIds = Set(history.map { $0.id })
+            let newEntries = resolved.filter { !existingIds.contains($0.id) }
+            history = newEntries + history
+        }
+        logger.info("fetchHistory: history now has \(self.history.count) entries")
     }
 
     // MARK: - JSON Parsing Helpers
@@ -293,6 +353,6 @@ public final class RadioPlayerCoordinator {
 
     private func parseHistoryEntries(from json: String) -> [HistoryEntry]? {
         guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode([HistoryEntry].self, from: data)
+        return try? JSONDecoder().decode(HistoryResponse.self, from: data).entries
     }
 }

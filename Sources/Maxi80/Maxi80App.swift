@@ -58,6 +58,7 @@ extension Maxi80App {
 
     public var body: some View {
         RadioPlayerView(viewModel: viewModel)
+            .tint(.orange)
             .task {
                 await coordinator.loadStation()
             }

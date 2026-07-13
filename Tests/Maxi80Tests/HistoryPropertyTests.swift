@@ -19,11 +19,9 @@ struct HistoryPropertyTests {
             let count = Int.random(in: 0...20)
             for i in 0..<count {
                 history.append(HistoryEntry(
-                    id: "\(i)",
                     artist: "Artist \(i)",
                     title: "Title \(i)",
-                    artwork: nil,
-                    timestamp: Double(i)
+                    timestamp: "\(i)"
                 ))
             }
 
@@ -31,11 +29,9 @@ struct HistoryPropertyTests {
 
             // Append new entry (simulating the coordinator logic)
             let newEntry = HistoryEntry(
-                id: UUID().uuidString,
                 artist: artist,
                 title: title,
-                artwork: nil,
-                timestamp: Date().timeIntervalSince1970
+                timestamp: ISO8601DateFormatter().string(from: Date())
             )
             history.append(newEntry)
 

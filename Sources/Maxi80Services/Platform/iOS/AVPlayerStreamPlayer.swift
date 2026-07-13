@@ -84,16 +84,13 @@ extension AudioStreamPlayer {
     // MARK: - Player Status Observation
 
     private func observePlayerStatus() {
-        statusObservation = avPlayer?.observe(\.currentItem?.status, options: [.new]) { [weak self] player, _ in
-            guard let self = self else { return }
-            switch player.currentItem?.status {
-            case .readyToPlay:
-                break
-            case .failed:
-                let message = player.currentItem?.error?.localizedDescription ?? "Playback failed"
-                self.onError?(message)
-            default:
-                break
+        statusObservation = avPlayer?.observe(\.currentItem?.status, options: [.new]) { @Sendable [weak self] player, _ in
+            // Extract Sendable values here; the KVO callback isn't main-actor-isolated, so
+            // hop to the main actor before touching the player's callbacks.
+            guard player.currentItem?.status == .failed else { return }
+            let message = player.currentItem?.error?.localizedDescription ?? "Playback failed"
+            Task { @MainActor [weak self] in
+                self?.onError?(message)
             }
         }
 
@@ -285,8 +282,8 @@ extension AudioStreamPlayer {
 
 // MARK: - Metadata Output Delegate
 
-/// Delegate that receives timed metadata from the AVPlayerItem and forwards it
-/// to the AudioStreamPlayer's onMetadataChanged callback.
+/// Delegate that receives timed metadata from the AVPlayerItem and forwards it to the
+/// AudioStreamPlayer's onMetadataChanged callback.
 final class MetadataOutputDelegate: NSObject, AVPlayerItemMetadataOutputPushDelegate, @unchecked Sendable {
     private weak var player: AudioStreamPlayer?
 
@@ -300,20 +297,23 @@ final class MetadataOutputDelegate: NSObject, AVPlayerItemMetadataOutputPushDele
         didOutputTimedMetadataGroups groups: [AVTimedMetadataGroup],
         from track: AVPlayerItemTrack?
     ) {
-        for group in groups {
-            for item in group.items {
-                let stringValue: String? = {
-                    if let data = item.dataValue {
-                        return String(data: data, encoding: .utf8)
-                    }
-                    return item.stringValue
-                }()
-                guard let value = stringValue else { continue }
-                Task { @MainActor [weak self] in
-                    self?.player?.onMetadataChanged?(value)
-                }
-                return
+        guard let first = groups.first?.items.first else { return }
+        // SAFETY: AVFoundation delivers this callback serially on the main queue (the output is
+        // registered with `queue: .main`), and `AVMetadataItem` is read-once immutable timed
+        // metadata. It isn't Sendable and its value must be loaded asynchronously (iOS 16+), so
+        // `nonisolated(unsafe)` lets us carry it into the load task; only the resulting `String`
+        // crosses to the main-actor-isolated player.
+        nonisolated(unsafe) let item = first
+        let player = self.player
+        Task {
+            let value: String?
+            if let data = try? await item.load(.dataValue) {
+                value = String(data: data, encoding: .utf8)
+            } else {
+                value = try? await item.load(.stringValue)
             }
+            guard let value else { return }
+            await player?.emitMetadata(value)
         }
     }
 }
