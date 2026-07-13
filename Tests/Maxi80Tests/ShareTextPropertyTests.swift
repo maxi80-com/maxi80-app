@@ -30,8 +30,8 @@ struct ShareTextPropertyTests {
             guard !artist.isEmpty && !title.isEmpty else { return true }
 
             // Set up live song state (empty history = live position)
-            vm.currentSong = SongMetadata(artist: artist, title: title)
-            vm.history = []
+            coordinator.currentSong = SongMetadata(artist: artist, title: title)
+            coordinator.history = []
             vm.selectedHistoryIndex = 0
 
             let shareContent = vm.shareCurrentTrack()

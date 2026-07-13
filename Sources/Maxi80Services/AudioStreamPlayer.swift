@@ -10,7 +10,8 @@ import Foundation
 /// observes state changes through those callbacks.
 /* SKIP @bridge */
 #if !SKIP_BRIDGE
-public final class AudioStreamPlayer: @unchecked Sendable {
+@MainActor
+public final class AudioStreamPlayer {
     public var isPlaying: Bool = false
     public var volume: Double = 1.0
 

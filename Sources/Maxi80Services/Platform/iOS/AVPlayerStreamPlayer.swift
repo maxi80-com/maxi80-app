@@ -99,9 +99,9 @@ extension AudioStreamPlayer {
 
         // Also observe timeControlStatus for actual playback state
         timeControlObservation = avPlayer?.observe(\.timeControlStatus, options: [.new]) { @Sendable [weak self] player, _ in
-            guard let self else { return }
-            DispatchQueue.main.async {
-                let playing = player.timeControlStatus == .playing
+            let playing = player.timeControlStatus == .playing
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 self.isPlaying = playing
                 self.onPlaybackStateChanged?(playing)
             }
@@ -117,9 +117,9 @@ extension AudioStreamPlayer {
         self.onVolumeChanged?(Double(session.outputVolume))
 
         volumeObservation = session.observe(\.outputVolume, options: [.new]) { @Sendable [weak self] session, change in
-            guard let self else { return }
-            DispatchQueue.main.async {
-                let vol = Double(change.newValue ?? session.outputVolume)
+            let vol = Double(change.newValue ?? session.outputVolume)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 self.volume = vol
                 self.onVolumeChanged?(vol)
             }
@@ -136,7 +136,17 @@ extension AudioStreamPlayer {
             object: AVAudioSession.sharedInstance(),
             queue: .main
         ) { [weak self] notification in
-            self?.handleInterruption(notification)
+            // Parse the non-Sendable notification here, then hop to the main actor
+            // with only Sendable values (no notification crosses the isolation boundary).
+            guard let userInfo = notification.userInfo,
+                  let typeRaw = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeRaw) else {
+                return
+            }
+            let optionsRaw = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            Task { @MainActor [weak self] in
+                self?.handleInterruption(type: type, optionsRaw: optionsRaw)
+            }
         }
 
         routeChangeObserver = nc.addObserver(
@@ -144,7 +154,14 @@ extension AudioStreamPlayer {
             object: AVAudioSession.sharedInstance(),
             queue: .main
         ) { [weak self] notification in
-            self?.handleRouteChange(notification)
+            guard let userInfo = notification.userInfo,
+                  let reasonRaw = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.handleRouteChange(reason: reason)
+            }
         }
     }
 
@@ -160,13 +177,7 @@ extension AudioStreamPlayer {
         }
     }
 
-    private func handleInterruption(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let typeRaw = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: typeRaw) else {
-            return
-        }
-
+    private func handleInterruption(type: AVAudioSession.InterruptionType, optionsRaw: UInt) {
         switch type {
         case .began:
             avPlayer?.pause()
@@ -175,7 +186,6 @@ extension AudioStreamPlayer {
             onInterruption?(true)
 
         case .ended:
-            let optionsRaw = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
             if options.contains(.shouldResume) {
                 avPlayer?.play()
@@ -192,13 +202,7 @@ extension AudioStreamPlayer {
         }
     }
 
-    private func handleRouteChange(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let reasonRaw = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
-              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else {
-            return
-        }
-
+    private func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
         switch reason {
         case .oldDeviceUnavailable:
             // Headphones/Bluetooth disconnected — pause playback per Apple guidelines
@@ -305,7 +309,7 @@ final class MetadataOutputDelegate: NSObject, AVPlayerItemMetadataOutputPushDele
                     return item.stringValue
                 }()
                 guard let value = stringValue else { continue }
-                DispatchQueue.main.async { [weak self] in
+                Task { @MainActor [weak self] in
                     self?.player?.onMetadataChanged?(value)
                 }
                 return

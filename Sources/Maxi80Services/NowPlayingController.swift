@@ -2,7 +2,7 @@ import Foundation
 
 /* SKIP @bridge */
 #if !SKIP_BRIDGE
-public class NowPlayingController {
+public final class NowPlayingController {
     /// Callback invoked when remote command received from lock screen/notification.
     /// Values: "play", "pause", "togglePlayPause"
     public var onRemoteCommand: ((String) -> Void)?

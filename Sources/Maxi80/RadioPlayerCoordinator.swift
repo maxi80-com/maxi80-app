@@ -33,14 +33,18 @@ public final class RadioPlayerCoordinator {
     // MARK: - Internal State
 
     @ObservationIgnored
-    private var reconnectAttempts: Int = 0
-    @ObservationIgnored
-    private let maxReconnectAttempts = 3
+    private let reconnectionManager = ReconnectionManager()
     @ObservationIgnored
     private var cachedStation: Station?
+    @ObservationIgnored
+    private var historyTask: Task<Void, Never>?
 
     /// Default stream URL used when station hasn't loaded yet.
     private let defaultStreamURL = "https://audio1.maxi80.com"
+
+    /// How long to wait after issuing a reconnect `play()` before checking whether the
+    /// stream actually resumed.
+    private let reconnectConfirmationDelay: UInt64 = 3_000_000_000
 
     // MARK: - Initialization
 
@@ -56,12 +60,15 @@ public final class RadioPlayerCoordinator {
         self.artworkService = artworkService
 
         setupCallbacks()
+        setupReconnection()
     }
 
     // MARK: - Public API
 
     /// Start streaming immediately and fetch history concurrently.
     public func play() {
+        // A fresh user-initiated play supersedes any in-progress reconnection cycle.
+        reconnectionManager.reset()
         playbackState = .loading
         errorMessage = nil
 
@@ -69,13 +76,16 @@ public final class RadioPlayerCoordinator {
         player.play(url: streamURL)
 
         // Launch history fetch concurrently — don't block audio start
-        Task { [weak self] in
+        historyTask?.cancel()
+        historyTask = Task { [weak self] in
             await self?.fetchHistory()
         }
     }
 
     /// Stop streaming and update state.
     public func pause() {
+        // User-initiated stop — abandon any in-progress reconnection.
+        reconnectionManager.cancel()
         player.stop()
         playbackState = .paused
         nowPlaying.updatePlaybackState(isPlaying: false)
@@ -86,9 +96,9 @@ public final class RadioPlayerCoordinator {
         player.updateVolume(volume)
     }
 
-    /// Reset reconnect counter and attempt to play again.
+    /// Reset the reconnection cycle and attempt to play again (manual retry).
     public func retryConnection() {
-        reconnectAttempts = 0
+        reconnectionManager.reset()
         errorMessage = nil
         play()
     }
@@ -148,13 +158,16 @@ public final class RadioPlayerCoordinator {
     // MARK: - Metadata Handling
 
     private func handleMetadataChanged(_ rawMetadata: String) async {
-        // Transition to playing if we were loading
-        if case .loading = playbackState {
+        // Transition to playing if we were loading or reconnecting
+        switch playbackState {
+        case .loading, .reconnecting:
             playbackState = .playing
+        default:
+            break
         }
 
-        // Reset reconnect counter on successful metadata
-        reconnectAttempts = 0
+        // Successful metadata means the stream is healthy — stop any reconnection cycle.
+        reconnectionManager.reset()
 
         let metadata = MetadataParser.parse(rawMetadata)
 
@@ -188,11 +201,36 @@ public final class RadioPlayerCoordinator {
         history.append(entry)
     }
 
+    // MARK: - Reconnection
+
+    private func setupReconnection() {
+        reconnectionManager.onStateChanged = { [weak self] state in
+            self?.playbackState = state
+            if case .error(let message) = state {
+                self?.errorMessage = message
+            } else {
+                self?.errorMessage = nil
+            }
+        }
+
+        reconnectionManager.onReconnect = { [weak self] in
+            guard let self else { return false }
+            let streamURL = self.station?.streamUrl ?? self.defaultStreamURL
+            self.player.play(url: streamURL)
+
+            // Give the stream a moment to resume, then check whether playback recovered.
+            try? await Task.sleep(nanoseconds: self.reconnectConfirmationDelay)
+            return self.player.isPlaying
+        }
+    }
+
     // MARK: - Error Handling
 
     private func handleError(_ message: String) {
-        playbackState = .error(message)
-        errorMessage = message
+        // A stream error triggers the backoff reconnection cycle rather than failing outright.
+        // ReconnectionManager drives playbackState to .reconnecting/.playing/.error via its callback.
+        errorMessage = nil
+        reconnectionManager.startReconnection()
     }
 
     // MARK: - Interruption Handling

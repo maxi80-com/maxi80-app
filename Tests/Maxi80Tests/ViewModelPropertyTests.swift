@@ -41,7 +41,7 @@ struct ViewModelPropertyTests {
                     timestamp: Double(i)
                 ))
             }
-            vm.history = entries
+            coordinator.history = entries
             vm.selectedHistoryIndex = index
 
             #expect(vm.displayedArtist == entries[index].artist,

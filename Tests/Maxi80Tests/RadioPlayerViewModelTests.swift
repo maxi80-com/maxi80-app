@@ -11,8 +11,10 @@ struct RadioPlayerViewModelTests {
 
     // MARK: - Helpers
 
+    /// Builds a coordinator + view model pair. The view model reads through to the coordinator,
+    /// so tests configure state on the returned coordinator.
     @MainActor
-    private func makeViewModel() -> RadioPlayerViewModel {
+    private func makeViewModel() -> (vm: RadioPlayerViewModel, coordinator: RadioPlayerCoordinator) {
         let player = AudioStreamPlayer()
         let nowPlaying = NowPlayingController()
         let apiClient = APIClient(baseURL: "https://test.example.com", authToken: "test-key")
@@ -23,7 +25,7 @@ struct RadioPlayerViewModelTests {
             apiClient: apiClient,
             artworkService: artworkService
         )
-        return RadioPlayerViewModel(coordinator: coordinator)
+        return (RadioPlayerViewModel(coordinator: coordinator), coordinator)
     }
 
     // MARK: - Requirement 8.2: Station info displayed when idle
@@ -31,8 +33,8 @@ struct RadioPlayerViewModelTests {
     @Test("Station info displayed as placeholder when no metadata (idle state)")
     @MainActor
     func stationInfoDisplayedWhenIdle() {
-        let vm = makeViewModel()
-        vm.station = Station(
+        let (vm, coordinator) = makeViewModel()
+        coordinator.station = Station(
             name: "Maxi 80",
             streamUrl: "https://audio1.maxi80.com",
             image: "",
@@ -42,8 +44,8 @@ struct RadioPlayerViewModelTests {
             donationUrl: "",
             defaultCoverUrl: ""
         )
-        vm.currentSong = nil
-        vm.history = []
+        coordinator.currentSong = nil
+        coordinator.history = []
 
         // displayedArtist should fall back to station name
         #expect(vm.displayedArtist == "Maxi 80")
@@ -56,8 +58,8 @@ struct RadioPlayerViewModelTests {
     @Test("Station as placeholder during initial stream (no metadata yet)")
     @MainActor
     func stationAsPlaceholderDuringStream() {
-        let vm = makeViewModel()
-        vm.station = Station(
+        let (vm, coordinator) = makeViewModel()
+        coordinator.station = Station(
             name: "Maxi 80",
             streamUrl: "https://audio1.maxi80.com",
             image: "",
@@ -67,10 +69,11 @@ struct RadioPlayerViewModelTests {
             donationUrl: "",
             defaultCoverUrl: ""
         )
-        vm.isLoading = true
-        vm.currentSong = nil
-        vm.history = []
+        coordinator.playbackState = .loading
+        coordinator.currentSong = nil
+        coordinator.history = []
 
+        #expect(vm.isLoading == true)
         #expect(vm.displayedArtist == "Maxi 80")
         #expect(vm.displayedTitle == "La radio")
     }
@@ -80,18 +83,16 @@ struct RadioPlayerViewModelTests {
     @Test("Share button disabled when no metadata")
     @MainActor
     func shareButtonDisabledWhenNoMetadata() {
-        let vm = makeViewModel()
-        vm.currentSong = nil
-        vm.canShare = false
+        let (vm, coordinator) = makeViewModel()
+        coordinator.currentSong = nil
         #expect(vm.canShare == false)
     }
 
     @Test("Share button enabled when metadata present")
     @MainActor
     func shareButtonEnabledWithMetadata() {
-        let vm = makeViewModel()
-        vm.currentSong = SongMetadata(artist: "Artist", title: "Title")
-        vm.canShare = true
+        let (vm, coordinator) = makeViewModel()
+        coordinator.currentSong = SongMetadata(artist: "Artist", title: "Title")
         #expect(vm.canShare == true)
     }
 
@@ -100,13 +101,13 @@ struct RadioPlayerViewModelTests {
     @Test("Displayed metadata switches on history index change")
     @MainActor
     func displayedMetadataSwitchesOnIndexChange() {
-        let vm = makeViewModel()
-        vm.history = [
+        let (vm, coordinator) = makeViewModel()
+        coordinator.history = [
             HistoryEntry(id: "0", artist: "First Artist", title: "First Song", artwork: nil, timestamp: 1000),
             HistoryEntry(id: "1", artist: "Second Artist", title: "Second Song", artwork: nil, timestamp: 2000),
             HistoryEntry(id: "2", artist: "Current", title: "Live Song", artwork: nil, timestamp: 3000)
         ]
-        vm.currentSong = SongMetadata(artist: "Current", title: "Live Song")
+        coordinator.currentSong = SongMetadata(artist: "Current", title: "Live Song")
 
         // Select first entry (historical)
         vm.selectedHistoryIndex = 0
@@ -127,8 +128,8 @@ struct RadioPlayerViewModelTests {
     @Test("Displayed metadata falls back to station when at live position with no currentSong")
     @MainActor
     func displayedMetadataFallbackAtLivePosition() {
-        let vm = makeViewModel()
-        vm.station = Station(
+        let (vm, coordinator) = makeViewModel()
+        coordinator.station = Station(
             name: "Maxi 80",
             streamUrl: "https://audio1.maxi80.com",
             image: "",
@@ -138,11 +139,11 @@ struct RadioPlayerViewModelTests {
             donationUrl: "",
             defaultCoverUrl: ""
         )
-        vm.history = [
+        coordinator.history = [
             HistoryEntry(id: "0", artist: "Old Song", title: "Old Title", artwork: nil, timestamp: 1000),
             HistoryEntry(id: "1", artist: "Live", title: "Live Title", artwork: nil, timestamp: 2000)
         ]
-        vm.currentSong = nil
+        coordinator.currentSong = nil
         vm.selectedHistoryIndex = 1  // live position (last index)
 
         // At live position with no currentSong, falls back to station

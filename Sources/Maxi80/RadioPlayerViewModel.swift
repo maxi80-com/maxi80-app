@@ -20,19 +20,64 @@ public struct ShareContent {
 @Observable
 public final class RadioPlayerViewModel {
 
-    // MARK: - UI-Bound State
+    private static let defaultDominantColor = Color(red: 0.15, green: 0.15, blue: 0.25)
 
-    public var isPlaying: Bool = false
-    public var isLoading: Bool = false
-    public var currentSong: SongMetadata?
-    public var currentArtwork: Image?
-    public var dominantColor: Color = Color(red: 0.15, green: 0.15, blue: 0.25)
-    public var history: [HistoryEntry] = []
-    public var station: Station?
+    // MARK: - UI-Local State
+    //
+    // These are genuine view state, not derived from the coordinator: `volume` mirrors the
+    // slider's input and `selectedHistoryIndex` is the carousel's selection (bound via
+    // `$viewModel.selectedHistoryIndex`). Everything else is a computed passthrough to the
+    // coordinator so the Observation framework re-renders the view when coordinator state changes.
+
     public var volume: Double = 1.0
-    public var errorMessage: String?
-    public var canShare: Bool = false
     public var selectedHistoryIndex: Int = 0
+
+    // MARK: - Coordinator-Derived State (read-through, tracked by Observation)
+
+    public var isPlaying: Bool {
+        if case .playing = coordinator.playbackState { return true }
+        return false
+    }
+
+    public var isLoading: Bool {
+        switch coordinator.playbackState {
+        case .loading, .reconnecting:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var currentSong: SongMetadata? {
+        coordinator.currentSong
+    }
+
+    public var currentArtwork: Image? {
+        coordinator.currentArtwork?.image
+    }
+
+    public var dominantColor: Color {
+        coordinator.currentArtwork?.dominantColor ?? Self.defaultDominantColor
+    }
+
+    public var history: [HistoryEntry] {
+        coordinator.history
+    }
+
+    public var station: Station? {
+        coordinator.station
+    }
+
+    public var errorMessage: String? {
+        if let message = coordinator.errorMessage { return message }
+        if case .error(let message) = coordinator.playbackState { return message }
+        return nil
+    }
+
+    public var canShare: Bool {
+        guard let song = coordinator.currentSong else { return false }
+        return !song.artist.isEmpty && !song.title.isEmpty
+    }
 
     // MARK: - Computed Display Properties
 
@@ -65,7 +110,6 @@ public final class RadioPlayerViewModel {
 
     public init(coordinator: RadioPlayerCoordinator) {
         self.coordinator = coordinator
-        syncFromCoordinator()
     }
 
     // MARK: - Actions
@@ -92,60 +136,5 @@ public final class RadioPlayerViewModel {
         let title = displayedTitle
         let text = "I'm listening to \(title) by \(artist) on Maxi 80 via Maxi80 for iOS. Check it out at https://www.maxi80.com"
         return ShareContent(text: text, image: currentArtwork)
-    }
-
-    // MARK: - Sync from Coordinator
-
-    public func syncFromCoordinator() {
-        switch coordinator.playbackState {
-        case .playing:
-            isPlaying = true
-            isLoading = false
-            errorMessage = nil
-        case .loading:
-            isPlaying = false
-            isLoading = true
-            errorMessage = nil
-        case .paused, .idle:
-            isPlaying = false
-            isLoading = false
-        case .error(let message):
-            isPlaying = false
-            isLoading = false
-            errorMessage = message
-        case .reconnecting:
-            isPlaying = false
-            isLoading = true
-            errorMessage = nil
-        }
-
-        currentSong = coordinator.currentSong
-        if let result = coordinator.currentArtwork {
-            currentArtwork = result.image
-            dominantColor = result.dominantColor
-        } else {
-            currentArtwork = nil
-            dominantColor = Color(red: 0.15, green: 0.15, blue: 0.25)
-        }
-
-        history = coordinator.history
-        station = coordinator.station
-        if let msg = coordinator.errorMessage {
-            errorMessage = msg
-        }
-
-        updateCanShare()
-    }
-
-    // MARK: - Private Helpers
-
-    private func updateCanShare() {
-        if let song = currentSong,
-           !song.artist.isEmpty,
-           !song.title.isEmpty {
-            canShare = true
-        } else {
-            canShare = false
-        }
     }
 }
