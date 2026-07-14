@@ -62,6 +62,8 @@ struct CoverFlowView: View {
                 .padding(.horizontal, (outer.size.width - coverSize) / 2)
                 .padding(.vertical, verticalMargin)
               }
+              // Snap each cover to center after a scroll. Works with macOS two-finger/trackpad
+              // horizontal scrolling too (it settles the scroll, it doesn't block the gesture).
               .scrollTargetBehavior(.viewAligned)
               // scrollPosition(id:) only *reports* the focused cover; ScrollViewReader does the
               // actual scrolling. Pin on first appearance and whenever pinToken changes.
