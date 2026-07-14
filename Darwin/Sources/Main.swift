@@ -81,6 +81,11 @@ typealias AppType = NSApplication
     func applicationWillTerminate(_ application: Notification) {
         AppDelegate.shared.onDestroy()
     }
+
+    // Quit the app when its last window closes (macOS default keeps it running).
+    func applicationShouldTerminateAfterLastWindowClosed(_ application: NSApplication) -> Bool {
+        true
+    }
     #endif
 
 }
