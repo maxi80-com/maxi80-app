@@ -62,7 +62,11 @@ public final class RadioPlayerViewModel {
     /// Tracks the focused cover: the browsed history entry's stored color while browsing, else
     /// the current artwork while playing.
     public var dominantColor: Color? {
-        if isBrowsingHistory, let rgb = focusedHistoryEntry?.dominantColor {
+        // While browsing history, the background must reflect the focused entry only — its stored
+        // color, or nil (branded default) when it has none. Never fall through to the current
+        // song's color, which would leave the last song's tint stuck under an older cover.
+        if isBrowsingHistory {
+            guard let rgb = focusedHistoryEntry?.dominantColor else { return nil }
             return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
         }
         guard let artwork = coordinator.currentArtwork, !artwork.isDefault else {
