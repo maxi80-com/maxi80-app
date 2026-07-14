@@ -1,24 +1,16 @@
 import SwiftUI
 
-/// A volume slider control that binds to the RadioPlayerViewModel's volume state.
-/// Displays speaker icons on either side and updates in real-time when system volume changes.
+/// Volume + output row: a system-volume slider (controls OS output, including the AirPlay device)
+/// flanked by speaker icons, with a dedicated AirPlay route picker.
 struct VolumeSliderView: View {
     @Bindable var viewModel: RadioPlayerViewModel
-
-    private var volume: Binding<Double> {
-        Binding(
-            get: { viewModel.volume },
-            set: { viewModel.setVolume($0) }
-        )
-    }
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "speaker.fill")
                 .foregroundStyle(.secondary)
 
-            Slider(value: volume, in: 0...1)
-                .tint(.primary)
+            volumeSlider
                 .accessibilityLabel("Volume")
 
             Image(systemName: "speaker.wave.3.fill")
@@ -30,6 +22,22 @@ struct VolumeSliderView: View {
                 .accessibilityLabel("AirPlay output")
         }
         .padding(.horizontal)
+    }
+
+    @ViewBuilder
+    private var volumeSlider: some View {
+        #if !SKIP && canImport(UIKit)
+        // MPVolumeView drives the system output volume, so it also controls AirPlay device volume.
+        SystemVolumeSlider(tint: .primary)
+            .frame(height: 28)
+        #else
+        // macOS: no system-volume view — fall back to the app-relative player volume.
+        Slider(
+            value: Binding(get: { viewModel.volume }, set: { viewModel.setVolume($0) }),
+            in: 0...1
+        )
+        .tint(.primary)
+        #endif
     }
 }
 
