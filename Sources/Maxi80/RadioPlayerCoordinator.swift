@@ -46,6 +46,13 @@ public final class RadioPlayerCoordinator {
     @ObservationIgnored
     private var historyTask: Task<Void, Never>?
 
+    #if !SKIP
+    /// Modern NowPlaying-framework publisher (iOS 26+). `nil` on platforms/SDKs without the
+    /// framework, in which case the bridged MediaPlayer `nowPlaying` is used instead.
+    @ObservationIgnored
+    private var modernNowPlaying: (any NowPlayingPublishing)?
+    #endif
+
     /// Default stream URL used when station hasn't loaded yet.
     private let defaultStreamURL = "https://audio1.maxi80.com"
 
@@ -72,6 +79,15 @@ public final class RadioPlayerCoordinator {
 
         setupCallbacks()
         setupReconnection()
+
+        #if !SKIP
+        // Prefer the modern NowPlaying framework when available (iOS 26+); nil elsewhere, so the
+        // bridged MediaPlayer `nowPlaying` remains the fallback.
+        modernNowPlaying = makeModernNowPlaying(
+            onPlay: { [weak self] in self?.handleRemoteCommand("play") },
+            onPause: { [weak self] in self?.handleRemoteCommand("pause") }
+        )
+        #endif
     }
 
     // MARK: - Public API
@@ -105,7 +121,7 @@ public final class RadioPlayerCoordinator {
         reconnectionManager.cancel()
         player.stop()
         playbackState = .paused
-        nowPlaying.updatePlaybackState(isPlaying: false)
+        publishPlaybackState(isPlaying: false)
     }
 
     /// Set the audio output volume (0.0 to 1.0).
@@ -210,8 +226,8 @@ public final class RadioPlayerCoordinator {
         currentArtwork = artwork
         logger.info("artwork resolved — hasImage=\(artwork.image != nil), url=\(artwork.url ?? "nil")")
 
-        // Update platform now-playing info
-        nowPlaying.updateNowPlaying(
+        // Update system now-playing info (modern NowPlaying framework if available, else MediaPlayer).
+        publishNowPlaying(
             artist: metadata.artist,
             title: metadata.title,
             artworkURL: artwork.url,
@@ -229,6 +245,37 @@ public final class RadioPlayerCoordinator {
             dominantColor: artwork.rgb
         )
         history.append(entry)
+    }
+
+    // MARK: - Now Playing Publishing
+
+    /// Publish current-track metadata to the system. Uses the modern NowPlaying framework when
+    /// available (iOS 26+), otherwise the bridged MediaPlayer controller.
+    private func publishNowPlaying(artist: String, title: String, artworkURL: String?, isPlaying: Bool) {
+        #if !SKIP
+        if let modernNowPlaying {
+            modernNowPlaying.activate()
+            modernNowPlaying.update(
+                stationName: station?.name ?? "Maxi 80",
+                programName: "\(title) — \(artist)",
+                artworkURL: artworkURL,
+                isPlaying: isPlaying
+            )
+            return
+        }
+        #endif
+        nowPlaying.updateNowPlaying(artist: artist, title: title, artworkURL: artworkURL, isPlaying: isPlaying)
+    }
+
+    /// Publish only the play/pause state, via the same modern-or-fallback routing.
+    private func publishPlaybackState(isPlaying: Bool) {
+        #if !SKIP
+        if let modernNowPlaying {
+            modernNowPlaying.updatePlaybackState(isPlaying: isPlaying)
+            return
+        }
+        #endif
+        nowPlaying.updatePlaybackState(isPlaying: isPlaying)
     }
 
     // MARK: - Reconnection
@@ -269,7 +316,7 @@ public final class RadioPlayerCoordinator {
         if began {
             // Interruption began — pause
             playbackState = .paused
-            nowPlaying.updatePlaybackState(isPlaying: false)
+            publishPlaybackState(isPlaying: false)
         } else {
             // Interruption ended with resume option — resume playback
             play()

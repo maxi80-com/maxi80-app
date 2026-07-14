@@ -13,7 +13,7 @@ struct VolumeSliderView: View {
     }
 
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
             Image(systemName: "speaker.fill")
                 .foregroundStyle(.secondary)
 
@@ -23,6 +23,11 @@ struct VolumeSliderView: View {
 
             Image(systemName: "speaker.wave.3.fill")
                 .foregroundStyle(.secondary)
+
+            // AirPlay / sound-sharing output picker (iOS only).
+            AirPlayRoutePicker()
+                .frame(width: 28, height: 28)
+                .accessibilityLabel("AirPlay output")
         }
         .padding(.horizontal)
     }
