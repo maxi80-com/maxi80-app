@@ -84,20 +84,27 @@ public final class RadioPlayerViewModel {
     /// playing, so the carousel stays put when the current artwork swaps in.
     static let nowSlotID = "__now__"
 
+    /// Past history entries shown to the left of the now slot, oldest → newest, with trailing
+    /// copies of the current song removed. The current song lives only in the now slot, and both
+    /// the locally-appended live entry and the backend's own newest entry can duplicate it, so
+    /// every trailing entry matching the current song is dropped.
+    ///
+    /// Extracted from `covers` so `isBrowsingHistory` and `coverPinToken` can consult the history
+    /// set without allocating the full `Cover` array — keeping `covers` built once per render.
+    private var pastEntries: [HistoryEntry] {
+        var entries = coordinator.history
+        if let current = coordinator.currentSong {
+            while entries.last?.songMetadata == current {
+                entries.removeLast()
+            }
+        }
+        return entries
+    }
+
     /// Covers for the carousel, oldest → newest. Past history grows to the left; the rightmost
     /// cover is always the persistent "now" slot — the generic image when idle, or the current
     /// song's artwork while playing.
     var covers: [CoverFlowView.Cover] {
-        var pastEntries = coordinator.history
-        // While playing, the current song is shown in the now slot. Both the locally-appended
-        // live entry and the backend's own newest entry can duplicate it, so drop every
-        // trailing entry that matches the current song.
-        if let current = coordinator.currentSong {
-            while pastEntries.last?.songMetadata == current {
-                pastEntries.removeLast()
-            }
-        }
-
         let past = pastEntries.map { entry in
             // Fall back to the launch placeholder art for entries whose artwork
             // couldn't be resolved, so no cover is ever blank.

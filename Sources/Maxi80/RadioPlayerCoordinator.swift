@@ -336,9 +336,13 @@ public final class RadioPlayerCoordinator {
         if history.isEmpty {
             history = resolved
         } else {
-            // Prepend API entries before any live entries
-            let existingIds = Set(history.map { $0.id })
-            let newEntries = resolved.filter { !existingIds.contains($0.id) }
+            // Merge API entries with any locally-appended live entries. Dedup by SONG identity
+            // (artist+title), NOT by `id`: a live entry and the backend's own copy of the same
+            // song get different timestamps → different ids, so id-based dedup would keep both
+            // and show a duplicate. Keep the existing (live) entries, prepend only backend
+            // entries whose song isn't already present.
+            let existingSongs = Set(history.map { $0.songMetadata })
+            let newEntries = resolved.filter { !existingSongs.contains($0.songMetadata) }
             history = newEntries + history
         }
         logger.info("fetchHistory: history now has \(self.history.count) entries")
