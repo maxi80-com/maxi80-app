@@ -15,6 +15,15 @@ struct PlaybackControlsView: View {
     @State var showShareSheet = false
 
     var body: some View {
+        controls
+        #if os(macOS)
+        // macOS gives buttons a default bezel/background; .plain keeps them transparent like iOS.
+        .buttonStyle(.plain)
+        #endif
+    }
+
+    @ViewBuilder
+    private var controls: some View {
         HStack(spacing: 36) {
             // Share button — presents platform share sheet
             Button {

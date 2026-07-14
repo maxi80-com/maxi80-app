@@ -47,6 +47,8 @@ public final class AudioStreamPlayer {
         androidPlay(url: url)
         #elseif os(iOS) || os(tvOS)
         platformPlay(url: url)
+        #elseif os(macOS)
+        macPlay(url: url)
         #endif
     }
 
@@ -57,6 +59,8 @@ public final class AudioStreamPlayer {
         androidStop()
         #elseif os(iOS) || os(tvOS)
         platformStop()
+        #elseif os(macOS)
+        macStop()
         #endif
     }
 
@@ -67,6 +71,8 @@ public final class AudioStreamPlayer {
         androidSetVolume(newVolume)
         #elseif os(iOS) || os(tvOS)
         platformSetVolume(newVolume)
+        #elseif os(macOS)
+        macSetVolume(newVolume)
         #endif
     }
 }
