@@ -133,8 +133,9 @@ public final class RadioPlayerViewModel {
 
     /// Whether the user has scrolled away from the now slot onto a past cover that exists.
     var isBrowsingHistory: Bool {
-        guard let selectedCoverID, selectedCoverID != AnyHashable(Self.nowSlotID) else { return false }
-        return covers.contains { AnyHashable($0.id) == selectedCoverID }
+        guard let selectedCoverID, selectedCoverID != AnyHashable(Self.nowSlotID),
+              let id = selectedCoverID.base as? String else { return false }
+        return pastEntries.contains { $0.id == id }
     }
 
     /// Incremented to force the carousel to re-scroll to the now slot even when the cover set
@@ -199,7 +200,7 @@ public final class RadioPlayerViewModel {
     /// cover ids plus the now-slot artwork. The view re-pins the scroll to the now slot when it
     /// changes, so the carousel re-centers after history loads or the current artwork swaps in.
     var coverPinToken: String {
-        let ids = covers.map(\.id).joined(separator: ",")
+        let ids = pastEntries.map(\.id).joined(separator: ",")
         let nowURL = coordinator.currentArtwork.flatMap { $0.isDefault ? nil : $0.url } ?? "generic"
         return "\(ids)|\(nowURL)|\(returnToLiveNonce)"
     }

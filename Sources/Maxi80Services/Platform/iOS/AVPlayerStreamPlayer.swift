@@ -33,7 +33,9 @@ extension AudioStreamPlayer {
         }
 
         observePlayerStatus()
-        observeSystemVolume()
+
+        // Apply the current in-app volume to the freshly-built player.
+        avPlayer?.volume = Float(volume)
 
         avPlayer?.play()
         isPlaying = true
@@ -51,12 +53,13 @@ extension AudioStreamPlayer {
         unregisterNotifications()
     }
 
-    /// Set playback volume via AVAudioSession output volume (system volume).
+    /// Set playback volume. Uses `AVPlayer`'s per-player volume (0...1, relative to the system
+    /// volume) — apps cannot set the system output volume programmatically, but they can attenuate
+    /// their own player, which is what the in-app slider controls.
     func platformSetVolume(_ newVolume: Double) {
-        // On iOS, app-level volume control is done through the system volume.
-        // The MPVolumeView slider controls system volume directly.
-        // We store the requested value for the published property.
-        self.volume = newVolume
+        let clamped = max(0, min(1, newVolume))
+        self.volume = clamped
+        avPlayer?.volume = Float(clamped)
     }
 
     // MARK: - Audio Session Configuration
@@ -106,22 +109,6 @@ extension AudioStreamPlayer {
     }
 
     // MARK: - System Volume Observation
-
-    private func observeSystemVolume() {
-        let session = AVAudioSession.sharedInstance()
-        // Update the published volume to current system volume
-        self.volume = Double(session.outputVolume)
-        self.onVolumeChanged?(Double(session.outputVolume))
-
-        volumeObservation = session.observe(\.outputVolume, options: [.new]) { @Sendable [weak self] session, change in
-            let vol = Double(change.newValue ?? session.outputVolume)
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.volume = vol
-                self.onVolumeChanged?(vol)
-            }
-        }
-    }
 
     // MARK: - Notification Handling
 

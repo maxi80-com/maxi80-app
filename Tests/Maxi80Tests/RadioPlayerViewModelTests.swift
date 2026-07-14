@@ -152,4 +152,32 @@ struct RadioPlayerViewModelTests {
         #expect(vm.displayedArtist == "Maxi 80")
         #expect(vm.displayedTitle == "La radio de toute une génération")
     }
+
+    // MARK: - Current song not duplicated in the carousel
+
+    @Test("Current song appearing in history is not duplicated as a cover (shown only in now slot)")
+    @MainActor
+    func currentSongNotDuplicatedInCovers() {
+        let (vm, coordinator) = makeViewModel()
+        let current = SongMetadata(artist: "Mtume", title: "So You Wanna Be A Star")
+        coordinator.currentSong = current
+        // History contains the current song at the tail (backend's own copy) AND a live-appended
+        // copy with a *different timestamp* — the real-world duplicate case.
+        coordinator.history = [
+            HistoryEntry(artist: "Older", title: "Older Title", timestamp: "1000"),
+            HistoryEntry(artist: current.artist, title: current.title, timestamp: "2000"),
+            HistoryEntry(artist: current.artist, title: current.title, timestamp: "2003")
+        ]
+
+        // The current song appears once — as the rightmost now slot — never as a past cover.
+        let currentSongPastCovers = vm.covers.dropLast().filter { cover in
+            coordinator.history.contains {
+                $0.id == cover.id && $0.songMetadata == current
+            }
+        }
+        #expect(currentSongPastCovers.isEmpty)
+        #expect(vm.covers.last?.id == RadioPlayerViewModel.nowSlotID)
+        // Only the non-current past entry remains, plus the now slot.
+        #expect(vm.covers.count == 2)
+    }
 }
