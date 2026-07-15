@@ -10,6 +10,22 @@ import PackageDescription
 let isXcodeBuild = Context.environment["__CFBundleIdentifier"] == "com.apple.dt.Xcode"
 let previewSettings: [SwiftSetting] = isXcodeBuild ? [.define("ENABLE_PREVIEWS")] : []
 
+// SwiftCheck (property-based testing) imports `Darwin`, which does not exist on
+// the Android SDK, so it fails to compile whenever `swift build --build-tests`
+// pulls it into an Android build. The Android/bridging build is the one that
+// sets SKIP_BRIDGE=1, so on that build we drop the SwiftCheck dependency and
+// exclude the property-test files (they run on Apple platforms only).
+let isAndroidBuild = Context.environment["SKIP_BRIDGE"] ?? "0" != "0"
+let swiftCheckDependencies: [PackageDescription.Package.Dependency] = isAndroidBuild ? [] :
+    [.package(url: "https://github.com/typelift/SwiftCheck.git", from: "0.12.0")]
+let swiftCheckTargetDependencies: [Target.Dependency] = isAndroidBuild ? [] : ["SwiftCheck"]
+let modelPropertyTestExclusions = isAndroidBuild
+    ? ["MetadataParserPropertyTests.swift", "APIClientPropertyTests.swift"] : []
+let appPropertyTestExclusions = isAndroidBuild
+    ? ["StationFallbackPropertyTests.swift", "ReconnectionPropertyTests.swift",
+       "HistoryPropertyTests.swift", "ViewModelPropertyTests.swift", "ShareTextPropertyTests.swift"]
+    : []
+
 let package = Package(
     name: "Maxi80",
     defaultLocalization: "en",
@@ -24,8 +40,7 @@ let package = Package(
         .package(url: "https://source.skip.tools/skip-fuse-ui.git", from: "1.0.0"),
         .package(url: "https://source.skip.tools/skip-fuse.git", from: "1.0.0"),
         .package(url: "https://source.skip.tools/skip-foundation.git", from: "1.0.0"),
-        .package(url: "https://github.com/typelift/SwiftCheck.git", from: "0.12.0"),
-    ],
+    ] + swiftCheckDependencies,
     targets: [
         .target(name: "Maxi80Model", dependencies: [
             .product(name: "SkipFuse", package: "skip-fuse"),
@@ -33,9 +48,9 @@ let package = Package(
 
         .testTarget(name: "Maxi80ModelTests", dependencies: [
             "Maxi80Model",
-            "SwiftCheck",
             .product(name: "SkipTest", package: "skip"),
-        ], plugins: [.plugin(name: "skipstone", package: "skip")]),
+        ] + swiftCheckTargetDependencies, exclude: modelPropertyTestExclusions,
+        plugins: [.plugin(name: "skipstone", package: "skip")]),
 
         .target(name: "Maxi80", dependencies: [
             "Maxi80Model",
@@ -45,9 +60,9 @@ let package = Package(
 
         .testTarget(name: "Maxi80Tests", dependencies: [
             "Maxi80",
-            "SwiftCheck",
             .product(name: "SkipTest", package: "skip"),
-        ], plugins: [.plugin(name: "skipstone", package: "skip")]),
+        ] + swiftCheckTargetDependencies, exclude: appPropertyTestExclusions,
+        plugins: [.plugin(name: "skipstone", package: "skip")]),
 
         .target(name: "Maxi80Services", dependencies: [
             .product(name: "SkipFoundation", package: "skip-foundation"),
