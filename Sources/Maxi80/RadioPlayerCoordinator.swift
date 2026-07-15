@@ -4,6 +4,10 @@ import SkipFuse
 import Maxi80Model
 import Maxi80Services
 
+#if canImport(UIKit)
+import UIKit
+#endif
+
 private let logger = Logger(subsystem: "com.stormacq.maxi80", category: "Coordinator")
 
 /// Central coordinator for the Maxi80 radio player.
@@ -36,6 +40,14 @@ public final class RadioPlayerCoordinator {
     /// The generic cover shown before any song has played. Chosen once per launch.
     @ObservationIgnored
     let placeholderCover: PlaceholderCover = .random()
+
+    /// Whether a CarPlay scene is currently connected. CarPlay's Now Playing template mirrors the
+    /// system Now Playing info, which normally carries only a real remote cover. When CarPlay is
+    /// connected we additionally publish the bundled generic placeholder for coverless songs so the
+    /// car screen is never blank — see `shouldPublishPlaceholderArtwork`. Kept off the phone path
+    /// (disconnected) so Lock Screen / Control Center behavior is unchanged.
+    @ObservationIgnored
+    private(set) var isCarPlayConnected = false
 
     // MARK: - Internal State
 
@@ -157,6 +169,42 @@ public final class RadioPlayerCoordinator {
         reconnectionManager.reset()
         errorMessage = nil
         play()
+    }
+
+    // MARK: - CarPlay
+
+    /// Called when a CarPlay scene connects. Marks CarPlay active and re-publishes the current
+    /// Now Playing info so the car's Now Playing template shows artwork immediately — including the
+    /// generic placeholder when no song/cover is present yet.
+    public func carPlayDidConnect() {
+        isCarPlayConnected = true
+        republishNowPlaying()
+    }
+
+    /// Called when the CarPlay scene disconnects. Audio keeps playing; we only stop publishing the
+    /// CarPlay-specific placeholder so the phone's Now Playing info returns to its normal state.
+    public func carPlayDidDisconnect() {
+        isCarPlayConnected = false
+        republishNowPlaying()
+    }
+
+    /// Whether the coordinator should attach the bundled generic placeholder to the system Now
+    /// Playing info in place of a missing cover. True only while CarPlay is connected AND no real
+    /// remote artwork URL is available; a present cover is never overridden.
+    func shouldPublishPlaceholderArtwork(forArtworkURL artworkURL: String?) -> Bool {
+        guard isCarPlayConnected else { return false }
+        return (artworkURL?.isEmpty ?? true)
+    }
+
+    /// Re-publish the current metadata/artwork to the system so a CarPlay connect/disconnect takes
+    /// effect immediately (rather than waiting for the next song). Uses the current song when known,
+    /// else the station as a placeholder title so the car isn't blank on connect.
+    private func republishNowPlaying() {
+        let playing = { if case .playing = playbackState { return true } else { return false } }()
+        let artist = currentSong?.artist ?? station?.name ?? "Maxi 80"
+        let title = currentSong?.title ?? station?.shortDesc ?? ""
+        let url = currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
+        publishNowPlaying(artist: artist, title: title, artworkURL: url, isPlaying: playing)
     }
 
     /// Fetch station metadata on launch with fallback chain.
@@ -333,19 +381,55 @@ public final class RadioPlayerCoordinator {
     /// Publish current-track metadata to the system. Uses the modern NowPlaying framework when
     /// available (iOS 26+), otherwise the bridged MediaPlayer controller.
     private func publishNowPlaying(artist: String, title: String, artworkURL: String?, isPlaying: Bool) {
+        // On CarPlay, substitute the bundled generic cover for a missing remote one so the car's
+        // Now Playing template is never blank. Both sinks below load artwork by URL and accept a
+        // `file://` URL, so the placeholder rides the same path — the phone is unaffected because
+        // this only fires while CarPlay is connected.
+        let publishedArtworkURL = shouldPublishPlaceholderArtwork(forArtworkURL: artworkURL)
+            ? placeholderArtworkFileURL
+            : artworkURL
+
         #if !SKIP
         if let modernNowPlaying {
             modernNowPlaying.activate()
             modernNowPlaying.update(
                 stationName: station?.name ?? "Maxi 80",
                 programName: "\(title) — \(artist)",
-                artworkURL: artworkURL,
+                artworkURL: publishedArtworkURL,
                 isPlaying: isPlaying
             )
             return
         }
         #endif
-        nowPlaying.updateNowPlaying(artist: artist, title: title, artworkURL: artworkURL, isPlaying: isPlaying)
+        nowPlaying.updateNowPlaying(artist: artist, title: title, artworkURL: publishedArtworkURL, isPlaying: isPlaying)
+    }
+
+    /// A `file://` URL string for this launch's generic placeholder cover, materialized once from
+    /// the asset catalog (the covers live in `.xcassets`, which have no directly loadable URL).
+    /// `nil` on platforms without image APIs (Android) or if materialization fails — callers then
+    /// simply publish no artwork, as before.
+    @ObservationIgnored
+    private lazy var placeholderArtworkFileURL: String? = materializePlaceholderArtwork()
+
+    /// Write the placeholder cover to a temp file so it can be published to the system Now Playing
+    /// info by URL. CarPlay is iOS-only, so this only needs UIKit; other platforms return `nil`.
+    /// Idempotent per launch: reuses the file if it already exists.
+    private func materializePlaceholderArtwork() -> String? {
+        #if canImport(UIKit)
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("maxi80-\(placeholderCover.imageName).png")
+
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            guard let image = UIImage(named: placeholderCover.imageName, in: .module, compatibleWith: nil),
+                  let data = image.pngData(),
+                  (try? data.write(to: fileURL)) != nil else {
+                return nil
+            }
+        }
+        return fileURL.absoluteString
+        #else
+        return nil
+        #endif
     }
 
     /// Publish only the play/pause state, via the same modern-or-fallback routing.

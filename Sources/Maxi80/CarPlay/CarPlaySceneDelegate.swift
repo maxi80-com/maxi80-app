@@ -26,6 +26,10 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate {
         // Single-station radio: go straight to Now Playing, no list template.
         interfaceController.setRootTemplate(CPNowPlayingTemplate.shared, animated: false, completion: nil)
 
+        // Tell the coordinator CarPlay is live so it publishes the generic cover for coverless
+        // songs — CarPlay's Now Playing template would otherwise render blank artwork.
+        SharedPlayer.coordinator.carPlayDidConnect()
+
         // Auto-play on connect — a radio app is expected to start when the driver taps its icon.
         SharedPlayer.coordinator.play()
     }
@@ -37,6 +41,10 @@ final class CarPlaySceneDelegate: NSObject, CPTemplateApplicationSceneDelegate {
         // Release the interface controller only. Audio keeps playing on the phone / Now Playing;
         // disconnecting from the car must not stop the stream.
         self.interfaceController = nil
+
+        // Stop publishing the CarPlay placeholder cover; the phone's Now Playing info reverts to
+        // its normal (cover-only) behavior.
+        SharedPlayer.coordinator.carPlayDidDisconnect()
     }
 }
 #endif
