@@ -27,31 +27,12 @@ extension Maxi80App {
     @State var coordinator: RadioPlayerCoordinator
 
     /* SKIP @bridge */public init() {
-        // 1. Create platform-appropriate AudioStreamPlayer
-        let player = AudioStreamPlayer()
+        // Resolve the process-wide coordinator/view-model from the shared composition root, so the
+        // phone UI and the CarPlay scene (iOS) drive the same audio + Now Playing pipeline.
+        let coord = SharedPlayer.coordinator
+        let vm = SharedPlayer.viewModel
 
-        // 2. Create platform-appropriate NowPlayingController
-        let nowPlaying = NowPlayingController()
-
-        // 3. Load configuration from plist and create APIClient
-        let config = ConfigurationLoader.loadAPIConfiguration()
-        let apiClient = APIClient(configuration: config)
-
-        // 4. Create ArtworkService with the API client
-        let artworkService = ArtworkService(apiClient: apiClient)
-
-        // 5. Create RadioPlayerCoordinator with all dependencies
-        let coord = RadioPlayerCoordinator(
-            player: player,
-            nowPlaying: nowPlaying,
-            apiClient: apiClient,
-            artworkService: artworkService
-        )
-
-        // 6. Create RadioPlayerViewModel with the coordinator
-        let vm = RadioPlayerViewModel(coordinator: coord)
-
-        // 7. Store as @State for SwiftUI lifecycle management
+        // Store as @State for SwiftUI lifecycle management.
         _coordinator = State(wrappedValue: coord)
         _viewModel = State(wrappedValue: vm)
     }

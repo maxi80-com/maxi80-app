@@ -22,6 +22,12 @@ struct PlaybackControlsView: View {
         #endif
     }
 
+    /// Point size for the two secondary (share / donate) glyphs. Both are rendered into an
+    /// identical square frame so their differing symbol shapes (a stroked arrow vs a bordered
+    /// circle) still occupy the same box and share one visual center.
+    private let secondaryGlyphSize: CGFloat = 22
+    private let secondaryFrame: CGFloat = 44
+
     @ViewBuilder
     private var controls: some View {
         HStack(spacing: 36) {
@@ -29,9 +35,8 @@ struct PlaybackControlsView: View {
             Button {
                 showShareSheet = true
             } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.title2)
-                    .foregroundStyle(.primary.opacity(viewModel.canShare ? 1.0 : 0.35))
+                secondaryIcon("square.and.arrow.up")
+                    .foregroundStyle(.secondary.opacity(viewModel.canShare ? 1.0 : 0.5))
             }
             .disabled(!viewModel.canShare)
             .accessibilityLabel("Share current track")
@@ -59,21 +64,30 @@ struct PlaybackControlsView: View {
                !donationUrl.isEmpty,
                let url = URL(string: donationUrl) {
                 Link(destination: url) {
-                    Image(systemName: "heart.circle")
-                        .font(.title2)
-                        .foregroundStyle(.primary)
+                    secondaryIcon("heart.circle")
+                        .foregroundStyle(.secondary)
                 }
+                // Link tints its label with the app accent (orange) by default; override to
+                // .secondary so donate matches the gray share button and the volume/AirPlay row.
+                .tint(.secondary)
                 .accessibilityLabel("Support Maxi 80")
             } else {
-                Image(systemName: "heart.circle")
-                    .font(.title2)
-                    .foregroundStyle(.primary.opacity(0.35))
+                secondaryIcon("heart.circle")
+                    .foregroundStyle(.secondary.opacity(0.5))
                     .accessibilityHidden(true)
             }
         }
         .shareSheet(isPresented: $showShareSheet) {
             viewModel.shareCurrentTrack()
         }
+    }
+
+    /// A secondary control glyph normalized to a fixed size and square frame so the share and
+    /// donate buttons align and read as the same size despite their different symbol shapes.
+    private func secondaryIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: secondaryGlyphSize))
+            .frame(width: secondaryFrame, height: secondaryFrame)
     }
 }
 

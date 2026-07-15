@@ -45,6 +45,14 @@ public final class RadioPlayerCoordinator {
     private var cachedStation: Station?
     @ObservationIgnored
     private var historyTask: Task<Void, Never>?
+    /// When history was last successfully fetched, used to decide whether a `play()` should
+    /// refresh it. `nil` until the first fetch.
+    @ObservationIgnored
+    private var lastHistoryFetchedAt: Date?
+    /// Retries the artwork lookup for the current song when it wasn't available on first fetch
+    /// (backend collector hadn't produced it yet). Cancelled whenever the song changes.
+    @ObservationIgnored
+    private var artworkRetryTask: Task<Void, Never>?
 
     #if !SKIP
     /// Modern NowPlaying-framework publisher (iOS 26+). `nil` on platforms/SDKs without the
@@ -102,8 +110,10 @@ public final class RadioPlayerCoordinator {
         let streamURL = station?.streamUrl ?? defaultStreamURL
         player.play(url: streamURL)
 
-        // Refresh history concurrently — don't block audio start.
-        refreshHistory()
+        // Refresh history if it's gone stale. The backend collector runs every 3 minutes, so if
+        // the last fetch is older than that the server may have new songs (e.g. tracks played while
+        // playback was stopped). Merging picks up only the new entries — see `fetchHistory`.
+        refreshHistoryIfStale()
     }
 
     /// Fetch the play history off the main flow. Non-blocking: launches an unstructured
@@ -113,6 +123,19 @@ public final class RadioPlayerCoordinator {
         historyTask = Task { [weak self] in
             await self?.fetchHistory()
         }
+    }
+
+    /// How old the history may be before a `play()` refetches it. Matches the backend collector's
+    /// 3-minute cadence: younger than this, no new server entries are possible.
+    private static let historyStaleness: TimeInterval = 3 * 60
+
+    /// Refresh history only if it has never been fetched or is older than `historyStaleness`.
+    private func refreshHistoryIfStale() {
+        if let last = lastHistoryFetchedAt, Date().timeIntervalSince(last) < Self.historyStaleness {
+            logger.debug("history is fresh, skipping refresh")
+            return
+        }
+        refreshHistory()
     }
 
     /// Stop streaming and update state.
@@ -220,6 +243,9 @@ public final class RadioPlayerCoordinator {
 
         currentSong = metadata
 
+        // A new song supersedes any in-flight artwork retry for the previous one.
+        artworkRetryTask?.cancel()
+
         // Fetch artwork asynchronously
         logger.info("fetching artwork for current song")
         let artwork = await artworkService.fetchArtwork(artist: metadata.artist, title: metadata.title)
@@ -245,6 +271,61 @@ public final class RadioPlayerCoordinator {
             dominantColor: artwork.rgb
         )
         history.append(entry)
+
+        // If artwork wasn't ready (backend collector hadn't produced it yet), retry in the
+        // background — the cover fills in once it appears, without waiting for the next song.
+        if artwork.isDefault {
+            startArtworkRetry(for: metadata)
+        }
+    }
+
+    /// Delays between artwork retries when the first lookup found nothing. Grows so we catch up
+    /// quickly then back off; the sequence spans ~65s, comfortably covering the collector's cadence.
+    private static let artworkRetryDelays: [UInt64] = [5, 10, 20, 30].map { $0 * 1_000_000_000 }
+
+    /// Retry the artwork lookup for `metadata` with backoff until it resolves or the song changes.
+    /// The `ArtworkService` no longer caches misses, so each attempt actually re-queries the backend.
+    private func startArtworkRetry(for metadata: SongMetadata) {
+        artworkRetryTask = Task { [weak self] in
+            for delay in Self.artworkRetryDelays {
+                try? await Task.sleep(nanoseconds: delay)
+                if Task.isCancelled { return }
+                guard let self else { return }
+
+                // Bail if the song moved on while we were waiting.
+                guard self.currentSong == metadata else { return }
+
+                let artwork = await self.artworkService.fetchArtwork(artist: metadata.artist, title: metadata.title)
+                if Task.isCancelled || self.currentSong != metadata { return }
+                guard !artwork.isDefault else { continue }
+
+                logger.info("artwork retry succeeded for \(metadata.artist) — \(metadata.title)")
+                self.applyRetriedArtwork(artwork, for: metadata)
+                return
+            }
+            logger.debug("artwork retry exhausted for \(metadata.artist) — \(metadata.title)")
+        }
+    }
+
+    /// Apply artwork that arrived on retry: update the current-song cover/background, the system
+    /// Now Playing info, and the matching (most recent) history entry so the carousel cover fills in.
+    private func applyRetriedArtwork(_ artwork: ArtworkResult, for metadata: SongMetadata) {
+        currentArtwork = artwork
+        let playing = { if case .playing = playbackState { return true } else { return false } }()
+        publishNowPlaying(
+            artist: metadata.artist,
+            title: metadata.title,
+            artworkURL: artwork.url,
+            isPlaying: playing
+        )
+
+        // Update the newest history entry for this song (the live-appended one) in place.
+        if let index = history.lastIndex(where: { $0.songMetadata == metadata }) {
+            var entry = history[index]
+            entry.artworkURL = artwork.url
+            entry.dominantColor = artwork.rgb
+            history[index] = entry
+        }
     }
 
     // MARK: - Now Playing Publishing
@@ -345,20 +426,83 @@ public final class RadioPlayerCoordinator {
 
     // MARK: - History Fetching
 
-    private func fetchHistory() async {
+    /// Fetches `/history` and merges it into the in-memory list. Internal (not private) so tests
+    /// can await it directly; production callers go through `refreshHistory`/`refreshHistoryIfStale`.
+    func fetchHistory() async {
         logger.info("fetchHistory: GET /history")
         guard let json = try? await apiClient.fetchHistory(),
               let entries = parseHistoryEntries(from: json) else {
             logger.notice("fetchHistory: no data or decode failed")
             return
         }
-        logger.info("fetchHistory: decoded \(entries.count) entries, resolving artwork URLs")
 
-        // Resolve each entry's artwork (backend gives an S3 key, not a loadable URL) into a
-        // lightweight presigned URL, concurrently. AsyncImage loads the image lazily — we do NOT
-        // download it here. The dominant color comes from the backend `color` field (decoded on
-        // the entry); if absent it simply stays nil (background falls back).
-        let resolved = await withTaskGroup(of: (Int, String?).self) { group in
+        // First load (empty history): resolve artwork for every entry and seed the list.
+        if history.isEmpty {
+            let resolved = await resolveArtwork(for: entries)
+            history = resolved
+            lastHistoryFetchedAt = Date()
+            logger.info("fetchHistory: seeded \(self.history.count) entries")
+            return
+        }
+
+        lastHistoryFetchedAt = Date()
+
+        // Reconcile the backend list into the in-memory one, matching by SONG identity
+        // (artist+title), NOT by `id`: a live-appended entry and the backend's own copy of the same
+        // song get different timestamps → different ids, so id-based matching would show a duplicate.
+        //
+        // Two things are resolved against the backend:
+        //   1. Genuinely NEW songs not in memory yet (played while stopped/paused).
+        //   2. EXISTING songs still MISSING artwork — a live entry appended before the backend had
+        //      produced the cover carries `artworkURL == nil`; the backend copy now resolves one.
+        //      Without this, keeping the stale nil-artwork live entry would leave it blank forever.
+        // Songs already showing artwork are left untouched (no reload, no flicker). Legitimate
+        // repeat plays (same song at different times) are preserved — we edit in place and append,
+        // never collapse by song.
+        let existingSongs = Set(history.map(\.songMetadata))
+        let songsMissingArtwork = Set(history.filter { $0.artworkURL == nil }.map(\.songMetadata))
+
+        // Backend entries worth resolving: new songs, or songs an in-memory entry still lacks art for.
+        let toResolve = entries.filter {
+            !existingSongs.contains($0.songMetadata) || songsMissingArtwork.contains($0.songMetadata)
+        }
+        guard !toResolve.isEmpty else {
+            logger.info("fetchHistory: nothing new or missing artwork to merge")
+            return
+        }
+
+        let resolved = await resolveArtwork(for: toResolve)
+
+        // Backend-resolved artwork URL per song, for healing existing entries.
+        var resolvedURLBySong: [SongMetadata: String] = [:]
+        for entry in resolved {
+            if let url = entry.artworkURL { resolvedURLBySong[entry.songMetadata] = url }
+        }
+
+        // 1. Heal existing entries that were missing artwork, in place (preserves order & repeats).
+        var healed = 0
+        history = history.map { entry in
+            guard entry.artworkURL == nil, let url = resolvedURLBySong[entry.songMetadata] else { return entry }
+            var copy = entry
+            copy.artworkURL = url
+            healed += 1
+            return copy
+        }
+
+        // 2. Append genuinely-new songs, then order by timestamp so newest sits nearest the now-slot
+        //    (the carousel renders history oldest→newest, left→right).
+        let newEntries = resolved.filter { !existingSongs.contains($0.songMetadata) }
+        if !newEntries.isEmpty {
+            history = (history + newEntries).sorted { $0.timestamp < $1.timestamp }
+        }
+        logger.info("fetchHistory: healed \(healed), added \(newEntries.count); history now has \(self.history.count)")
+    }
+
+    /// Resolves each entry's artwork S3 key into a lightweight presigned URL, concurrently.
+    /// AsyncImage loads the image lazily — we do NOT download it here. The dominant color comes
+    /// from the backend `color` field already decoded on the entry; if absent it stays nil.
+    private func resolveArtwork(for entries: [HistoryEntry]) async -> [HistoryEntry] {
+        await withTaskGroup(of: (Int, String?).self) { group in
             for (index, entry) in entries.enumerated() {
                 group.addTask { [artworkService] in
                     let url = await artworkService.resolveArtworkURL(artist: entry.artist, title: entry.title)
@@ -375,24 +519,6 @@ public final class RadioPlayerCoordinator {
                 return copy
             }
         }
-
-        let withArtwork = resolved.filter { $0.artworkURL != nil }.count
-        logger.info("fetchHistory: \(withArtwork)/\(resolved.count) entries have artwork URLs")
-
-        // Only seed history if it's currently empty (don't overwrite live entries)
-        if history.isEmpty {
-            history = resolved
-        } else {
-            // Merge API entries with any locally-appended live entries. Dedup by SONG identity
-            // (artist+title), NOT by `id`: a live entry and the backend's own copy of the same
-            // song get different timestamps → different ids, so id-based dedup would keep both
-            // and show a duplicate. Keep the existing (live) entries, prepend only backend
-            // entries whose song isn't already present.
-            let existingSongs = Set(history.map { $0.songMetadata })
-            let newEntries = resolved.filter { !existingSongs.contains($0.songMetadata) }
-            history = newEntries + history
-        }
-        logger.info("fetchHistory: history now has \(self.history.count) entries")
     }
 
     // MARK: - JSON Parsing Helpers

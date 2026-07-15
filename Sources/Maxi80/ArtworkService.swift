@@ -31,11 +31,13 @@ public final class ArtworkService {
             return cached
         }
 
+        // Only real artwork is cached — never the default/miss result. A miss usually means the
+        // backend collector hasn't produced the artwork yet, so it may appear on a later retry;
+        // caching the miss would pin the generic cover for the whole song. See the retry loop in
+        // RadioPlayerCoordinator.
         guard let urlString = await resolveArtworkURL(artist: artist, title: title),
               let artworkURL = URL(string: urlString) else {
-            let defaultResult = makeDefaultResult()
-            cache[cacheKey] = defaultResult
-            return defaultResult
+            return makeDefaultResult()
         }
 
         do {
@@ -43,18 +45,16 @@ public final class ArtworkService {
 
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
-                let defaultResult = makeDefaultResult()
-                cache[cacheKey] = defaultResult
-                return defaultResult
+                return makeDefaultResult()
             }
 
             let result = makeResult(from: data, url: urlString)
-            cache[cacheKey] = result
+            if !result.isDefault {
+                cache[cacheKey] = result
+            }
             return result
         } catch {
-            let defaultResult = makeDefaultResult()
-            cache[cacheKey] = defaultResult
-            return defaultResult
+            return makeDefaultResult()
         }
     }
 

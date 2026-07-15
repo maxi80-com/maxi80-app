@@ -66,11 +66,24 @@ extension AudioStreamPlayer {
 
     private func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
+        // Setting the category is cheap; do it synchronously so it's in place before activation.
         do {
             try session.setCategory(.playback, mode: .default, options: [])
-            try session.setActive(true)
         } catch {
-            onError?("Failed to configure audio session: \(error.localizedDescription)")
+            onError?("Failed to set audio session category: \(error.localizedDescription)")
+        }
+
+        // `setActive(true)` performs synchronous IPC with the audio daemon and can block the main
+        // thread (AVFoundation warns about this). Activate off the main actor; AVAudioSession is
+        // thread-safe. Errors hop back to the main actor to reach `onError`.
+        Task.detached { [weak self] in
+            do {
+                try session.setActive(true)
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.onError?("Failed to activate audio session: \(error.localizedDescription)")
+                }
+            }
         }
     }
 

@@ -19,7 +19,9 @@ GENERATE_INFOPLIST_FILE = YES
 //INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.utilities
 
 // iOS-specific Info.plist property keys
-INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphone*] = YES
+// NOTE: scene-manifest auto-generation is intentionally OFF — CarPlay requires an explicit
+// UIApplicationSceneManifest (declaring the CarPlay scene) in Info.plist, which the auto-generated
+// manifest cannot express. See Darwin/Info.plist.
 INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphone*] = YES
 INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphone*] = YES
 INFOPLIST_KEY_UIStatusBarStyle[sdk=iphone*] = UIStatusBarStyleDefault
@@ -50,6 +52,10 @@ SWIFT_VERSION = 6
 // Development team ID for on-device testing
 CODE_SIGNING_REQUIRED = NO
 CODE_SIGN_STYLE = Automatic
-CODE_SIGN_ENTITLEMENTS = Entitlements.plist
+// CarPlay audio is iOS-only, so the CarPlay entitlement lives in the iOS entitlements file only.
+// macOS uses an empty entitlements file (no CarPlay), so signed macOS builds don't require a
+// CarPlay provisioning profile.
+CODE_SIGN_ENTITLEMENTS[sdk=iphone*] = Entitlements-iOS.plist
+CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = Entitlements-macOS.plist
 //CODE_SIGNING_IDENTITY = -
 //DEVELOPMENT_TEAM =
