@@ -28,11 +28,12 @@ struct VolumeSliderView: View {
     private var volumeSlider: some View {
         #if !SKIP && canImport(UIKit)
         // MPVolumeView drives the system output volume, so it also controls AirPlay device volume.
-        // Give it its natural height (~44pt): MPVolumeView centers its internal slider vertically
-        // within that height, so the HStack's default .center alignment lines the track up with the
-        // speaker icons. Forcing a shorter frame pins the slider to the top → misaligned.
+        // Its internal slider (thumb ~18pt tall) is top-biased inside the view's frame on device, so
+        // a tall frame floats the track above the center-aligned speaker icons. Constrain the frame
+        // to ~the thumb height, leaving no vertical slack for it to drift — the track then lines up
+        // with the icons regardless of the internal anchoring.
         SystemVolumeSlider(tint: .primary)
-            .frame(height: 44)
+            .frame(height: 18)
         #else
         // macOS: no system-volume view — fall back to the app-relative player volume.
         Slider(
