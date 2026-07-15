@@ -78,9 +78,23 @@ struct CoverFlowView: View {
                   try? await Task.sleep(nanoseconds: 60_000_000)
                   proxy.scrollTo(target, anchor: .center)
               }
-              // No anchor: scrollPosition(id:anchor:) only supports a nil anchor on Android.
-              // Read-only here — reports which cover the user swiped to.
+              // Reports which cover the user swiped to. On iOS 26/macOS, scrollPosition(id:) writes
+              // the centered id back into `selection` and drives the title. On iOS 27 that
+              // write-back regressed (verified: proxy-scrolling the viewport never updated the
+              // binding), so on Apple platforms we instead derive the centered id ourselves from
+              // each cell's distance-to-center (see CenteredCoverKey) and skip scrollPosition's
+              // read-back entirely. Android's scrollPosition(id:) still works and its
+              // scrollPosition(id:anchor:) fatalErrors on a non-nil anchor, so it keeps this path.
+              #if SKIP
               .scrollPosition(id: $selection)
+              #else
+              .onPreferenceChange(CenteredCoverKey.self) { centered in
+                  guard let id = centered?.id else { return }
+                  if AnyHashable(id) != selection {
+                      selection = AnyHashable(id)
+                  }
+              }
+              #endif
             }
         }
         .frame(height: coverSize + verticalMargin * 2)
@@ -111,10 +125,37 @@ struct CoverFlowView: View {
                 )
                 // Off-center covers sit behind the focused one.
                 .zIndex(1 - abs(normalized))
+                // Report this cover's distance-to-center so the parent can pick the centered id
+                // (Apple only — Android drives `selection` via scrollPosition(id:) instead).
+                #if !SKIP
+                .preference(
+                    key: CenteredCoverKey.self,
+                    value: CenteredCover(id: cover.id, distance: abs(offset))
+                )
+                #endif
         }
         .frame(width: coverSize, height: coverSize)
     }
 }
+
+#if !SKIP
+/// The cover nearest the container center, used to derive the focused selection on Apple platforms
+/// where iOS 27's `scrollPosition(id:)` no longer writes the centered id back into its binding.
+private struct CenteredCover: Hashable {
+    let id: String
+    let distance: Double
+}
+
+private struct CenteredCoverKey: PreferenceKey {
+    static let defaultValue: CenteredCover? = nil
+
+    static func reduce(value: inout CenteredCover?, nextValue: () -> CenteredCover?) {
+        guard let next = nextValue() else { return }
+        guard let current = value else { value = next; return }
+        if next.distance < current.distance { value = next }
+    }
+}
+#endif
 
 /// A single cover image: a remote artwork URL for played songs, or a bundled asset for the
 /// startup placeholder. Falls back to the default generic cover if neither loads.
