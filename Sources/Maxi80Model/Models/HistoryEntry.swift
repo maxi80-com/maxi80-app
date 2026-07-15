@@ -4,7 +4,7 @@ import Foundation
 /// `{"entries": [{artist, title, artwork, timestamp}]}` where `artwork` is an S3 key
 /// (not a loadable URL) and `timestamp` is an ISO-8601 string. The backend has no `id`,
 /// so a stable one is derived from timestamp + artist + title.
-public struct HistoryEntry: Sendable, Identifiable, Decodable {
+public struct HistoryEntry: Sendable, Identifiable, Decodable, Equatable {
     public let artist: String
     public let title: String
     /// S3 key of the artwork from the backend (e.g. "collected/Artist/Title/artwork.jpg").
@@ -26,6 +26,27 @@ public struct HistoryEntry: Sendable, Identifiable, Decodable {
 
     public var songMetadata: SongMetadata {
         SongMetadata(artist: artist, title: title)
+    }
+
+    /// Normalized song identity for history dedup — collapses the station-name artist to empty so
+    /// a backend copy and a live artist-less copy of the same program match. See `SongMetadata.identity`.
+    public var songIdentity: SongMetadata {
+        songMetadata.identity
+    }
+
+    /// Merge another entry known to represent the same play as `self`. Prefers a non-empty artist
+    /// (so the backend's `Maxi80` wins over a live artist-less copy) and fills artwork/color from
+    /// whichever entry has them, `self` winning ties. The single home of the "keep `Maxi80`, keep
+    /// the artwork" policy; only ever applied to a pair the caller already decided is one play.
+    public func mergedWith(_ other: HistoryEntry) -> HistoryEntry {
+        HistoryEntry(
+            artist: artist.isEmpty ? other.artist : artist,
+            title: title,
+            artworkKey: artworkKey ?? other.artworkKey,
+            timestamp: timestamp,
+            artworkURL: artworkURL ?? other.artworkURL,
+            dominantColor: dominantColor ?? other.dominantColor
+        )
     }
 
     private enum CodingKeys: String, CodingKey {

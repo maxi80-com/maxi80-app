@@ -98,7 +98,9 @@ public final class RadioPlayerViewModel {
     private var pastEntries: [HistoryEntry] {
         var entries = coordinator.history
         if let current = coordinator.currentSong {
-            while entries.last?.songMetadata == current {
+            // Match by normalized identity so the current program is dropped from the past list even
+            // when history stores it with the `Maxi80` artist and the live current song has none.
+            while entries.last?.songIdentity == current.identity {
                 entries.removeLast()
             }
         }
@@ -179,7 +181,16 @@ public final class RadioPlayerViewModel {
 
     public var displayedArtist: String {
         if let entry = focusedHistoryEntry { return entry.artist }
-        return currentSong?.artist ?? station?.name ?? ""
+        if let artist = currentSong?.artist, !artist.isEmpty { return artist }
+        // The live stream leaves DJ programs artist-less; the backend history copy carries the
+        // `Maxi80` artist, so surface it for the now slot before falling back to the station name.
+        if let current = currentSong,
+           let historyArtist = coordinator.history.last(where: {
+               $0.songIdentity == current.identity && !$0.artist.isEmpty
+           })?.artist {
+            return historyArtist
+        }
+        return station?.name ?? ""
     }
 
     public var displayedTitle: String {

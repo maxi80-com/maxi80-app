@@ -125,6 +125,47 @@ struct HistoryMergeTests {
         #expect(coordinator.history.first?.artworkURL == "https://art.example/A Lover's Holiday.jpg")
     }
 
+    @Test("A live artist-less program collapses with its backend Maxi80 copy into one entry")
+    @MainActor
+    func stationArtistProgramCollapses() async {
+        // Backend serves the program with the `Maxi80` artist and resolvable artwork.
+        let json = Self.historyJSON([("Maxi80", "Maxi Club avec Dj Lucky", "2026-07-15T19:24:00Z")])
+        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+
+        // In-memory copy was live-appended artist-less (the stream metadata had no " - " separator).
+        coordinator.history = [
+            HistoryEntry(artist: "", title: "Maxi Club avec Dj Lucky", timestamp: "2026-07-15T19:24:00Z")
+        ]
+
+        await coordinator.fetchHistory()
+
+        // One entry, not two: the live copy healed into the backend copy.
+        #expect(coordinator.history.count == 1)
+        // Keeps the `Maxi80` artist (backend wins the empty live one) and gains the artwork.
+        #expect(coordinator.history.first?.artist == "Maxi80")
+        #expect(coordinator.history.first?.artworkURL == "https://art.example/Maxi Club avec Dj Lucky.jpg")
+    }
+
+    @Test("Genuine repeat plays of the same song are preserved (not collapsed)")
+    @MainActor
+    func repeatPlaysArePreserved() async {
+        // Backend reports the song once; in-memory has two real plays at different timestamps.
+        let json = Self.historyJSON([("Change", "A Lover's Holiday", "2026-07-15T10:00:00Z")])
+        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+        coordinator.history = [
+            HistoryEntry(artist: "Change", title: "A Lover's Holiday",
+                         timestamp: "2026-07-15T10:00:00Z", artworkURL: "url-1"),
+            HistoryEntry(artist: "Change", title: "A Lover's Holiday",
+                         timestamp: "2026-07-15T11:30:00Z", artworkURL: "url-2"),
+        ]
+
+        await coordinator.fetchHistory()
+
+        // Both plays survive — dedup heals/appends, it never collapses distinct timestamps.
+        #expect(coordinator.history.count == 2)
+        #expect(coordinator.history.map(\.artworkURL) == ["url-1", "url-2"])
+    }
+
     @Test("An existing entry that already has artwork is not re-resolved")
     @MainActor
     func existingArtworkIsPreserved() async {

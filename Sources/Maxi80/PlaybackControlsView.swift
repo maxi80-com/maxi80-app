@@ -13,6 +13,7 @@ import Maxi80Services
 struct PlaybackControlsView: View {
     @Bindable var viewModel: RadioPlayerViewModel
     @State var showShareSheet = false
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         controls
@@ -28,6 +29,19 @@ struct PlaybackControlsView: View {
     private let secondaryGlyphSize: CGFloat = 22
     private let secondaryFrame: CGFloat = 44
 
+    /// Tint for the secondary (share/donate) glyphs. On Apple `.secondary` already tracks the
+    /// forced color scheme. On Android that override doesn't recolor `.secondary` (it stays a fixed
+    /// dark gray, invisible on the dark branded background), so resolve an explicit adaptive gray —
+    /// same effective-scheme rule as `RadioPlayerView`'s song label.
+    private var secondaryControlColor: Color {
+        #if os(Android)
+        let dark = viewModel.dominantColor == nil ? true : (colorScheme == .dark)
+        return dark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
+        #else
+        return Color.secondary
+        #endif
+    }
+
     @ViewBuilder
     private var controls: some View {
         HStack(spacing: 36) {
@@ -35,8 +49,8 @@ struct PlaybackControlsView: View {
             Button {
                 showShareSheet = true
             } label: {
-                secondaryIcon("square.and.arrow.up")
-                    .foregroundStyle(Color.secondary.opacity(viewModel.canShare ? 1.0 : 0.5))
+                secondaryIcon("square.and.arrow.up", android: .share,
+                              tint: secondaryControlColor.opacity(viewModel.canShare ? 1.0 : 0.5))
             }
             .disabled(!viewModel.canShare)
             .accessibilityLabel("Share current track")
@@ -50,9 +64,15 @@ struct PlaybackControlsView: View {
                         ProgressView()
                             .tint(.orange)
                     } else {
+                        #if os(Android)
+                        // SF Symbols don't exist on Android and `pause.*`/`play.circle.*` aren't in
+                        // SkipUI's core-icon map, so draw the extended Material icons directly.
+                        AndroidIcon(symbol: viewModel.isPlaying ? .pause : .play, size: 68, tint: .orange)
+                        #else
                         Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                             .font(.system(size: 68))
                             .foregroundStyle(.orange)
+                        #endif
                     }
                 }
                 .frame(width: 68, height: 68)
@@ -64,16 +84,14 @@ struct PlaybackControlsView: View {
                !donationUrl.isEmpty,
                let url = URL(string: donationUrl) {
                 Link(destination: url) {
-                    secondaryIcon("heart.circle")
-                        .foregroundStyle(Color.secondary)
+                    secondaryIcon("heart.circle", android: .favorite, tint: secondaryControlColor)
                 }
                 // Link tints its label with the app accent (orange) by default; force the concrete
-                // Color.secondary gray so donate matches the share button and the volume/AirPlay row.
-                .tint(Color.secondary)
+                // secondary gray so donate matches the share button and the volume/AirPlay row.
+                .tint(secondaryControlColor)
                 .accessibilityLabel("Support Maxi 80")
             } else {
-                secondaryIcon("heart.circle")
-                    .foregroundStyle(Color.secondary.opacity(0.5))
+                secondaryIcon("heart.circle", android: .favorite, tint: secondaryControlColor.opacity(0.5))
                     .accessibilityHidden(true)
             }
         }
@@ -84,10 +102,22 @@ struct PlaybackControlsView: View {
 
     /// A secondary control glyph normalized to a fixed size and square frame so the share and
     /// donate buttons align and read as the same size despite their different symbol shapes.
-    private func secondaryIcon(_ systemName: String) -> some View {
+    ///
+    /// On Apple platforms this renders the SF Symbol tinted via `.foregroundStyle`. On Android SF
+    /// Symbols don't exist (and `heart.circle` isn't in SkipUI's core-icon map), so it draws the
+    /// matching extended Material icon, which must be tinted directly rather than through the
+    /// foreground style — hence the explicit `tint` parameter.
+    @ViewBuilder
+    private func secondaryIcon(_ systemName: String, android: MaterialSymbol, tint: Color) -> some View {
+        #if os(Android)
+        AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: tint)
+            .frame(width: secondaryFrame, height: secondaryFrame)
+        #else
         Image(systemName: systemName)
             .font(.system(size: secondaryGlyphSize))
             .frame(width: secondaryFrame, height: secondaryFrame)
+            .foregroundStyle(tint)
+        #endif
     }
 }
 

@@ -180,4 +180,47 @@ struct RadioPlayerViewModelTests {
         // Only the non-current past entry remains, plus the now slot.
         #expect(vm.covers.count == 2)
     }
+
+    @Test("A Maxi80 history entry isn't shown as a past cover while the same program plays artist-less")
+    @MainActor
+    func stationArtistProgramNotDuplicatedInCovers() {
+        let (vm, coordinator) = makeViewModel()
+        // Live current song is artist-less (the stream had no " - " separator).
+        coordinator.currentSong = SongMetadata(artist: "", title: "Maxi Club avec Dj Lucky")
+        coordinator.history = [
+            HistoryEntry(artist: "Older", title: "Older Title", timestamp: "1000"),
+            // Backend copy of the now-playing program, carrying the `Maxi80` artist.
+            HistoryEntry(artist: "Maxi80", title: "Maxi Club avec Dj Lucky", timestamp: "2000"),
+        ]
+
+        // The program shows only in the now slot — the Maxi80 past copy is dropped despite the
+        // artist mismatch, so the carousel holds the older cover plus the now slot.
+        #expect(vm.covers.count == 2)
+        #expect(vm.covers.last?.id == RadioPlayerViewModel.nowSlotID)
+    }
+
+    @Test("Now-slot artist falls back to the Maxi80 history copy when the live song is artist-less")
+    @MainActor
+    func displayedArtistFallsBackToStationArtistFromHistory() {
+        let (vm, coordinator) = makeViewModel()
+        coordinator.station = Station(
+            name: "Maxi 80",
+            streamUrl: "https://audio1.maxi80.com",
+            image: "",
+            shortDesc: "La radio",
+            longDesc: "",
+            websiteUrl: "",
+            donationUrl: "",
+            defaultCoverUrl: ""
+        )
+        coordinator.currentSong = SongMetadata(artist: "", title: "Maxi Club avec Dj Lucky")
+        coordinator.history = [
+            HistoryEntry(artist: "Maxi80", title: "Maxi Club avec Dj Lucky", timestamp: "2000"),
+        ]
+        vm.selectedCoverID = RadioPlayerViewModel.nowSlotID
+
+        // Surfaces the backend artist rather than falling straight through to the station name.
+        #expect(vm.displayedArtist == "Maxi80")
+        #expect(vm.displayedTitle == "Maxi Club avec Dj Lucky")
+    }
 }

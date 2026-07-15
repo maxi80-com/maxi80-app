@@ -368,11 +368,15 @@ public final class RadioPlayerCoordinator {
         )
 
         // Update the newest history entry for this song (the live-appended one) in place.
-        if let index = history.lastIndex(where: { $0.songMetadata == metadata }) {
-            var entry = history[index]
-            entry.artworkURL = artwork.url
-            entry.dominantColor = artwork.rgb
-            history[index] = entry
+        if let index = history.lastIndex(where: { $0.songIdentity == metadata.identity }) {
+            let patch = HistoryEntry(
+                artist: history[index].artist,
+                title: metadata.title,
+                timestamp: history[index].timestamp,
+                artworkURL: artwork.url,
+                dominantColor: artwork.rgb
+            )
+            history[index] = history[index].mergedWith(patch)
         }
     }
 
@@ -543,12 +547,15 @@ public final class RadioPlayerCoordinator {
         // Songs already showing artwork are left untouched (no reload, no flicker). Legitimate
         // repeat plays (same song at different times) are preserved — we edit in place and append,
         // never collapse by song.
-        let existingSongs = Set(history.map(\.songMetadata))
-        let songsMissingArtwork = Set(history.filter { $0.artworkURL == nil }.map(\.songMetadata))
+        // Identity, not raw songMetadata: a backend `Maxi80` entry and a live artist-less entry for
+        // the same program collapse to one identity, so they heal into a single entry rather than
+        // showing a duplicate cover.
+        let existingSongs = Set(history.map(\.songIdentity))
+        let songsMissingArtwork = Set(history.filter { $0.artworkURL == nil }.map(\.songIdentity))
 
         // Backend entries worth resolving: new songs, or songs an in-memory entry still lacks art for.
         let toResolve = entries.filter {
-            !existingSongs.contains($0.songMetadata) || songsMissingArtwork.contains($0.songMetadata)
+            !existingSongs.contains($0.songIdentity) || songsMissingArtwork.contains($0.songIdentity)
         }
         guard !toResolve.isEmpty else {
             logger.info("fetchHistory: nothing new or missing artwork to merge")
@@ -557,25 +564,28 @@ public final class RadioPlayerCoordinator {
 
         let resolved = await resolveArtwork(for: toResolve)
 
-        // Backend-resolved artwork URL per song, for healing existing entries.
-        var resolvedURLBySong: [SongMetadata: String] = [:]
+        // Backend entry per identity, for healing existing entries (carries the `Maxi80` artist,
+        // artwork URL, and color the live copy may be missing).
+        var backendBySong: [SongMetadata: HistoryEntry] = [:]
         for entry in resolved {
-            if let url = entry.artworkURL { resolvedURLBySong[entry.songMetadata] = url }
+            backendBySong[entry.songIdentity] = entry
         }
 
-        // 1. Heal existing entries that were missing artwork, in place (preserves order & repeats).
+        // 1. Heal existing entries against the backend copy, in place (preserves order & repeats).
+        //    Merges when the in-memory entry lacks artwork or a real artist; `mergedWith` keeps the
+        //    non-empty `Maxi80` artist and fills artwork/color.
         var healed = 0
         history = history.map { entry in
-            guard entry.artworkURL == nil, let url = resolvedURLBySong[entry.songMetadata] else { return entry }
-            var copy = entry
-            copy.artworkURL = url
-            healed += 1
-            return copy
+            guard entry.artworkURL == nil || entry.artist.isEmpty,
+                  let backend = backendBySong[entry.songIdentity] else { return entry }
+            let merged = entry.mergedWith(backend)
+            if merged != entry { healed += 1 }
+            return merged
         }
 
         // 2. Append genuinely-new songs, then order by timestamp so newest sits nearest the now-slot
         //    (the carousel renders history oldest→newest, left→right).
-        let newEntries = resolved.filter { !existingSongs.contains($0.songMetadata) }
+        let newEntries = resolved.filter { !existingSongs.contains($0.songIdentity) }
         if !newEntries.isEmpty {
             history = (history + newEntries).sorted { $0.timestamp < $1.timestamp }
         }

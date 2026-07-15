@@ -4,17 +4,16 @@ import SwiftUI
 /// flanked by speaker icons, with a dedicated AirPlay route picker.
 struct VolumeSliderView: View {
     @Bindable var viewModel: RadioPlayerViewModel
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "speaker.fill")
-                .foregroundStyle(.secondary)
+            speakerIcon("speaker.fill", android: .volumeDown)
 
             volumeSlider
                 .accessibilityLabel("Volume")
 
-            Image(systemName: "speaker.wave.3.fill")
-                .foregroundStyle(.secondary)
+            speakerIcon("speaker.wave.3.fill", android: .volumeUp)
 
             // AirPlay / sound-sharing output picker (iOS only). Normal state matches the row's
             // gray glyphs; it flips to orange (its activeTint) only when audio is routed out.
@@ -24,6 +23,29 @@ struct VolumeSliderView: View {
         }
         .padding(.horizontal)
     }
+
+    /// A speaker glyph flanking the slider. SF Symbol on Apple; on Android the `speaker.*` symbols
+    /// aren't in SkipUI's core-icon map, so draw the matching extended Material volume icon.
+    @ViewBuilder
+    private func speakerIcon(_ systemName: String, android: MaterialSymbol) -> some View {
+        #if os(Android)
+        // `.secondary` doesn't adapt to the forced scheme on Android (stays dark, invisible on the
+        // dark branded background), so tint with an explicit adaptive gray — matches the controls row.
+        AndroidIcon(symbol: android, size: 22, tint: secondaryControlColor)
+        #else
+        Image(systemName: systemName)
+            .foregroundStyle(.secondary)
+        #endif
+    }
+
+    #if os(Android)
+    /// Adaptive gray for the speaker glyphs, keyed off the same effective color scheme as the
+    /// song label (dark when no artwork color is present).
+    private var secondaryControlColor: Color {
+        let dark = viewModel.dominantColor == nil ? true : (colorScheme == .dark)
+        return dark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
+    }
+    #endif
 
     @ViewBuilder
     private var volumeSlider: some View {
