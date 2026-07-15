@@ -16,8 +16,9 @@ struct VolumeSliderView: View {
             Image(systemName: "speaker.wave.3.fill")
                 .foregroundStyle(.secondary)
 
-            // AirPlay / sound-sharing output picker (iOS only).
-            AirPlayRoutePicker()
+            // AirPlay / sound-sharing output picker (iOS only). Normal state matches the row's
+            // gray glyphs; it flips to orange (its activeTint) only when audio is routed out.
+            AirPlayRoutePicker(tint: .secondary)
                 .frame(width: 28, height: 28)
                 .accessibilityLabel("AirPlay output")
         }
@@ -32,7 +33,7 @@ struct VolumeSliderView: View {
         // a tall frame floats the track above the center-aligned speaker icons. Constrain the frame
         // to ~the thumb height, leaving no vertical slack for it to drift — the track then lines up
         // with the icons regardless of the internal anchoring.
-        SystemVolumeSlider(tint: .primary)
+        SystemVolumeSlider(tint: .secondary)
             .frame(height: 18)
         #else
         // macOS: no system-volume view — fall back to the app-relative player volume.
@@ -40,7 +41,7 @@ struct VolumeSliderView: View {
             value: Binding(get: { viewModel.volume }, set: { viewModel.setVolume($0) }),
             in: 0...1
         )
-        .tint(.primary)
+        .tint(Color.secondary)
         #endif
     }
 }

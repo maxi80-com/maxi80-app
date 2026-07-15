@@ -36,7 +36,7 @@ struct PlaybackControlsView: View {
                 showShareSheet = true
             } label: {
                 secondaryIcon("square.and.arrow.up")
-                    .foregroundStyle(.secondary.opacity(viewModel.canShare ? 1.0 : 0.5))
+                    .foregroundStyle(Color.secondary.opacity(viewModel.canShare ? 1.0 : 0.5))
             }
             .disabled(!viewModel.canShare)
             .accessibilityLabel("Share current track")
@@ -48,11 +48,11 @@ struct PlaybackControlsView: View {
                 Group {
                     if viewModel.isLoading {
                         ProgressView()
-                            .tint(.primary)
+                            .tint(.orange)
                     } else {
                         Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                             .font(.system(size: 68))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(.orange)
                     }
                 }
                 .frame(width: 68, height: 68)
@@ -65,15 +65,15 @@ struct PlaybackControlsView: View {
                let url = URL(string: donationUrl) {
                 Link(destination: url) {
                     secondaryIcon("heart.circle")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.secondary)
                 }
-                // Link tints its label with the app accent (orange) by default; override to
-                // .secondary so donate matches the gray share button and the volume/AirPlay row.
-                .tint(.secondary)
+                // Link tints its label with the app accent (orange) by default; force the concrete
+                // Color.secondary gray so donate matches the share button and the volume/AirPlay row.
+                .tint(Color.secondary)
                 .accessibilityLabel("Support Maxi 80")
             } else {
                 secondaryIcon("heart.circle")
-                    .foregroundStyle(.secondary.opacity(0.5))
+                    .foregroundStyle(Color.secondary.opacity(0.5))
                     .accessibilityHidden(true)
             }
         }
