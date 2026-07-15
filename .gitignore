@@ -10,3 +10,5 @@ Android/.gradle
 
 # API secrets — never commit real keys
 Sources/Maxi80/Resources/Configuration.plist
+secrets/
+.appstoreconnect/

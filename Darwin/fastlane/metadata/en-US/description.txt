@@ -1,1 +1,12 @@
-A great new app built with Skip!
+This application allows to listen to Maxi80, the premiere 80's french web radio.
+
+Maxi80 provides a high quality sound 24/7 with the best music from the eighties
+
+This application allows you to
+
+- pause and resume listening
+- adjust volume
+- display the artist name and song title currently on air
+- display the original cover when available
+- send an email to the radio station
+- share cover artwork with other apps such as iMessage, Facebook, Twitter (when installed)

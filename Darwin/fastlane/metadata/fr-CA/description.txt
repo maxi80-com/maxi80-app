@@ -1,0 +1,13 @@
+Cette application vous permet d'écouter Maxi80, la première radio web des années 80.
+
+Maxi80 diffuse 24h/24 un son de qualité HiFi avec les plus grands tubes des années 80.
+
+Cette application vous permet 
+
+- d'écouter Maxi80 où que vous soyez (via 4G ou WiFi)
+- d'arrêter et redémarrer l'écoute
+- d'ajuster le volume
+- de voir le nom de l'artiste et de la chanson en cours de diffusion
+- de voir la pochette originale du disque (si disponible)
+- d'envoyer un email à la radio
+- de partager la pochette avec iMessage, Facebook, Twitter (si installés)
