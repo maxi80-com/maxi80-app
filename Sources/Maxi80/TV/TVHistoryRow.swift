@@ -18,23 +18,34 @@ struct TVHistoryRow: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 24) {
-                ForEach(viewModel.covers, id: \.id) { cover in
-                    coverThumbnail(cover)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 24) {
+                    ForEach(viewModel.covers, id: \.id) { cover in
+                        coverThumbnail(cover)
+                            .id(cover.id)
+                    }
+                }
+                .padding(.horizontal, 60)
+            }
+            .onAppear {
+                // Open on the live "now" slot at the right edge, not the oldest cover on the left.
+                proxy.scrollTo(RadioPlayerViewModel.nowSlotID, anchor: .trailing)
+            }
+            #if os(tvOS)
+            // Focus lands on the live "now" slot (rightmost) when the row is entered.
+            .defaultFocus($focusedID, RadioPlayerViewModel.nowSlotID)
+            .onChange(of: focusedID) { _, newValue in
+                if let newValue {
+                    viewModel.selectedCoverID = newValue
+                    // Keep the focused cover in view as the D-pad moves left through history.
+                    proxy.scrollTo(newValue, anchor: .center)
+                } else {
+                    viewModel.returnToLive()
                 }
             }
-            .padding(.horizontal, 60)
+            #endif
         }
-        #if os(tvOS)
-        .onChange(of: focusedID) { _, newValue in
-            if let newValue {
-                viewModel.selectedCoverID = newValue
-            } else {
-                viewModel.returnToLive()
-            }
-        }
-        #endif
     }
 
     @ViewBuilder
