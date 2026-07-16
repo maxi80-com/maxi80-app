@@ -2,9 +2,13 @@
 import SwiftUI
 import Maxi80Model
 
-/// A focus-navigable horizontal row of recently-played covers for the TV UI. The rightmost item is
-/// the live "now" slot; focus moves left through history via the remote D-pad. Reuses the same
-/// `viewModel.covers` data the phone Cover Flow uses, but navigates by focus, not drag.
+/// A focus-navigable horizontal row of recently-played covers for the TV UI. The live "now" slot is
+/// the FIRST (leftmost) item and where the row opens/focuses; history extends to the right,
+/// newest → oldest. Reuses the same `viewModel.covers` data the phone Cover Flow uses (which orders
+/// oldest → newest with the now slot last), reversed for TV so the live cover leads. Reversing —
+/// rather than a `scrollTo` to the trailing edge — is deliberate: on Android the transpiled
+/// ScrollView ignores a programmatic scroll-to-trailing on appear (see the carousel pin findings),
+/// so anchoring by order is the only reliable way to open on the live cover.
 struct TVHistoryRow: View {
     @Bindable var viewModel: RadioPlayerViewModel
     #if os(tvOS)
@@ -17,35 +21,32 @@ struct TVHistoryRow: View {
         self.viewModel = viewModel
     }
 
+    /// Covers ordered live-first: the now slot leads, history follows newest → oldest.
+    private var orderedCovers: [CoverFlowView.Cover] {
+        Array(viewModel.covers.reversed())
+    }
+
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 24) {
-                    ForEach(viewModel.covers, id: \.id) { cover in
-                        coverThumbnail(cover)
-                            .id(cover.id)
-                    }
-                }
-                .padding(.horizontal, 60)
-            }
-            .onAppear {
-                // Open on the live "now" slot at the right edge, not the oldest cover on the left.
-                proxy.scrollTo(RadioPlayerViewModel.nowSlotID, anchor: .trailing)
-            }
-            #if os(tvOS)
-            // Focus lands on the live "now" slot (rightmost) when the row is entered.
-            .defaultFocus($focusedID, RadioPlayerViewModel.nowSlotID)
-            .onChange(of: focusedID) { _, newValue in
-                if let newValue {
-                    viewModel.selectedCoverID = newValue
-                    // Keep the focused cover in view as the D-pad moves left through history.
-                    proxy.scrollTo(newValue, anchor: .center)
-                } else {
-                    viewModel.returnToLive()
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 24) {
+                ForEach(orderedCovers, id: \.id) { cover in
+                    coverThumbnail(cover)
+                        .id(cover.id)
                 }
             }
-            #endif
+            .padding(.horizontal, 60)
         }
+        #if os(tvOS)
+        // Focus lands on the live "now" slot (now the leading item) when the row is entered.
+        .defaultFocus($focusedID, RadioPlayerViewModel.nowSlotID)
+        .onChange(of: focusedID) { _, newValue in
+            if let newValue {
+                viewModel.selectedCoverID = newValue
+            } else {
+                viewModel.returnToLive()
+            }
+        }
+        #endif
     }
 
     @ViewBuilder
