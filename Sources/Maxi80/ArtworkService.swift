@@ -79,23 +79,34 @@ public final class ArtworkService {
     }
 
     private func makeResult(from data: Data, url: String) -> ArtworkResult {
+        // Sample the dominant color on-device (iOS/macOS via CoreGraphics, Android via
+        // android.graphics) to drive the LIVE now-slot background immediately, before the backend
+        // palette arrives via /history. History entries still take their color from the backend
+        // palette (ArtworkColors.displayBackground), not from here.
+        //
+        // Apple platforms decode the image ONCE and reuse the CGImage for both sampling and the
+        // SwiftUI Image; Android has no platform Image, so it samples straight from the bytes.
         #if canImport(UIKit)
         guard let uiImage = UIImage(data: data) else {
             return makeDefaultResult()
         }
-        let rgb = extractDominantColor(from: uiImage)
-        let swiftUIImage = Image(uiImage: uiImage)
-        return ArtworkResult(image: swiftUIImage, dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
+        let rgb = uiImage.cgImage
+            .flatMap { ImageColorSampler().dominantColorHex(fromCGImage: $0) }
+            .flatMap(Maxi80Model.RGBColor.parse(hex:))
+        return ArtworkResult(image: Image(uiImage: uiImage), dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
         #elseif canImport(AppKit)
         guard let nsImage = NSImage(data: data) else {
             return makeDefaultResult()
         }
-        let rgb = extractDominantColor(from: nsImage)
-        let swiftUIImage = Image(nsImage: nsImage)
-        return ArtworkResult(image: swiftUIImage, dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
+        let rgb = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            .flatMap { ImageColorSampler().dominantColorHex(fromCGImage: $0) }
+            .flatMap(Maxi80Model.RGBColor.parse(hex:))
+        return ArtworkResult(image: Image(nsImage: nsImage), dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
         #else
-        // Android: no platform image APIs available — carry the URL so AsyncImage can load it.
-        return ArtworkResult(image: nil, dominantColor: Self.defaultColor, isDefault: false, url: url)
+        // Android: no SwiftUI Image is built from data (the carousel loads it lazily via AsyncImage
+        // by URL); sample the color from the raw bytes via the transpiled android.graphics path.
+        let rgb = ImageColorSampler().dominantColorHex(from: data).flatMap(Maxi80Model.RGBColor.parse(hex:))
+        return ArtworkResult(image: nil, dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
         #endif
     }
 
@@ -103,60 +114,4 @@ public final class ArtworkService {
         Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
 
-    // MARK: - Color Extraction (Apple platforms only)
-
-    #if canImport(UIKit)
-    private func extractDominantColor(from image: UIImage) -> Maxi80Model.RGBColor? {
-        guard let cgImage = image.cgImage else { return nil }
-        return averageColor(from: cgImage)
-    }
-    #elseif canImport(AppKit)
-    private func extractDominantColor(from image: NSImage) -> Maxi80Model.RGBColor? {
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        return averageColor(from: cgImage)
-    }
-    #endif
-
-    #if canImport(CoreGraphics)
-    private func averageColor(from cgImage: CGImage) -> Maxi80Model.RGBColor? {
-        let size = 40
-        let bytesPerPixel = 4
-        let bytesPerRow = bytesPerPixel * size
-        let totalBytes = bytesPerRow * size
-
-        var pixelData = [UInt8](repeating: 0, count: totalBytes)
-
-        guard let context = CGContext(
-            data: &pixelData,
-            width: size,
-            height: size,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            return nil
-        }
-
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
-
-        var totalR: Double = 0
-        var totalG: Double = 0
-        var totalB: Double = 0
-        let pixelCount = size * size
-
-        for i in 0..<pixelCount {
-            let offset = i * bytesPerPixel
-            totalR += Double(pixelData[offset])
-            totalG += Double(pixelData[offset + 1])
-            totalB += Double(pixelData[offset + 2])
-        }
-
-        return Maxi80Model.RGBColor(
-            red: totalR / Double(pixelCount) / 255.0,
-            green: totalG / Double(pixelCount) / 255.0,
-            blue: totalB / Double(pixelCount) / 255.0
-        )
-    }
-    #endif
 }
