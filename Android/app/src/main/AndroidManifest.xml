@@ -14,12 +14,13 @@
         android:name=".AndroidAppMain"
         android:supportsRtl="true"
         android:allowBackup="true"
+        android:theme="@style/Theme.Maxi80"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|mnc|colorMode|density|fontScale|fontWeightAdjustment|keyboard|layoutDirection|locale|mcc|navigation|smallestScreenSize|touchscreen|uiMode"
-            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+            android:theme="@style/Theme.Maxi80"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

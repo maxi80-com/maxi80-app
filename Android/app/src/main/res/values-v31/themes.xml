@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ (SplashScreen API): force the system splash background black so there is no
+         white flash and no visible rectangle behind the icon. windowBackground still applies for
+         the post-splash pre-draw frame. -->
+    <style name="Theme.Maxi80" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowSplashScreenBackground">@android:color/black</item>
+    </style>
+</resources>
