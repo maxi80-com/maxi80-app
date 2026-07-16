@@ -24,12 +24,16 @@ public struct ImageColorSampler {
 
     /// Format 0…1 RGB components as an uppercase "#RRGGBB" string. Built manually (no
     /// `String(format:)`) so it transpiles to Kotlin unchanged.
-    func hexString(red: Double, green: Double, blue: Double) -> String {
+    ///
+    /// `public` (not internal) so the test target can exercise it when compiled for Android:
+    /// a transpiled (Lite) module exposes only its public surface across the module boundary, so
+    /// `@testable`'s internal access — which works on Apple — does not resolve for the Android test build.
+    public func hexString(red: Double, green: Double, blue: Double) -> String {
         "#" + hexComponent(red) + hexComponent(green) + hexComponent(blue)
     }
 
     /// One clamped, zero-padded, uppercase hex byte for a 0…1 component.
-    func hexComponent(_ value: Double) -> String {
+    public func hexComponent(_ value: Double) -> String {
         let scaled = (value * 255).rounded()
         let clamped = Int(max(0.0, min(255.0, scaled)))
         let hex = String(clamped, radix: 16).uppercased()
