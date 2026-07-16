@@ -14,7 +14,9 @@ import android.content.Context
 public enum PlatformEnvironment {
 
     /// `true` on tvOS; on Android `true` when the device UI mode is television; `false` otherwise.
-    public static var isTVMode: Bool {
+    public static let isTVMode: Bool = computeIsTVMode()
+
+    private static func computeIsTVMode() -> Bool {
         #if os(tvOS)
         return true
         #elseif SKIP

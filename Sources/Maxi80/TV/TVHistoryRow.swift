@@ -28,39 +28,28 @@ struct TVHistoryRow: View {
         }
         #if os(tvOS)
         .onChange(of: focusedID) { _, newValue in
-            if let newValue { viewModel.selectedCoverID = newValue }
+            if let newValue {
+                viewModel.selectedCoverID = newValue
+            } else {
+                viewModel.returnToLive()
+            }
         }
         #endif
     }
 
     @ViewBuilder
     private func coverThumbnail(_ cover: CoverFlowView.Cover) -> some View {
-        let image = Group {
-            if let urlString = cover.artworkURL, let url = URL(string: urlString) {
-                AsyncImage(url: url) { phase in
-                    if let img = phase.image {
-                        img.resizable().aspectRatio(contentMode: .fit)
-                    } else if let asset = cover.assetName {
-                        Image(asset, bundle: .module).resizable().aspectRatio(contentMode: .fit)
-                    } else {
-                        Color.black.opacity(0.3)
-                    }
-                }
-            } else if let asset = cover.assetName {
-                Image(asset, bundle: .module).resizable().aspectRatio(contentMode: .fit)
-            } else {
-                Color.black.opacity(0.3)
-            }
-        }
-        .frame(width: 180, height: 180)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
+            .frame(width: 180, height: 180)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
 
         #if os(tvOS)
         Button { viewModel.selectedCoverID = cover.id } label: { image }
             .buttonStyle(.card)
             .focused($focusedID, equals: cover.id)
         #else
-        image
+        Button { viewModel.selectedCoverID = cover.id } label: { image }
+            .buttonStyle(.plain)
         #endif
     }
 }

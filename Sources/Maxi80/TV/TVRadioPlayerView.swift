@@ -122,7 +122,7 @@ public struct TVRadioPlayerView: View {
     private func errorBanner(message: String) -> some View {
         VStack {
             HStack(spacing: 16) {
-                Text(message).font(.title3).foregroundStyle(.primary).lineLimit(2)
+                Text(message).font(.title3).foregroundStyle(titleColor).lineLimit(2)
                 Button("Retry") { viewModel.retry() }
             }
             .padding(24)

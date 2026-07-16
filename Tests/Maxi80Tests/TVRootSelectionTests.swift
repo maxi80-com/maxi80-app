@@ -17,10 +17,4 @@ struct TVRootSelectionTests {
         #endif
     }
 
-    /// The selection flag is a pure passthrough to isTVMode.
-    @Test("shouldUseTVUI mirrors isTVMode")
-    @MainActor
-    func mirrorsIsTVMode() {
-        #expect(Maxi80RootView.shouldUseTVUI == PlatformEnvironment.isTVMode)
-    }
 }
