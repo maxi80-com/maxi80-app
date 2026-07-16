@@ -304,7 +304,7 @@ public final class RadioPlayerCoordinator {
             artworkKey: nil,
             timestamp: Self.isoTimestampFormatter.string(from: Date()),
             artworkURL: artwork.url,
-            dominantColor: artwork.rgb
+            colors: artwork.rgb.map { ArtworkColors(uniform: $0) }
         )
         history.append(entry)
 
@@ -362,7 +362,7 @@ public final class RadioPlayerCoordinator {
                 title: metadata.title,
                 timestamp: history[index].timestamp,
                 artworkURL: artwork.url,
-                dominantColor: artwork.rgb
+                colors: artwork.rgb.map { ArtworkColors(uniform: $0) }
             )
             history[index] = history[index].mergedWith(patch)
         }
@@ -592,8 +592,8 @@ public final class RadioPlayerCoordinator {
     }
 
     /// Resolves each entry's artwork S3 key into a lightweight presigned URL, concurrently.
-    /// AsyncImage loads the image lazily — we do NOT download it here. The dominant color comes
-    /// from the backend `color` field already decoded on the entry; if absent it stays nil.
+    /// AsyncImage loads the image lazily — we do NOT download it here. The background color is
+    /// derived from the backend `colors` palette already decoded on the entry; if absent it stays nil.
     private func resolveArtwork(for entries: [HistoryEntry]) async -> [HistoryEntry] {
         await withTaskGroup(of: (Int, String?).self) { group in
             for (index, entry) in entries.enumerated() {

@@ -47,4 +47,37 @@ struct HistoryDecodingTests {
         let response = try JSONDecoder().decode(HistoryResponse.self, from: data)
         #expect(response.entries.isEmpty)
     }
+
+    @Test("Decodes the artwork colors palette and derives the background color")
+    func decodesColorsPalette() throws {
+        let json = """
+        {
+          "entries": [
+            {
+              "artist": "Jeanne Mas", "title": "L'enfant",
+              "artwork": "v2/Jeanne Mas/L'enfant/artwork.jpg",
+              "timestamp": "2026-07-16T08:18:26Z",
+              "colors": {"bg": "#1C2520", "text1": "#E6B996", "text2": "#DDB5B1", "text3": "#BE9C7E", "text4": "#B69894"}
+            }
+          ]
+        }
+        """
+        let data = Data(json.utf8)
+
+        let response = try JSONDecoder().decode(HistoryResponse.self, from: data)
+
+        #expect(response.entries[0].colors?.bg == RGBColor.parse(hex: "#1C2520"))
+        // Grey bg → background resolves to the most saturated bright text color.
+        #expect(response.entries[0].backgroundColor?.hexString == "#E6B996")
+    }
+
+    @Test("Absent colors decodes to nil, no background color")
+    func absentColorsIsNil() throws {
+        let json = """
+        {"entries": [{"artist": "A-ha", "title": "Take On Me", "artwork": "k.jpg", "timestamp": "t"}]}
+        """
+        let response = try JSONDecoder().decode(HistoryResponse.self, from: Data(json.utf8))
+        #expect(response.entries[0].colors == nil)
+        #expect(response.entries[0].backgroundColor == nil)
+    }
 }

@@ -16,10 +16,14 @@ public struct HistoryEntry: Sendable, Identifiable, Decodable, Equatable {
     /// A resolvable artwork URL. Set directly for live entries (already resolved), or
     /// populated after resolving `artworkKey` via the `/artwork` endpoint.
     public var artworkURL: String?
-    /// Dominant color of the artwork, driving the background gradient when this entry is shown.
-    /// Supplied by the backend if available (decoded from a `"color"` hex field), otherwise
-    /// resolved client-side after the artwork loads.
-    public var dominantColor: RGBColor?
+    /// Apple Music's full artwork color palette, from which the display background is derived.
+    /// Supplied by the backend if available (decoded from the `"colors"` object), otherwise
+    /// synthesized client-side from the sampled artwork color for live entries.
+    public var colors: ArtworkColors?
+
+    /// The color to paint behind this entry's cover, derived from the palette. `nil` when the
+    /// entry has no palette (coverless / not-yet-enriched), so the UI paints its branded default.
+    public var backgroundColor: RGBColor? { colors?.displayBackground }
 
     /// Stable identity derived from the backend fields (the API provides no id).
     public var id: String { "\(timestamp)|\(artist)|\(title)" }
@@ -35,7 +39,7 @@ public struct HistoryEntry: Sendable, Identifiable, Decodable, Equatable {
     }
 
     /// Merge another entry known to represent the same play as `self`. Prefers a non-empty artist
-    /// (so the backend's `Maxi80` wins over a live artist-less copy) and fills artwork/color from
+    /// (so the backend's `Maxi80` wins over a live artist-less copy) and fills artwork/colors from
     /// whichever entry has them, `self` winning ties. The single home of the "keep `Maxi80`, keep
     /// the artwork" policy; only ever applied to a pair the caller already decided is one play.
     public func mergedWith(_ other: HistoryEntry) -> HistoryEntry {
@@ -45,14 +49,13 @@ public struct HistoryEntry: Sendable, Identifiable, Decodable, Equatable {
             artworkKey: artworkKey ?? other.artworkKey,
             timestamp: timestamp,
             artworkURL: artworkURL ?? other.artworkURL,
-            dominantColor: dominantColor ?? other.dominantColor
+            colors: colors ?? other.colors
         )
     }
 
     private enum CodingKeys: String, CodingKey {
-        case artist, title, timestamp
+        case artist, title, timestamp, colors
         case artworkKey = "artwork"
-        case dominantColor = "color"
     }
 
     public init(from decoder: Decoder) throws {
@@ -61,7 +64,7 @@ public struct HistoryEntry: Sendable, Identifiable, Decodable, Equatable {
         title = try container.decode(String.self, forKey: .title)
         artworkKey = try container.decodeIfPresent(String.self, forKey: .artworkKey)
         timestamp = try container.decode(String.self, forKey: .timestamp)
-        dominantColor = try container.decodeIfPresent(RGBColor.self, forKey: .dominantColor)
+        colors = try container.decodeIfPresent(ArtworkColors.self, forKey: .colors)
         artworkURL = nil
     }
 
@@ -71,14 +74,14 @@ public struct HistoryEntry: Sendable, Identifiable, Decodable, Equatable {
         artworkKey: String? = nil,
         timestamp: String,
         artworkURL: String? = nil,
-        dominantColor: RGBColor? = nil
+        colors: ArtworkColors? = nil
     ) {
         self.artist = artist
         self.title = title
         self.artworkKey = artworkKey
         self.timestamp = timestamp
         self.artworkURL = artworkURL
-        self.dominantColor = dominantColor
+        self.colors = colors
     }
 }
 
