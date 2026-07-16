@@ -3,43 +3,9 @@ import Foundation
 
 #if SKIP
 import android.net.Uri
-import android.os.Bundle
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.session.MediaSession
-import androidx.media3.session.SessionCommand
-import androidx.media3.session.SessionResult
-import com.google.common.util.concurrent.Futures
-import com.google.common.util.concurrent.ListenableFuture
 import skip.foundation.ProcessInfo
-
-// MARK: - Named Callback for MediaSession
-
-class NowPlayingSessionCallback: MediaSession.Callback {
-    var controller: NowPlayingController?
-
-    init(controller: NowPlayingController) {
-        self.controller = controller
-    }
-
-    override func onConnect(session: MediaSession, controllerInfo: MediaSession.ControllerInfo) -> MediaSession.ConnectionResult {
-        return MediaSession.ConnectionResult.AcceptedResultBuilder(session).build()
-    }
-
-    override func onCustomCommand(
-        session: MediaSession,
-        controllerInfo: MediaSession.ControllerInfo,
-        customCommand: SessionCommand,
-        args: Bundle
-    ) -> ListenableFuture<SessionResult> {
-        let action = customCommand.customAction
-        if action == "play" || action == "pause" || action == "togglePlayPause" {
-            controller?.handleRemoteCommand(action)
-        }
-        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-    }
-}
 
 // MARK: - AndroidNowPlayingController (Android Implementation)
 
@@ -52,28 +18,31 @@ extension NowPlayingController {
     // MARK: - Now Playing Metadata
 
     /// Update the MediaSession metadata with current track information.
+    /// The session is hosted by Maxi80MediaService; this method publishes metadata to the shared
+    /// player, which the service's session reflects automatically.
     func platformUpdateNowPlaying(artist: String, title: String, artworkURL: String?, isPlaying: Bool) {
-        ensureMediaSession()
-
-        let metadataBuilder = MediaMetadata.Builder()
+        let metadata = MediaMetadata.Builder()
             .setTitle(title)
             .setArtist(artist)
-
         if let urlString = artworkURL, !urlString.isEmpty {
-            let artworkUri = Uri.parse(urlString)
-            _ = metadataBuilder.setArtworkUri(artworkUri)
+            _ = metadata.setArtworkUri(android.net.Uri.parse(urlString))
         }
-
-        // Note: MediaSession metadata is set via player; for now-playing only
-        // we store the metadata for the session to publish
-        _ = metadataBuilder.build()
+        // Apply to the shared player's current item so the service's session (and notification,
+        // lock screen, later the car) see live metadata automatically.
+        let player = SharedAudioPlayer.shared(context: context)
+        guard let current = player.getCurrentMediaItem() else { return }
+        let updated = current.buildUpon()
+            .setMediaMetadata(metadata.build())
+            .build()
+        player.replaceMediaItem(player.getCurrentMediaItemIndex(), updated)
     }
 
     // MARK: - Playback State
 
     /// Update playback state on the MediaSession.
     func platformUpdatePlaybackState(isPlaying: Bool) {
-        // MediaSession reflects playback state from the player automatically
+        // No-op: the MediaSession reflects the shared player's own play/pause state (set in
+        // ExoPlayerStreamPlayer). Retained for API parity with iOS's MPNowPlayingInfoCenter path.
     }
 
     // MARK: - Remote Command Handling
@@ -87,39 +56,11 @@ extension NowPlayingController {
 
     // MARK: - Session Lifecycle
 
-    /// Ensure the MediaSession is created.
-    private func ensureMediaSession() {
-        guard _mediaSession == nil else { return }
-
-        let ctx = context
-        let callback = NowPlayingSessionCallback(controller: self)
-        self._sessionCallback = callback
-
-        // Create a minimal ExoPlayer as the session player
-        let player = ExoPlayer.Builder(ctx).build()
-        self._sessionPlayer = player
-
-        let session = MediaSession.Builder(ctx, player)
-            .setCallback(callback)
-            .build()
-
-        self._mediaSession = session
-    }
-
-    /// Release the MediaSession and clean up resources.
+    /// Release resources. The MediaSession is released by Maxi80MediaService.onDestroy();
+    /// the shared player is released by SharedAudioPlayer.releaseShared() there as well.
     func platformTearDown() {
-        _mediaSession?.release()
-        _mediaSession = nil
-        _sessionCallback = nil
-        _sessionPlayer?.release()
-        _sessionPlayer = nil
+        // Nothing to do here — session and player lifecycle owned by Maxi80MediaService.
     }
-
-    // MARK: - Private Storage
-
-    var _mediaSession: MediaSession? = nil
-    var _sessionCallback: NowPlayingSessionCallback? = nil
-    var _sessionPlayer: ExoPlayer? = nil
 }
 
 #else

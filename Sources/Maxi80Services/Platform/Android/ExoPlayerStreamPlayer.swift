@@ -25,6 +25,14 @@ class MetadataPlayerListener: Player.Listener {
     }
 
     override func onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+        // Ignore our own writeback echo. The ICY stream only ever fills `title` (the whole
+        // "ARTIST - TITLE", which MetadataParser then splits) and never `artist`; the only thing
+        // that sets `artist` is our own now-playing writeback (platformUpdateNowPlaying, which
+        // replaceMediaItem's the parsed split values back onto the player for the notification/car).
+        // That write re-fires this callback, so a change carrying an artist is our echo — skipping
+        // it prevents re-parsing a bare split title as a new artist-less song (which fell back to
+        // the station name "Maxi 80" and broke cover + history reconciliation).
+        if let artist = mediaMetadata.artist?.toString(), !artist.isEmpty { return }
         guard let title = mediaMetadata.title?.toString() else { return }
         player.handleMetadataChanged(title)
     }
@@ -80,22 +88,20 @@ extension AudioStreamPlayer {
     // MARK: - Playback Control
 
     func androidPlay(url streamUrl: String) {
-        androidStop()
-
         let ctx = context
-        let exoPlayer = ExoPlayer.Builder(ctx).build()
+        let exoPlayer = SharedAudioPlayer.shared(context: ctx)
         self._exoPlayer = exoPlayer
 
-        // Add named metadata listener
-        let listener = MetadataPlayerListener(player: self)
-        self._metadataListener = listener
-        exoPlayer.addListener(listener)
+        // Attach the metadata listener once per player instance.
+        if _metadataListener == nil {
+            let listener = MetadataPlayerListener(player: self)
+            self._metadataListener = listener
+            exoPlayer.addListener(listener)
+        }
 
-        // Set media item from stream URL
         let mediaItem = MediaItem.fromUri(streamUrl)
         exoPlayer.setMediaItem(mediaItem)
 
-        // Request audio focus before playing
         if requestAudioFocus() {
             exoPlayer.prepare()
             exoPlayer.play()
@@ -103,24 +109,29 @@ extension AudioStreamPlayer {
             onPlaybackStateChanged?(true)
         }
 
-        // Register becoming noisy receiver
         registerNoisyReceiver()
+
+        // Start the foreground MediaSessionService so the media notification appears and
+        // playback survives Activity destruction (background / lock-screen).
+        let serviceIntent = android.content.Intent()
+        serviceIntent.setClassName(ctx, "maxi80.services.Maxi80MediaService")
+        ctx.startForegroundService(serviceIntent)
     }
 
     func androidStop() {
         unregisterNoisyReceiver()
         abandonAudioFocus()
 
-        if let listener = _metadataListener, let player = _exoPlayer {
-            player.removeListener(listener)
-        }
-        _metadataListener = nil
-
         _exoPlayer?.stop()
-        _exoPlayer?.release()
-        _exoPlayer = nil
+        _exoPlayer?.clearMediaItems()
         isPlaying = false
         onPlaybackStateChanged?(false)
+
+        // Stop the foreground media service; it will release the session and player in onDestroy.
+        let ctx = context
+        let serviceIntent = android.content.Intent()
+        serviceIntent.setClassName(ctx, "maxi80.services.Maxi80MediaService")
+        ctx.stopService(serviceIntent)
     }
 
     func androidSetVolume(_ newVolume: Double) {
