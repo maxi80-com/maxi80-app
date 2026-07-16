@@ -32,12 +32,15 @@ public struct ImageColorSampler {
         "#" + hexComponent(red) + hexComponent(green) + hexComponent(blue)
     }
 
-    /// One clamped, zero-padded, uppercase hex byte for a 0…1 component.
+    /// One clamped, zero-padded, uppercase hex byte for a 0…1 component. Built from a nibble lookup
+    /// rather than `String(_:radix:)`, which does not transpile to Kotlin (Kotlin has no
+    /// `String(Int, radix:)` constructor — use only transpile-safe string ops here). The digit table
+    /// is an `[Character]` subscripted by `Int`, which transpiles to Kotlin `List` indexing.
     public func hexComponent(_ value: Double) -> String {
+        let digits: [Character] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"]
         let scaled = (value * 255).rounded()
         let clamped = Int(max(0.0, min(255.0, scaled)))
-        let hex = String(clamped, radix: 16).uppercased()
-        return hex.count == 1 ? "0" + hex : hex
+        return String(digits[clamped / 16]) + String(digits[clamped % 16])
     }
 }
 #endif
