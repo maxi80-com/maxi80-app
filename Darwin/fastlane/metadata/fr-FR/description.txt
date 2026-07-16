@@ -1,13 +1,23 @@
-Cette application vous permet d'écouter Maxi80, la première radio web des années 80.
+Épaulettes et gros tubes. Maxi 80 diffuse les plus grands titres des années 80, en direct et sans interruption, depuis la radio web française préférée des amoureux des eighties.
 
-Maxi80 diffuse 24h/24 un son de qualité HiFi avec les plus grands tubes des années 80.
+On a tout reconstruit de zéro avec des technos modernes, alors l'appli est plus rapide, plus nette, et franchement plus agréable à regarder.
 
-Cette application vous permet 
+Ce que vous y trouverez :
 
-- d'écouter Maxi80 où que vous soyez (via 4G ou WiFi)
-- d'arrêter et redémarrer l'écoute
-- d'ajuster le volume
-- de voir le nom de l'artiste et de la chanson en cours de diffusion
-- de voir la pochette originale du disque (si disponible)
-- d'envoyer un email à la radio
-- de partager la pochette avec iMessage, Facebook, Twitter (si installés)
+Les années 80 en continu, 24h/24. Appuyez sur lecture et les tubes s'enchaînent, en Wi-Fi ou en 4G/5G.
+
+Un historique à faire défiler. Vous avez raté le morceau d'avant ? Revenez en arrière dans un superbe carrousel Cover Flow avec les derniers titres et leurs pochettes.
+
+Des pochettes en haute résolution. Chaque cover, nette et en grand.
+
+Toujours savoir ce qui passe. Le nom de l'artiste et du titre, sous les yeux, toujours à jour.
+
+La bande-son de vos trajets. Compatible CarPlay, pour emmener les tubes sur la route.
+
+À diffuser partout. AirPlay vers vos enceintes ou votre Apple TV en un geste.
+
+Partagez l'instant. Un coup de cœur pour le morceau du moment ? Envoyez-le à un ami tout de suite.
+
+Et si Maxi 80 vous met de bonne humeur, vous pouvez soutenir la radio par un don directement depuis l'appli.
+
+Montez le son. Les années 80 vous appellent.

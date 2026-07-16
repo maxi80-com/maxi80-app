@@ -4,7 +4,7 @@ On a tout reconstruit de zéro avec des technos modernes, alors l'appli est plus
 
 Ce que vous y trouverez :
 
-Les années 80 en continu, 24h/24. Appuyez sur lecture et les tubes s'enchaînent, en Wi-Fi ou en 4G/5G.
+Les années 80 en continu, 24h/24. Appuyez sur lecture et les tubes s'enchaînent, en Wi-Fi ou en données mobiles.
 
 Un historique à faire défiler. Vous avez raté le morceau d'avant ? Revenez en arrière dans un superbe carrousel Cover Flow avec les derniers titres et leurs pochettes.
 
@@ -12,9 +12,9 @@ Des pochettes en haute résolution. Chaque cover, nette et en grand.
 
 Toujours savoir ce qui passe. Le nom de l'artiste et du titre, sous les yeux, toujours à jour.
 
-La bande-son de vos trajets. Compatible CarPlay, pour emmener les tubes sur la route.
+La bande-son de vos trajets. Compatible Android Auto, pour emmener les tubes sur la route.
 
-À diffuser partout. AirPlay vers vos enceintes ou votre Apple TV en un geste.
+Les commandes où il faut. Lecture et pause depuis l'écran de verrouillage et les notifications.
 
 Partagez l'instant. Un coup de cœur pour le morceau du moment ? Envoyez-le à un ami tout de suite.
 

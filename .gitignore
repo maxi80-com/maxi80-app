@@ -3,6 +3,7 @@
 *.xcuserstate
 DerivedData/
 .build/
+.build.bak/
 
 # Skip
 .skip/
@@ -12,3 +13,16 @@ Android/.gradle
 Sources/Maxi80/Resources/Configuration.plist
 secrets/
 .appstoreconnect/
+
+# fastlane publishing credentials (App Store Connect .p8/JSON, Play service account JSON)
+Darwin/fastlane/apikey.json
+Android/fastlane/apikey.json
+**/fastlane/apikey.json
+*.p8
+
+# fastlane run artifacts
+Darwin/fastlane/report.xml
+Android/fastlane/report.xml
+**/fastlane/README.md.bak
+**/fastlane/Preview.html
+**/fastlane/screenshots/screenshots.html
