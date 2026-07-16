@@ -2,16 +2,6 @@ import Foundation
 
 #if !SKIP_BRIDGE
 
-/// Platform-agnostic, unit-testable "which player era are we in" counter. `public` so the
-/// test target resolves it across the transpiled module boundary (internal `@testable` access
-/// does not resolve on the Android test build). Pure value logic — no Android types.
-public struct SharedPlayerGeneration {
-    private var value: Int = 0
-    public init() {}
-    public mutating func reset() { value += 1 }
-    public func current() -> Int { value }
-}
-
 #if SKIP
 import androidx.media3.exoplayer.ExoPlayer
 

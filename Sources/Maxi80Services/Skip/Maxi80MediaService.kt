@@ -70,12 +70,22 @@ class Maxi80MediaService : MediaLibraryService() {
                 MediaMetadata.Builder()
                     .setTitle("Maxi 80")
                     .setArtist("Live")
+                    .setArtworkUri(stationArtworkUri())
                     .setIsBrowsable(false)
                     .setIsPlayable(true)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
                     .build()
             )
             .build()
+
+    /**
+     * The bundled launcher icon as an `android.resource://` URI so the car browse item shows the
+     * station logo before any live cover arrives (live song artwork replaces it via the shared
+     * player's metadata once playback starts). Built from the runtime package name so it resolves
+     * for every build variant. There is no hosted station-artwork URL in the app config to use here.
+     */
+    private fun stationArtworkUri(): android.net.Uri =
+        android.net.Uri.parse("android.resource://$packageName/mipmap/ic_launcher")
 
     // ---------------------------------------------------------------------------
     // MediaLibrarySession.Callback
