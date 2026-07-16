@@ -73,8 +73,12 @@ struct MaterialIconComposer: ContentComposer {
 
     @Composable func Compose(context: ComposeContext) {
         let vector = switch iconKey {
-        case "play": Icons.Filled.PlayArrow
-        case "pause": Icons.Filled.Pause
+        // Filled-disc variants (not the bare PlayArrow/Pause glyphs) so the primary control matches
+        // iOS's `play.circle.fill`/`pause.circle.fill`: a single-color vector drawn as a filled disc
+        // with the glyph knocked out, so the existing orange `tint` paints the disc and the glyph
+        // shows through as negative space.
+        case "play": Icons.Filled.PlayCircle
+        case "pause": Icons.Filled.PauseCircle
         case "share": Icons.Filled.Share
         case "favorite": Icons.Filled.FavoriteBorder
         case "volumeDown": Icons.Filled.VolumeDown
