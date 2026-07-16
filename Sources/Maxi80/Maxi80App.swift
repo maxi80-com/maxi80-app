@@ -37,12 +37,22 @@ extension Maxi80App {
         _viewModel = State(wrappedValue: vm)
     }
 
+    /// Whether to render the 10-foot TV UI. Pure passthrough to `PlatformEnvironment.isTVMode`,
+    /// exposed as a static flag so the selection is unit-testable without constructing the view.
+    static var shouldUseTVUI: Bool { PlatformEnvironment.isTVMode }
+
     public var body: some View {
-        RadioPlayerView(viewModel: viewModel)
-            .tint(.orange)
-            .task {
-                await coordinator.loadStation()
+        Group {
+            if Self.shouldUseTVUI {
+                TVRadioPlayerView(viewModel: viewModel)
+            } else {
+                RadioPlayerView(viewModel: viewModel)
             }
+        }
+        .tint(.orange)
+        .task {
+            await coordinator.loadStation()
+        }
     }
 }
 
