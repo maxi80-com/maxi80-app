@@ -4,13 +4,13 @@ import SwiftUI
 @testable import Maxi80Model
 @testable import Maxi80Services
 
-/// Tests the CarPlay-gated placeholder-artwork decision on the coordinator.
+/// Tests the placeholder-artwork decision on the coordinator.
 ///
-/// CarPlay's Now Playing template mirrors the system Now Playing info, which only carries a real
-/// remote cover URL. When no cover exists (idle, or a coverless song) the coordinator publishes the
-/// bundled generic placeholder instead — but ONLY while CarPlay is connected, so the phone Lock
-/// Screen / Control Center behavior is unchanged.
-@Suite("CarPlay Now Playing placeholder")
+/// Every system Now Playing surface — Lock Screen, Control Center, and CarPlay (whose template
+/// mirrors the system Now Playing info) — carries only a real remote cover URL. When no cover
+/// exists (idle, or a coverless song) the coordinator publishes the bundled generic placeholder
+/// instead so none of those surfaces shows blank artwork. A present cover is never overridden.
+@Suite("Now Playing placeholder")
 struct CarPlayNowPlayingTests {
 
     @MainActor
@@ -27,40 +27,19 @@ struct CarPlayNowPlayingTests {
         )
     }
 
-    @Test("CarPlay starts disconnected")
+    @Test("Placeholder is published for missing artwork")
     @MainActor
-    func startsDisconnected() {
+    func placeholderForMissingArtwork() {
         let coordinator = makeCoordinator()
-        #expect(coordinator.isCarPlayConnected == false)
-    }
-
-    @Test("Connect/disconnect toggles the CarPlay flag")
-    @MainActor
-    func connectDisconnectTogglesFlag() {
-        let coordinator = makeCoordinator()
-        coordinator.carPlayDidConnect()
-        #expect(coordinator.isCarPlayConnected == true)
-        coordinator.carPlayDidDisconnect()
-        #expect(coordinator.isCarPlayConnected == false)
-    }
-
-    @Test("No placeholder is published while CarPlay is disconnected")
-    @MainActor
-    func noPlaceholderWhenDisconnected() {
-        let coordinator = makeCoordinator()
-        #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: nil) == false)
-        #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: "https://cover") == false)
-    }
-
-    @Test("Placeholder is published only for missing artwork while CarPlay is connected")
-    @MainActor
-    func placeholderOnlyForMissingArtworkWhenConnected() {
-        let coordinator = makeCoordinator()
-        coordinator.carPlayDidConnect()
         // Missing cover (nil or empty) → publish the generic placeholder.
         #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: nil) == true)
         #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: "") == true)
-        // Real cover present → never override it with the placeholder.
+    }
+
+    @Test("A present cover is never overridden by the placeholder")
+    @MainActor
+    func realCoverNotOverridden() {
+        let coordinator = makeCoordinator()
         #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: "https://cover.example/x.jpg") == false)
     }
 }

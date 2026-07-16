@@ -6,6 +6,8 @@ import Maxi80Services
 
 #if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
 #endif
 
 private let logger = Logger(subsystem: "com.stormacq.maxi80", category: "Coordinator")
@@ -41,13 +43,6 @@ public final class RadioPlayerCoordinator {
     @ObservationIgnored
     let placeholderCover: PlaceholderCover = .random()
 
-    /// Whether a CarPlay scene is currently connected. CarPlay's Now Playing template mirrors the
-    /// system Now Playing info, which normally carries only a real remote cover. When CarPlay is
-    /// connected we additionally publish the bundled generic placeholder for coverless songs so the
-    /// car screen is never blank — see `shouldPublishPlaceholderArtwork`. Kept off the phone path
-    /// (disconnected) so Lock Screen / Control Center behavior is unchanged.
-    @ObservationIgnored
-    private(set) var isCarPlayConnected = false
 
     // MARK: - Internal State
 
@@ -173,32 +168,25 @@ public final class RadioPlayerCoordinator {
 
     // MARK: - CarPlay
 
-    /// Called when a CarPlay scene connects. Marks CarPlay active and re-publishes the current
-    /// Now Playing info so the car's Now Playing template shows artwork immediately — including the
-    /// generic placeholder when no song/cover is present yet.
+    /// Called when a CarPlay scene connects. Re-publishes the current Now Playing info so the car's
+    /// Now Playing template shows artwork immediately — including the generic placeholder when no
+    /// song/cover is present yet — rather than waiting for the next metadata change.
     public func carPlayDidConnect() {
-        isCarPlayConnected = true
-        republishNowPlaying()
-    }
-
-    /// Called when the CarPlay scene disconnects. Audio keeps playing; we only stop publishing the
-    /// CarPlay-specific placeholder so the phone's Now Playing info returns to its normal state.
-    public func carPlayDidDisconnect() {
-        isCarPlayConnected = false
         republishNowPlaying()
     }
 
     /// Whether the coordinator should attach the bundled generic placeholder to the system Now
-    /// Playing info in place of a missing cover. True only while CarPlay is connected AND no real
-    /// remote artwork URL is available; a present cover is never overridden.
+    /// Playing info in place of a missing cover. True whenever no real remote artwork URL is
+    /// available; a present cover is never overridden. Publishing the placeholder keeps every
+    /// system Now Playing surface — Lock Screen, Control Center, and CarPlay — from showing blank
+    /// artwork for coverless songs or the idle/startup state.
     func shouldPublishPlaceholderArtwork(forArtworkURL artworkURL: String?) -> Bool {
-        guard isCarPlayConnected else { return false }
-        return (artworkURL?.isEmpty ?? true)
+        (artworkURL?.isEmpty ?? true)
     }
 
-    /// Re-publish the current metadata/artwork to the system so a CarPlay connect/disconnect takes
-    /// effect immediately (rather than waiting for the next song). Uses the current song when known,
-    /// else the station as a placeholder title so the car isn't blank on connect.
+    /// Re-publish the current metadata/artwork to the system, e.g. so a CarPlay connect takes
+    /// effect immediately. Uses the current song when known, else the station as a placeholder
+    /// title so Now Playing isn't blank before the first song.
     private func republishNowPlaying() {
         let playing = { if case .playing = playbackState { return true } else { return false } }()
         let artist = currentSong?.artist ?? station?.name ?? "Maxi 80"
@@ -416,19 +404,30 @@ public final class RadioPlayerCoordinator {
     private lazy var placeholderArtworkFileURL: String? = materializePlaceholderArtwork()
 
     /// Write the placeholder cover to a temp file so it can be published to the system Now Playing
-    /// info by URL. CarPlay is iOS-only, so this only needs UIKit; other platforms return `nil`.
+    /// info by URL. Supported on Apple platforms (UIKit for iOS/tvOS Now Playing + CarPlay, AppKit
+    /// for macOS); Android has no platform image APIs so it returns `nil` and no artwork is published.
     /// Idempotent per launch: reuses the file if it already exists.
     private func materializePlaceholderArtwork() -> String? {
-        #if canImport(UIKit)
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("maxi80-\(placeholderCover.imageName).png")
 
-        if !FileManager.default.fileExists(atPath: fileURL.path) {
-            guard let image = UIImage(named: placeholderCover.imageName, in: .module, compatibleWith: nil),
-                  let data = image.pngData(),
-                  (try? data.write(to: fileURL)) != nil else {
-                return nil
-            }
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            return fileURL.absoluteString
+        }
+
+        #if canImport(UIKit)
+        guard let image = UIImage(named: placeholderCover.imageName, in: .module, compatibleWith: nil),
+              let data = image.pngData(),
+              (try? data.write(to: fileURL)) != nil else {
+            return nil
+        }
+        return fileURL.absoluteString
+        #elseif canImport(AppKit)
+        guard let image = NSImage(named: placeholderCover.imageName),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]),
+              (try? data.write(to: fileURL)) != nil else {
+            return nil
         }
         return fileURL.absoluteString
         #else
