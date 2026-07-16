@@ -102,6 +102,12 @@ extension AudioStreamPlayer {
         }
 
         registerNoisyReceiver()
+
+        // Start the foreground MediaSessionService so the media notification appears and
+        // playback survives Activity destruction (background / lock-screen).
+        let serviceIntent = android.content.Intent()
+        serviceIntent.setClassName(ctx, "maxi80.services.Maxi80MediaService")
+        ctx.startForegroundService(serviceIntent)
     }
 
     func androidStop() {
@@ -112,9 +118,12 @@ extension AudioStreamPlayer {
         _exoPlayer?.clearMediaItems()
         isPlaying = false
         onPlaybackStateChanged?(false)
-        // NB: do NOT release the player or remove the metadata listener — the shared player and
-        // its listener persist for the media session/service lifetime. Release happens only in
-        // SharedAudioPlayer.releaseShared() at full teardown (Task 6's service onDestroy).
+
+        // Stop the foreground media service; it will release the session and player in onDestroy.
+        let ctx = context
+        let serviceIntent = android.content.Intent()
+        serviceIntent.setClassName(ctx, "maxi80.services.Maxi80MediaService")
+        ctx.stopService(serviceIntent)
     }
 
     func androidSetVolume(_ newVolume: Double) {
