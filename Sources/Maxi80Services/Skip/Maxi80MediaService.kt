@@ -208,9 +208,15 @@ class Maxi80MediaService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        // Release ONLY the session, never the shared player. media3's MediaSessionService stops
+        // (and destroys) the service whenever playback pauses; if this also released the shared
+        // player, every pause would tear the player down and the next play would build a fresh one
+        // whose audio starts while the old player's AudioTrack buffer is still draining — two
+        // overlapping streams with a small offset. The player is a process singleton owned by
+        // SharedAudioPlayer, not by this service, so it must outlive service destruction; the OS
+        // reclaims it on process death.
         session?.release()
         session = null
-        SharedAudioPlayer.releaseShared()
         super.onDestroy()
     }
 }

@@ -92,13 +92,18 @@ extension AudioStreamPlayer {
         let exoPlayer = SharedAudioPlayer.shared(context: ctx)
         self._exoPlayer = exoPlayer
 
-        // Attach the metadata listener once per player instance.
+        // Re-attach the metadata listener if it isn't currently on this player instance. The
+        // listener reference is cleared on stop, and the shared player can be rebuilt after a full
+        // teardown, so guarding on nil alone would leave a rebuilt player with no listener — which
+        // stalls the coordinator in `.loading` (spinner never clears because no metadata arrives).
         if _metadataListener == nil {
             let listener = MetadataPlayerListener(player: self)
             self._metadataListener = listener
             exoPlayer.addListener(listener)
         }
 
+        // Long-lived single player: (re)load the live item and prepare/play. Because the same
+        // instance is reused, this restarts the ONE stream rather than spawning a second player.
         let mediaItem = MediaItem.fromUri(streamUrl)
         exoPlayer.setMediaItem(mediaItem)
 
@@ -112,7 +117,8 @@ extension AudioStreamPlayer {
         registerNoisyReceiver()
 
         // Start the foreground MediaSessionService so the media notification appears and
-        // playback survives Activity destruction (background / lock-screen).
+        // playback survives Activity destruction (background / lock-screen). startForegroundService
+        // is idempotent — if the service is already running, this just delivers a start command.
         let serviceIntent = android.content.Intent()
         serviceIntent.setClassName(ctx, "maxi80.services.Maxi80MediaService")
         ctx.startForegroundService(serviceIntent)
@@ -122,16 +128,16 @@ extension AudioStreamPlayer {
         unregisterNoisyReceiver()
         abandonAudioFocus()
 
-        _exoPlayer?.stop()
-        _exoPlayer?.clearMediaItems()
+        // Pause, do NOT tear down. The player and the foreground service are long-lived (the
+        // media3-canonical topology): a live-radio "pause" just halts output on the single shared
+        // player. Previously this called stop()+clearMediaItems()+stopService(), which released
+        // the player asynchronously in the service's onDestroy — racing the next play() and
+        // producing a SECOND player (two overlapping streams) plus a stuck spinner. Keeping the
+        // player alive makes replay instant and single. The player is released only when the
+        // system genuinely destroys the service (Maxi80MediaService.onDestroy).
+        _exoPlayer?.pause()
         isPlaying = false
         onPlaybackStateChanged?(false)
-
-        // Stop the foreground media service; it will release the session and player in onDestroy.
-        let ctx = context
-        let serviceIntent = android.content.Intent()
-        serviceIntent.setClassName(ctx, "maxi80.services.Maxi80MediaService")
-        ctx.stopService(serviceIntent)
     }
 
     func androidSetVolume(_ newVolume: Double) {
