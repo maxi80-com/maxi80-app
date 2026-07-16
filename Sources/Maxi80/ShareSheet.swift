@@ -19,7 +19,7 @@ struct ShareSheetContent: View {
     let text: String
 
     var body: some View {
-        #if canImport(UIKit)
+        #if canImport(UIKit) && !os(tvOS)
         ShareSheetRepresentable(text: text)
         #else
         // macOS / Android fallback
@@ -40,7 +40,7 @@ struct ShareSheetContent: View {
     }
 }
 
-#if canImport(UIKit)
+#if canImport(UIKit) && !os(tvOS)
 import UIKit
 
 /// Wraps UIActivityViewController for SwiftUI presentation on iOS.

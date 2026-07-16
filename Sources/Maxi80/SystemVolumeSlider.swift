@@ -7,7 +7,7 @@ import SwiftUI
 /// iOS-only (MPVolumeView is unavailable on macOS/Android). AirPlay output is offered separately via
 /// a dedicated `AVRoutePickerView` (`AirPlayRoutePicker`); MPVolumeView no longer shows a route
 /// button of its own since iOS 13.
-#if !SKIP && canImport(UIKit)
+#if !SKIP && canImport(UIKit) && !os(tvOS)
 import MediaPlayer
 
 struct SystemVolumeSlider: UIViewRepresentable {
