@@ -6,7 +6,7 @@ import SwiftUI
 /// Wraps `AVRoutePickerView`, which is a `UIView` on iOS and an `NSView` on macOS with a slightly
 /// different tinting API. On Android the whole use site is `#if !SKIP`, so this type is never
 /// referenced there.
-#if !SKIP && canImport(UIKit)
+#if !SKIP && canImport(UIKit) && !os(tvOS)
 import AVKit
 
 struct AirPlayRoutePicker: UIViewRepresentable {

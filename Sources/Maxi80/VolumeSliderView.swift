@@ -49,7 +49,7 @@ struct VolumeSliderView: View {
 
     @ViewBuilder
     private var volumeSlider: some View {
-        #if !SKIP && canImport(UIKit)
+        #if !SKIP && canImport(UIKit) && !os(tvOS)
         // MPVolumeView drives the system output volume, so it also controls AirPlay device volume.
         // Its internal slider (thumb ~18pt tall) is top-biased inside the view's frame on device, so
         // a tall frame floats the track above the center-aligned speaker icons. Constrain the frame
