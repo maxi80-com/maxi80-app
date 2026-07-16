@@ -57,6 +57,10 @@ struct VolumeSliderView: View {
         // with the icons regardless of the internal anchoring.
         SystemVolumeSlider(tint: .secondary)
             .frame(height: 18)
+        #elseif os(tvOS)
+        // tvOS has no `Slider` and never renders this view (the TV UI is TVRadioPlayerView); emit
+        // nothing so the phone-only VolumeSliderView still compiles into the tvOS binary.
+        EmptyView()
         #else
         // macOS: no system-volume view — fall back to the app-relative player volume.
         Slider(
