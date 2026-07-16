@@ -50,6 +50,19 @@ struct ImageColorSamplerTests {
         #expect(sampler.dominantColorHex(from: Data([0x00, 0x01, 0x02, 0x03])) == nil)
     }
 
+    @Test("CGImage entry point matches the Data path for the same image")
+    func cgImagePathMatchesDataPath() {
+        let sampler = ImageColorSampler()
+        let data = Self.solidRedPNG()
+        #if canImport(UIKit)
+        let cgImage = UIImage(data: data)!.cgImage!
+        #else
+        let cgImage = NSImage(data: data)!.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+        #endif
+        #expect(sampler.dominantColorHex(fromCGImage: cgImage) == "#FF0000")
+        #expect(sampler.dominantColorHex(fromCGImage: cgImage) == sampler.dominantColorHex(from: data))
+    }
+
     /// Renders an 8×8 solid-red PNG in-memory so the test needs no fixture file.
     static func solidRedPNG() -> Data {
         #if canImport(UIKit)

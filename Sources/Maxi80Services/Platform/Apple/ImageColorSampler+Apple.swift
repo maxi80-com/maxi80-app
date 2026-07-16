@@ -17,6 +17,14 @@ import CoreGraphics
 
 extension ImageColorSampler {
 
+    /// Average color from ALREADY-DECODED image bytes — the single-decode entry point for the
+    /// native Apple path, so `ArtworkService` doesn't decode the artwork twice (once to sample,
+    /// once to build the SwiftUI `Image`). `public` so the native Fuse module can call it.
+    public func dominantColorHex(fromCGImage cgImage: CGImage) -> String? {
+        guard let rgb = averagedComponents(fromCGImage: cgImage) else { return nil }
+        return hexString(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+
     func averagedComponents(from data: Data) -> (red: Double, green: Double, blue: Double)? {
         #if canImport(UIKit)
         guard let cgImage = UIImage(data: data)?.cgImage else { return nil }
@@ -26,7 +34,10 @@ extension ImageColorSampler {
         #else
         return nil
         #endif
+        return averagedComponents(fromCGImage: cgImage)
+    }
 
+    private func averagedComponents(fromCGImage cgImage: CGImage) -> (red: Double, green: Double, blue: Double)? {
         let size = 40
         let bytesPerPixel = 4
         let bytesPerRow = bytesPerPixel * size

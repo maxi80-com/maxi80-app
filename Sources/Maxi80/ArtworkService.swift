@@ -79,27 +79,34 @@ public final class ArtworkService {
     }
 
     private func makeResult(from data: Data, url: String) -> ArtworkResult {
-        // Sample the dominant color on-device on every platform (iOS/macOS via CoreGraphics,
-        // Android via android.graphics). This drives the LIVE now-slot background immediately,
-        // before the backend palette arrives via /history. History entries still take their color
-        // from the backend palette (ArtworkColors.displayBackground), not from here.
-        let rgb = ImageColorSampler().dominantColorHex(from: data).flatMap(Maxi80Model.RGBColor.parse(hex:))
-        let color = rgb.map(Self.color) ?? Self.defaultColor
-
+        // Sample the dominant color on-device (iOS/macOS via CoreGraphics, Android via
+        // android.graphics) to drive the LIVE now-slot background immediately, before the backend
+        // palette arrives via /history. History entries still take their color from the backend
+        // palette (ArtworkColors.displayBackground), not from here.
+        //
+        // Apple platforms decode the image ONCE and reuse the CGImage for both sampling and the
+        // SwiftUI Image; Android has no platform Image, so it samples straight from the bytes.
         #if canImport(UIKit)
         guard let uiImage = UIImage(data: data) else {
             return makeDefaultResult()
         }
-        return ArtworkResult(image: Image(uiImage: uiImage), dominantColor: color, isDefault: false, url: url, rgb: rgb)
+        let rgb = uiImage.cgImage
+            .flatMap { ImageColorSampler().dominantColorHex(fromCGImage: $0) }
+            .flatMap(Maxi80Model.RGBColor.parse(hex:))
+        return ArtworkResult(image: Image(uiImage: uiImage), dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
         #elseif canImport(AppKit)
         guard let nsImage = NSImage(data: data) else {
             return makeDefaultResult()
         }
-        return ArtworkResult(image: Image(nsImage: nsImage), dominantColor: color, isDefault: false, url: url, rgb: rgb)
+        let rgb = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            .flatMap { ImageColorSampler().dominantColorHex(fromCGImage: $0) }
+            .flatMap(Maxi80Model.RGBColor.parse(hex:))
+        return ArtworkResult(image: Image(nsImage: nsImage), dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
         #else
         // Android: no SwiftUI Image is built from data (the carousel loads it lazily via AsyncImage
-        // by URL), but the sampled color IS now available and rides along on `rgb`.
-        return ArtworkResult(image: nil, dominantColor: color, isDefault: false, url: url, rgb: rgb)
+        // by URL); sample the color from the raw bytes via the transpiled android.graphics path.
+        let rgb = ImageColorSampler().dominantColorHex(from: data).flatMap(Maxi80Model.RGBColor.parse(hex:))
+        return ArtworkResult(image: nil, dominantColor: rgb.map(Self.color) ?? Self.defaultColor, isDefault: false, url: url, rgb: rgb)
         #endif
     }
 
