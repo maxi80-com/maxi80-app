@@ -80,22 +80,20 @@ extension AudioStreamPlayer {
     // MARK: - Playback Control
 
     func androidPlay(url streamUrl: String) {
-        androidStop()
-
         let ctx = context
-        let exoPlayer = ExoPlayer.Builder(ctx).build()
+        let exoPlayer = SharedAudioPlayer.shared(context: ctx)
         self._exoPlayer = exoPlayer
 
-        // Add named metadata listener
-        let listener = MetadataPlayerListener(player: self)
-        self._metadataListener = listener
-        exoPlayer.addListener(listener)
+        // Attach the metadata listener once per player instance.
+        if _metadataListener == nil {
+            let listener = MetadataPlayerListener(player: self)
+            self._metadataListener = listener
+            exoPlayer.addListener(listener)
+        }
 
-        // Set media item from stream URL
         let mediaItem = MediaItem.fromUri(streamUrl)
         exoPlayer.setMediaItem(mediaItem)
 
-        // Request audio focus before playing
         if requestAudioFocus() {
             exoPlayer.prepare()
             exoPlayer.play()
@@ -103,7 +101,6 @@ extension AudioStreamPlayer {
             onPlaybackStateChanged?(true)
         }
 
-        // Register becoming noisy receiver
         registerNoisyReceiver()
     }
 
@@ -111,16 +108,13 @@ extension AudioStreamPlayer {
         unregisterNoisyReceiver()
         abandonAudioFocus()
 
-        if let listener = _metadataListener, let player = _exoPlayer {
-            player.removeListener(listener)
-        }
-        _metadataListener = nil
-
         _exoPlayer?.stop()
-        _exoPlayer?.release()
-        _exoPlayer = nil
+        _exoPlayer?.clearMediaItems()
         isPlaying = false
         onPlaybackStateChanged?(false)
+        // NB: do NOT release the player or remove the metadata listener — the shared player and
+        // its listener persist for the media session/service lifetime. Release happens only in
+        // SharedAudioPlayer.releaseShared() at full teardown (Task 6's service onDestroy).
     }
 
     func androidSetVolume(_ newVolume: Double) {
