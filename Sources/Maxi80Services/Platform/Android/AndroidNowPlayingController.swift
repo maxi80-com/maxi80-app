@@ -4,9 +4,9 @@ import Foundation
 #if SKIP
 import android.net.Uri
 import android.os.Bundle
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
@@ -54,26 +54,30 @@ extension NowPlayingController {
     /// Update the MediaSession metadata with current track information.
     func platformUpdateNowPlaying(artist: String, title: String, artworkURL: String?, isPlaying: Bool) {
         ensureMediaSession()
-
-        let metadataBuilder = MediaMetadata.Builder()
+        let metadata = MediaMetadata.Builder()
             .setTitle(title)
             .setArtist(artist)
-
         if let urlString = artworkURL, !urlString.isEmpty {
-            let artworkUri = Uri.parse(urlString)
-            _ = metadataBuilder.setArtworkUri(artworkUri)
+            _ = metadata.setArtworkUri(Uri.parse(urlString))
         }
-
-        // Note: MediaSession metadata is set via player; for now-playing only
-        // we store the metadata for the session to publish
-        _ = metadataBuilder.build()
+        // Apply to the shared player's current item so controllers (notification, lock screen,
+        // later the car) see live metadata; the session reflects the player's mediaMetadata.
+        // Rebuild the current MediaItem with the new metadata (no-op if nothing is loaded yet —
+        // ExoPlayerStreamPlayer sets the item on play, and the next metadata update re-applies).
+        let player = SharedAudioPlayer.shared(context: context)
+        guard let current = player.getCurrentMediaItem() else { return }
+        let updated = current.buildUpon()
+            .setMediaMetadata(metadata.build())
+            .build()
+        player.replaceMediaItem(player.getCurrentMediaItemIndex(), updated)
     }
 
     // MARK: - Playback State
 
     /// Update playback state on the MediaSession.
     func platformUpdatePlaybackState(isPlaying: Bool) {
-        // MediaSession reflects playback state from the player automatically
+        // No-op: the MediaSession reflects the shared player's own play/pause state (set in
+        // ExoPlayerStreamPlayer). Retained for API parity with iOS's MPNowPlayingInfoCenter path.
     }
 
     // MARK: - Remote Command Handling
@@ -90,19 +94,13 @@ extension NowPlayingController {
     /// Ensure the MediaSession is created.
     private func ensureMediaSession() {
         guard _mediaSession == nil else { return }
-
         let ctx = context
         let callback = NowPlayingSessionCallback(controller: self)
         self._sessionCallback = callback
-
-        // Create a minimal ExoPlayer as the session player
-        let player = ExoPlayer.Builder(ctx).build()
-        self._sessionPlayer = player
-
+        let player = SharedAudioPlayer.shared(context: ctx)
         let session = MediaSession.Builder(ctx, player)
             .setCallback(callback)
             .build()
-
         self._mediaSession = session
     }
 
@@ -111,15 +109,14 @@ extension NowPlayingController {
         _mediaSession?.release()
         _mediaSession = nil
         _sessionCallback = nil
-        _sessionPlayer?.release()
-        _sessionPlayer = nil
+        // The shared player is released by SharedAudioPlayer.releaseShared() (service onDestroy),
+        // NOT here — the session no longer owns a player of its own.
     }
 
     // MARK: - Private Storage
 
     var _mediaSession: MediaSession? = nil
     var _sessionCallback: NowPlayingSessionCallback? = nil
-    var _sessionPlayer: ExoPlayer? = nil
 }
 
 #else
