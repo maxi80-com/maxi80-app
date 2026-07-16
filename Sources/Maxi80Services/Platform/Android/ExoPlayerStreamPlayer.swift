@@ -25,6 +25,14 @@ class MetadataPlayerListener: Player.Listener {
     }
 
     override func onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+        // Ignore our own writeback echo. The ICY stream only ever fills `title` (the whole
+        // "ARTIST - TITLE", which MetadataParser then splits) and never `artist`; the only thing
+        // that sets `artist` is our own now-playing writeback (platformUpdateNowPlaying, which
+        // replaceMediaItem's the parsed split values back onto the player for the notification/car).
+        // That write re-fires this callback, so a change carrying an artist is our echo — skipping
+        // it prevents re-parsing a bare split title as a new artist-less song (which fell back to
+        // the station name "Maxi 80" and broke cover + history reconciliation).
+        if let artist = mediaMetadata.artist?.toString(), !artist.isEmpty { return }
         guard let title = mediaMetadata.title?.toString() else { return }
         player.handleMetadataChanged(title)
     }

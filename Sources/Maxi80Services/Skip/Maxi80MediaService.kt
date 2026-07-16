@@ -133,14 +133,11 @@ class Maxi80MediaService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>
         ): ListenableFuture<MutableList<MediaItem>> {
-            val resolved = mediaItems.map { item ->
-                // Any item from our browse tree (root or stream) maps to the live stream.
-                if (item.mediaId == ROOT_ID || item.mediaId == STREAM_ITEM_ID || item.mediaId.isEmpty()) {
-                    buildStreamItem()
-                } else {
-                    item
-                }
-            }.toMutableList()
+            // This app streams exactly ONE live station. Never trust a controller-supplied URI:
+            // synthesize the stream item server-side for every requested item, ignoring whatever
+            // mediaId/URI the caller sent. This prevents a malicious/foreign controller from making
+            // the player load an arbitrary URI, and there is no legitimate case for any other item.
+            val resolved = mediaItems.map { buildStreamItem() }.toMutableList()
             return Futures.immediateFuture(resolved)
         }
     }
