@@ -307,10 +307,24 @@ public struct TVRadioPlayerView: View {
         #elseif os(Android)
         // Android TV assigns no initial focus, and SkipUI's `.defaultFocus` is a no-op there. But
         // `.focused($binding)` calls Compose `requestFocus()` when the binding matches, so seeding
-        // `playFocused = true` on appear grants the play button initial focus. `.plain` drops the
-        // Compose focus box; the scale supplies the 10-foot focus affordance.
+        // `playFocused = true` on appear grants the play button initial focus.
+        //
+        // SkipUI's Button draws Compose's default focus/press indication (a gray SQUARE at the min
+        // 48dp touch target) that `.buttonStyle(.plain)` doesn't suppress. Clipping the button to a
+        // Circle reshapes that indication into a circle that blends into our own affordance: a soft
+        // blurred translucent circle behind the glyph plus a gentle scale, matching the tvOS
+        // `TVGlyphButtonStyle`. The halo's tint adapts to the background luminance (light on dark, dark
+        // on light) so it reads on both.
         button
             .buttonStyle(.plain)
+            .clipShape(Circle())
+            .background(
+                Circle()
+                    .fill((viewModel.isBackgroundDark ? Color.white : Color.black)
+                        .opacity(playFocused ? 0.15 : 0))
+                    .blur(radius: 8)
+                    .scaleEffect(1.4)
+            )
             .focused($playFocused)
             .scaleEffect(playFocused ? 1.15 : 1.0)
             .animation(.easeInOut(duration: 0.15), value: playFocused)
