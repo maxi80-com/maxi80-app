@@ -256,7 +256,9 @@ public final class RadioPlayerCoordinator {
 
     // MARK: - Metadata Handling
 
-    private func handleMetadataChanged(_ rawMetadata: String) async {
+    // Internal (not private) so tests can drive the metadata flow directly — the production caller
+    // is the `player.onMetadataChanged` closure wired in `setupCallbacks()`.
+    func handleMetadataChanged(_ rawMetadata: String) async {
         // Transition to playing if we were loading or reconnecting
         switch playbackState {
         case .loading, .reconnecting:
@@ -296,8 +298,8 @@ public final class RadioPlayerCoordinator {
             isPlaying: true
         )
 
-        // Append to history, carrying the already-resolved artwork URL so the carousel can
-        // render this song's cover immediately.
+        // Record this song in history, carrying the already-resolved artwork URL so the carousel
+        // can render its cover immediately.
         let entry = HistoryEntry(
             artist: metadata.artist,
             title: metadata.title,
@@ -306,7 +308,17 @@ public final class RadioPlayerCoordinator {
             artworkURL: artwork.url,
             colors: artwork.rgb.map { ArtworkColors(uniform: $0) }
         )
-        history.append(entry)
+        // The seeded backend history already ends with the song playing at launch, so the FIRST
+        // metadata event is for a song already in the list. Appending would create a duplicate that
+        // only surfaces once the next song starts (both copies are hidden while they're the now
+        // slot). If the newest entry is already this song (by normalized identity), heal it in place
+        // — filling any artwork/colors the backend copy lacked — instead of appending a second copy.
+        // A genuine repeat play (A → B → A) doesn't match here: the tail is B, so it still appends.
+        if history.last?.songIdentity == metadata.identity {
+            history[history.count - 1] = history[history.count - 1].mergedWith(entry)
+        } else {
+            history.append(entry)
+        }
 
         // If artwork wasn't ready (backend collector hadn't produced it yet), retry in the
         // background — the cover fills in once it appears, without waiting for the next song.

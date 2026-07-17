@@ -166,6 +166,46 @@ struct HistoryMergeTests {
         #expect(coordinator.history.map(\.artworkURL) == ["url-1", "url-2"])
     }
 
+    @Test("First metadata after launch doesn't duplicate the song already seeded from the backend")
+    @MainActor
+    func firstMetadataDoesNotDuplicateSeededNowPlaying() async {
+        // Backend history ends with the song currently playing at launch ("Song A").
+        let json = Self.historyJSON([
+            ("Older", "Older Song", "2026-07-15T10:00:00Z"),
+            ("A", "Song A", "2026-07-15T10:30:00Z"),
+        ])
+        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+
+        // Seed history exactly as launch does (currentSong still nil, no live entry yet).
+        await coordinator.fetchHistory()
+        #expect(coordinator.history.map(\.title) == ["Older Song", "Song A"])
+
+        // First ICY metadata event is for Song A — the song already at the tail of the seeded list.
+        await coordinator.handleMetadataChanged("A - Song A")
+        // It must heal in place, NOT append a second copy.
+        #expect(coordinator.history.map(\.title) == ["Older Song", "Song A"])
+
+        // Next song B starts. Song A is no longer the now-slot, so it surfaces in history — exactly
+        // once (the bug was it surfaced twice here).
+        await coordinator.handleMetadataChanged("B - Song B")
+        #expect(coordinator.history.map(\.title) == ["Older Song", "Song A", "Song B"])
+        #expect(coordinator.history.filter { $0.title == "Song A" }.count == 1)
+    }
+
+    @Test("A genuine repeat of the launch song (A → B → A) still records a second play")
+    @MainActor
+    func repeatOfLaunchSongStillAppends() async {
+        let json = Self.historyJSON([("A", "Song A", "2026-07-15T10:30:00Z")])
+        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+        await coordinator.fetchHistory()
+
+        await coordinator.handleMetadataChanged("A - Song A") // heals seeded A
+        await coordinator.handleMetadataChanged("B - Song B") // A surfaces once
+        await coordinator.handleMetadataChanged("A - Song A") // genuine repeat — tail is B, so append
+
+        #expect(coordinator.history.map(\.title) == ["Song A", "Song B", "Song A"])
+    }
+
     @Test("An existing entry that already has artwork is not re-resolved")
     @MainActor
     func existingArtworkIsPreserved() async {
