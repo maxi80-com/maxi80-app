@@ -288,6 +288,7 @@ public final class RadioPlayerCoordinator {
         logger.info("fetching artwork for current song")
         let artwork = await artworkService.fetchArtwork(artist: metadata.artist, title: metadata.title)
         currentArtwork = artwork
+        cacheArtworkImage(artwork)
         logger.info("artwork resolved — hasImage=\(artwork.image != nil), url=\(artwork.url ?? "nil")")
 
         // Update system now-playing info (modern NowPlaying framework if available, else MediaPlayer).
@@ -355,10 +356,22 @@ public final class RadioPlayerCoordinator {
         }
     }
 
+    /// Seed the shared decoded-image cache from a freshly-resolved artwork result. `fetchArtwork`
+    /// already decoded the SwiftUI `Image` (Apple only), so registering it under its URL lets the
+    /// hero/carousel render the new cover synchronously the instant it becomes current — instead of
+    /// re-loading by URL via `AsyncImage`, which flashes the generic placeholder for a frame.
+    private func cacheArtworkImage(_ artwork: ArtworkResult) {
+        #if canImport(UIKit) || canImport(AppKit)
+        guard !artwork.isDefault, let url = artwork.url, let image = artwork.image else { return }
+        CoverImageCache.shared.store(image, for: url)
+        #endif
+    }
+
     /// Apply artwork that arrived on retry: update the current-song cover/background, the system
     /// Now Playing info, and the matching (most recent) history entry so the carousel cover fills in.
     private func applyRetriedArtwork(_ artwork: ArtworkResult, for metadata: SongMetadata) {
         currentArtwork = artwork
+        cacheArtworkImage(artwork)
         let playing = { if case .playing = playbackState { return true } else { return false } }()
         publishNowPlaying(
             artist: metadata.artist,

@@ -137,7 +137,7 @@ struct CoverFlowView: View {
             let rotation = -normalized * maxRotation
             let scale = 1 - (1 - minScale) * CGFloat(abs(normalized))
 
-            CoverImage(url: cover.artworkURL, assetName: cover.assetName)
+            coverImage(cover)
                 .frame(width: coverSize, height: coverSize)
                 .clipShape(.rect(cornerRadius: 12))
                 .shadow(color: .black.opacity(0.45), radius: 18, x: 0, y: 12)
@@ -160,6 +160,23 @@ struct CoverFlowView: View {
                 #endif
         }
         .frame(width: coverSize, height: coverSize)
+    }
+
+    /// The cell's artwork. On iOS the now slot keeps the constant id `__now__` while its artwork
+    /// swaps A→B in place, so keying the inner image on its content (url/asset) makes that swap a
+    /// remove+insert and crossfades it. Scoped to iOS and to the image only, so the carousel's
+    /// scroll/tilt/pin (which key on `cover.id`) are untouched. Other platforms swap instantly.
+    @ViewBuilder
+    private func coverImage(_ cover: Cover) -> some View {
+        let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
+        #if os(iOS)
+        image
+            .id(cover.artworkURL ?? cover.assetName ?? cover.id)
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.4), value: cover.artworkURL)
+        #else
+        image
+        #endif
     }
 }
 
@@ -184,12 +201,37 @@ private struct CenteredCoverKey: PreferenceKey {
 
 /// A single cover image: a remote artwork URL for played songs, or a bundled asset for the
 /// startup placeholder. Falls back to the default generic cover if neither loads.
+///
+/// On Apple platforms a once-loaded image is kept in a small in-memory cache and rendered
+/// synchronously on reappearance, so revisiting a cover (e.g. browsing history, where a `.id()`
+/// change rebuilds the view) never flashes the placeholder while `AsyncImage` re-decodes. Android
+/// keeps `AsyncImage` (backed by Coil, which caches decoded bitmaps itself).
 struct CoverImage: View {
     var url: String? = nil
     var assetName: String? = nil
 
     var body: some View {
         if let url, let imageURL = URL(string: url) {
+            #if canImport(UIKit) || canImport(AppKit)
+            if let cached = CoverImageCache.shared.image(for: url) {
+                cached.resizable().scaledToFill()
+            } else {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                            // Cache the SwiftUI Image keyed by URL so the next appearance is instant.
+                            .task(id: url) { CoverImageCache.shared.store(image, for: url) }
+                    case .empty:
+                        placeholder.overlay { ProgressView().tint(.white) }
+                    case .failure:
+                        placeholder
+                    @unknown default:
+                        placeholder
+                    }
+                }
+            }
+            #else
             AsyncImage(url: imageURL) { phase in
                 switch phase {
                 case .success(let image):
@@ -202,6 +244,7 @@ struct CoverImage: View {
                     placeholder
                 }
             }
+            #endif
         } else {
             placeholder
         }
@@ -213,3 +256,25 @@ struct CoverImage: View {
             .scaledToFill()
     }
 }
+
+#if canImport(UIKit) || canImport(AppKit)
+/// A tiny in-memory cache of decoded SwiftUI `Image`s keyed by artwork URL, so a cover that has
+/// already been shown renders synchronously on its next appearance instead of restarting an
+/// `AsyncImage` load (which flashes the placeholder for a frame). Apple-only — `Image` is a
+/// platform type; Android relies on Coil's own cache. `@MainActor` since it's touched only from view
+/// bodies/tasks.
+@MainActor
+final class CoverImageCache {
+    static let shared = CoverImageCache()
+
+    private var images: [String: Image] = [:]
+
+    func image(for url: String) -> Image? {
+        images[url]
+    }
+
+    func store(_ image: Image, for url: String) {
+        images[url] = image
+    }
+}
+#endif
