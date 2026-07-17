@@ -31,7 +31,16 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|mnc|colorMode|density|fontScale|fontWeightAdjustment|keyboard|layoutDirection|locale|mcc|navigation|smallestScreenSize|touchscreen|uiMode"
             android:theme="@style/Theme.Maxi80"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize"
+            android:screenOrientation="nosensor"><!--
+            Lock the phone UI to its natural (portrait) orientation. The Cover Flow carousel's
+            scroll offset does not survive a rotation relayout on the transpiled Compose side
+            (the LazyHStack resets to the leftmost/oldest cover and scrollTo to the rightmost
+            now-slot is a no-op after relayout), so rotation is disabled rather than shipped broken.
+            `nosensor` uses each device's natural orientation and ignores the accelerometer: phones
+            stay portrait, while Android TV (which renders the separate TVRadioPlayerView and is
+            landscape at the system level) is unaffected, and Android Auto uses its own projected
+            MediaSession surface independent of this activity. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
