@@ -20,11 +20,18 @@ struct MetadataParserTests {
         #expect(result.title == "")
     }
 
-    @Test("Multiple separators 'A - B - C' → artist 'A', title 'B - C'")
+    @Test("Multiple separators split on the LAST ' - ' (matches backend): 'A - B - C' → 'A - B', 'C'")
     func multipleSeparators() {
         let result = MetadataParser.parse("A - B - C")
-        #expect(result.artist == "A")
-        #expect(result.title == "B - C")
+        #expect(result.artist == "A - B")
+        #expect(result.title == "C")
+    }
+
+    @Test("Multi-artist title stays with the artist: last ' - ' is the boundary")
+    func multiArtistTitle() {
+        let result = MetadataParser.parse("Michael Jackson - Diana Ross - Ease On Down The Road")
+        #expect(result.artist == "Michael Jackson - Diana Ross")
+        #expect(result.title == "Ease On Down The Road")
     }
 
     @Test("No separator treats entire string as title")
@@ -67,6 +74,13 @@ struct MetadataParserTests {
         let result = MetadataParser.parse("Michael Jackson - Billie Jean")
         #expect(result.artist == "Michael Jackson")
         #expect(result.title == "Billie Jean")
+    }
+
+    @Test("Spaceless dash separator 'new order-blue monday' → artist 'new order', title 'blue monday'")
+    func spacelessDashSeparator() {
+        let result = MetadataParser.parse("new order-blue monday")
+        #expect(result.artist == "new order")
+        #expect(result.title == "blue monday")
     }
 
     // MARK: - format() edge cases
