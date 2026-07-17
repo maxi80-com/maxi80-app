@@ -10,11 +10,16 @@ public struct TVRadioPlayerView: View {
     @Bindable var viewModel: RadioPlayerViewModel
     @Environment(\.colorScheme) var colorScheme
     #if os(tvOS) || os(Android)
-    // Internal, not private: on the Android bridge path a `@FocusState` property must be bridgeable.
+    // Internal, not private: on the Android bridge path `@FocusState`/`@State` properties must be
+    // bridgeable. tvOS accepts internal too, so both TV platforms share these declarations.
     @FocusState var playFocused: Bool
+    @FocusState var backToLiveFocused: Bool
     #endif
-    #if os(tvOS)
-    @FocusState private var backToLiveFocused: Bool
+    #if os(Android)
+    // The Android wash color, mirrored from `viewModel.dominantColor` so `background()` can tween it
+    // with a value-driven `.animation` (Compose interpolates a solid color but not a gradient's
+    // colors). Internal, not private: a `@State` on the bridged Android view must be bridgeable.
+    @State var androidBackgroundColor: Color?
     #endif
 
     public init(viewModel: RadioPlayerViewModel) {
@@ -24,12 +29,29 @@ public struct TVRadioPlayerView: View {
     public var body: some View {
         ZStack {
             background().ignoresSafeArea()
-            VStack(spacing: 28) {
+            // Row 1: the hero cover beside a left-aligned title/artist (a compact top block that
+            // leaves room for the history row). Row 2: the controls. Row 3: the history row. The
+            // spacers differ per platform — Android's transpiled VStack collapses flexible `Spacer()`s
+            // (which would top-pin and clip the content), so it uses explicit heights; tvOS uses
+            // flexible spacers to vertically center the top block.
+            VStack(spacing: rowSpacing) {
+                #if os(Android)
+                Spacer().frame(height: 40)
+                #else
                 Spacer()
-                heroCover()
-                songLabel()
+                #endif
+                HStack(spacing: 28) {
+                    heroCover()
+                    songLabel(alignment: .leading)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 60)
                 controlStack()
+                #if os(Android)
+                Spacer().frame(height: 40)
+                #else
                 Spacer()
+                #endif
                 TVHistoryRow(viewModel: viewModel)
                 Spacer().frame(height: 40)
             }
@@ -60,6 +82,17 @@ public struct TVRadioPlayerView: View {
             Spacer()
         }
         .focusSection()
+        #elseif os(Android)
+        // Selecting a history cover on Android enters browse mode (hero + labels switch to the picked
+        // song) with no other way back, so surface a focusable "Back to live" pill above the play
+        // button while browsing. Uses the proven Android focus pattern (`.plain` + `.focused` +
+        // `.scaleEffect`) rather than a `@Environment(\.isFocused)` ButtonStyle.
+        VStack(spacing: 20) {
+            if viewModel.isBrowsingHistory {
+                backToLiveButtonAndroid()
+            }
+            playButton()
+        }
         #else
         playButton()
         #endif
@@ -77,48 +110,135 @@ public struct TVRadioPlayerView: View {
         return covers.last
     }
 
+    /// The hero's identity for the crossfade below, keyed on the artwork content. The live now slot
+    /// keeps the constant id `__now__` while its artwork swaps, so `cover.id` can't be used. Keying on
+    /// the artwork (not the song title) makes the crossfade fire when the image changes — the title
+    /// updates before the new artwork resolves, so the two are not simultaneous.
+    private func heroKey(_ cover: CoverFlowView.Cover) -> String {
+        cover.artworkURL ?? cover.assetName ?? cover.id
+    }
+
     /// The large now-playing (or focused-history) album art, sitting above the title/artist like
     /// the phone hero. Purely presentational — the focus-navigable covers live in `TVHistoryRow`.
+    ///
+    /// On both TV platforms, keying on the artwork makes a cover change a remove+insert, so it
+    /// crossfades: the previous image fades out while the new one fades in. Keying on the artwork (not
+    /// the song title) makes the rebuild coincide with the image actually changing, avoiding a flash
+    /// through the placeholder. `.transition(.opacity)` + `.animation(_:value:)` are the only
+    /// animation APIs used here — no `.scale`/`anchor:`, which are unavailable on Android.
     @ViewBuilder
     private func heroCover() -> some View {
         if let cover = heroCoverModel {
-            CoverImage(url: cover.artworkURL, assetName: cover.assetName)
+            let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
                 .frame(width: heroSize, height: heroSize)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
+
+            #if os(tvOS) || os(Android)
+            let key = heroKey(cover)
+            image
+                .id(key)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.4), value: key)
+            #else
+            image
+            #endif
         }
+    }
+
+    private var rowSpacing: CGFloat {
+        #if os(Android)
+        24
+        #else
+        28
+        #endif
     }
 
     private var heroSize: CGFloat {
         #if os(Android)
-        220
+        160
         #else
         300
         #endif
     }
 
-    @ViewBuilder
-    private func background() -> some View {
-        Group {
-            if let color = viewModel.dominantColor {
-                LinearGradient(
-                    gradient: Gradient(colors: [color, color.opacity(0.9)]),
-                    startPoint: .top, endPoint: .bottom
-                )
-                .opacity(0.9)
-            } else {
-                LinearGradient(
-                    colors: [Maxi80Palette.duskTop, Maxi80Palette.night, Maxi80Palette.duskBottom],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-            }
-        }
-        .animation(.easeInOut(duration: 0.6), value: viewModel.dominantColor)
+    // Frame the play glyph. Android's Material glyph fills its frame, so the frame matches the
+    // reduced glyph size; tvOS keeps the larger SF Symbol box.
+    private var playGlyphSize: CGFloat {
+        #if os(Android)
+        52
+        #else
+        96
+        #endif
     }
 
     @ViewBuilder
-    private func songLabel() -> some View {
-        VStack(spacing: 12) {
+    private func background() -> some View {
+        #if os(Android)
+        // Compose can't tween a gradient's colors (a value-`.animation` or `.id`+opacity crossfade both
+        // snap on the transpiled path). It CAN tween a solid fill via `animateColorAsState`, so the
+        // Android wash is a solid `Color` base — animated by `.animation(_:value:)`, mirrored into
+        // `androidBackgroundColor` — under a STATIC top→bottom alpha gradient that keeps the wash's shape.
+        // The color is resolved (never nil) so there's always a concrete value to interpolate between;
+        // nil maps to the branded night color.
+        ZStack {
+            androidWashColor
+                .animation(.easeInOut(duration: 1.0), value: androidBackgroundColor)
+            LinearGradient(
+                colors: [.black.opacity(0.0), .black.opacity(0.35)],
+                startPoint: .top, endPoint: .bottom
+            )
+        }
+        .onChange(of: viewModel.dominantColor, initial: true) { _, newColor in
+            androidBackgroundColor = newColor
+        }
+        #else
+        // Apple platforms interpolate a value-driven `.animation` across the gradient's colors
+        // natively, so the wash eases with no local mirror needed.
+        gradient(for: viewModel.dominantColor)
+            .animation(.easeInOut(duration: bgAnimationDuration), value: viewModel.dominantColor)
+        #endif
+    }
+
+    #if os(Android)
+    // The solid wash color for Android: the mirrored dominant color, or the branded night color when
+    // there's none. Always concrete so `animateColorAsState` has two colors to interpolate between.
+    private var androidWashColor: Color {
+        androidBackgroundColor ?? Maxi80Palette.night
+    }
+    #else
+    private var bgAnimationDuration: Double {
+        #if os(tvOS)
+        1.0
+        #else
+        0.6
+        #endif
+    }
+    #endif
+
+    /// The background wash: a soft vertical gradient of the artwork's dominant color, or the branded
+    /// dusk gradient when there's no color.
+    @ViewBuilder
+    private func gradient(for color: Color?) -> some View {
+        if let color {
+            LinearGradient(
+                gradient: Gradient(colors: [color, color.opacity(0.9)]),
+                startPoint: .top, endPoint: .bottom
+            )
+            .opacity(0.9)
+        } else {
+            LinearGradient(
+                colors: [Maxi80Palette.duskTop, Maxi80Palette.night, Maxi80Palette.duskBottom],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+        }
+    }
+
+    @ViewBuilder
+    // `alignment` is `.center` for the stacked tvOS layout and `.leading` for the Android layout,
+    // where the labels sit to the right of the hero.
+    private func songLabel(alignment: HorizontalAlignment = .center) -> some View {
+        VStack(alignment: alignment, spacing: 12) {
             Text(viewModel.displayedTitle)
                 .font(.system(size: titleFontSize, weight: .bold))
                 .foregroundStyle(titleColor)
@@ -130,15 +250,15 @@ public struct TVRadioPlayerView: View {
                 .lineLimit(2)
                 .minimumScaleFactor(0.5)
         }
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, 80)
+        .multilineTextAlignment(alignment == .leading ? .leading : .center)
+        .padding(.horizontal, alignment == .leading ? 0 : 80)
     }
 
     // The tvOS 10-foot UI wants large glyphs; the Android TV emulator renders fixed point sizes
     // considerably bigger, so scale the title/artist down there to fit without wrapping.
     private var titleFontSize: CGFloat {
         #if os(Android)
-        34
+        26
         #else
         56
         #endif
@@ -146,7 +266,7 @@ public struct TVRadioPlayerView: View {
 
     private var artistFontSize: CGFloat {
         #if os(Android)
-        22
+        18
         #else
         36
         #endif
@@ -162,7 +282,9 @@ public struct TVRadioPlayerView: View {
                     ProgressView().tint(.orange)
                 } else {
                     #if os(Android)
-                    AndroidIcon(symbol: viewModel.isPlaying ? .pause : .play, size: 96, tint: .orange)
+                    // The Material play/pause glyph renders larger than an equivalently-sized SF
+                    // Symbol, so Android uses a smaller point size to match the tvOS visual weight.
+                    AndroidIcon(symbol: viewModel.isPlaying ? .pause : .play, size: playGlyphSize, tint: .orange)
                     #else
                     Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                         .font(.system(size: 96))
@@ -170,7 +292,7 @@ public struct TVRadioPlayerView: View {
                     #endif
                 }
             }
-            .frame(width: 96, height: 96)
+            .frame(width: playGlyphSize, height: playGlyphSize)
         }
         .accessibilityLabel(viewModel.isPlaying ? "Pause" : "Play")
 
@@ -217,6 +339,35 @@ public struct TVRadioPlayerView: View {
         }
         .buttonStyle(TVPillButtonStyle())
         .focused($backToLiveFocused)
+    }
+    #endif
+
+    #if os(Android)
+    /// Android TV "Back to live" pill shown while browsing history. Mirrors the tvOS pill visually
+    /// but uses the SkipUI-proven pattern: `.buttonStyle(.plain)` + `.focused` + `.scaleEffect`
+    /// (no `@Environment(\.isFocused)` ButtonStyle, unverified on Compose). The
+    /// `dot.radiowaves.left.and.right` SF Symbol has no SkipUI mapping, so draw the extended Material
+    /// broadcast icon via `AndroidIcon` (same as the phone "Back to live").
+    @ViewBuilder
+    private func backToLiveButtonAndroid() -> some View {
+        Button {
+            viewModel.returnToLive()
+            playFocused = true
+        } label: {
+            HStack(spacing: 8) {
+                AndroidIcon(symbol: .liveBroadcast, size: 15, tint: .white)
+                Text("Back to live")
+            }
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 9)
+            .background(Capsule().fill(.white.opacity(backToLiveFocused ? 0.25 : 0.12)))
+        }
+        .buttonStyle(.plain)
+        .focused($backToLiveFocused)
+        .scaleEffect(backToLiveFocused ? 1.08 : 1.0)
+        .animation(.easeInOut(duration: 0.15), value: backToLiveFocused)
     }
     #endif
 

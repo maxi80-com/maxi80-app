@@ -29,7 +29,8 @@ import androidx.core.app.ActivityCompat
 
 internal val logger: SkipLogger = SkipLogger(subsystem = "maxi80.module", category = "Maxi80")
 
-private typealias AppRootView = Maxi80RootView
+private typealias AppRootView =
+        Maxi80RootView
 private typealias AppDelegate = Maxi80AppDelegate
 
 /// AndroidAppMain is the `android.app.Application` entry point, and must match `application android:name` in the AndroidMainfest.xml file.
