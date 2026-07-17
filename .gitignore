@@ -5,6 +5,27 @@ DerivedData/
 .build/
 .build.bak/
 
+# Android Studio / IntelliJ
+.idea/
+Android/.idea/
+*.iml
+*.iws
+*.ipr
+.gradle/
+build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+# Keystores — never commit signing keys
+*.jks
+*.keystore
+
 # Skip
 .skip/
 Android/.gradle
@@ -26,3 +47,7 @@ Android/fastlane/report.xml
 **/fastlane/README.md.bak
 **/fastlane/Preview.html
 **/fastlane/screenshots/screenshots.html
+
+# Claude 
+.claude 
+worktrees

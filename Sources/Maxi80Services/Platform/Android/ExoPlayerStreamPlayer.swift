@@ -9,10 +9,11 @@ import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import androidx.media3.common.Metadata
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.extractor.metadata.icy.IcyInfo
 import skip.foundation.ProcessInfo
 
 // MARK: - Named Listener for Metadata Changes
@@ -24,17 +25,23 @@ class MetadataPlayerListener: Player.Listener {
         self.player = player
     }
 
-    override func onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-        // Ignore our own writeback echo. The ICY stream only ever fills `title` (the whole
-        // "ARTIST - TITLE", which MetadataParser then splits) and never `artist`; the only thing
-        // that sets `artist` is our own now-playing writeback (platformUpdateNowPlaying, which
-        // replaceMediaItem's the parsed split values back onto the player for the notification/car).
-        // That write re-fires this callback, so a change carrying an artist is our echo — skipping
-        // it prevents re-parsing a bare split title as a new artist-less song (which fell back to
-        // the station name "Maxi 80" and broke cover + history reconciliation).
-        if let artist = mediaMetadata.artist?.toString(), !artist.isEmpty { return }
-        guard let title = mediaMetadata.title?.toString() else { return }
-        player.handleMetadataChanged(title)
+    /// Live song changes arrive here as timed in-band ICY metadata (the shared player is built with
+    /// an ICY-enabled data source — see SharedAudioPlayer). `IcyInfo.title` is the whole
+    /// "ARTIST - TITLE" line, which the coordinator splits with MetadataParser.
+    ///
+    /// Metadata is read ONLY from this callback, never from `onMediaMetadataChanged`: our own
+    /// now-playing writeback (platformUpdateNowPlaying → replaceMediaItem) re-fires
+    /// `onMediaMetadataChanged` but not `onMetadata`, so consuming ICY here avoids the writeback
+    /// echo entirely.
+    override func onMetadata(metadata: Metadata) {
+        var index = 0
+        while index < metadata.length() {
+            if let icyInfo = metadata.get(index) as? IcyInfo,
+               let title = icyInfo.title, !title.isEmpty {
+                player.handleMetadataChanged(title)
+            }
+            index += 1
+        }
     }
 
     override func onPlaybackStateChanged(playbackState: Int) {
