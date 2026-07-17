@@ -75,6 +75,30 @@ public final class RadioPlayerViewModel {
         return artwork.dominantColor
     }
 
+    /// The raw RGB behind `dominantColor`, when known — the browsed history entry's stored color
+    /// while browsing, else the current artwork's sampled color. `nil` mirrors `dominantColor == nil`
+    /// (no color → branded dark gradient). Kept alongside `dominantColor` so overlay text can judge
+    /// contrast; `Color` itself can't be inspected for luminance cross-platform.
+    public var dominantRGB: Maxi80Model.RGBColor? {
+        if isBrowsingHistory {
+            return focusedHistoryEntry?.backgroundColor
+        }
+        guard let artwork = coordinator.currentArtwork, !artwork.isDefault else {
+            return nil
+        }
+        return artwork.rgb
+    }
+
+    /// Whether the background wash is dark enough that overlaid text should be light. `true` when
+    /// there's no dominant color (the branded dark gradient) or the dominant color's perceived
+    /// (Rec. 601) luminance falls below a readability threshold. Consumed by the TV UI to switch
+    /// between white and dark title/artist text; the phone/CarPlay UIs keep their own color logic.
+    public var isBackgroundDark: Bool {
+        guard let rgb = dominantRGB else { return true }
+        let luminance = 0.299 * rgb.red + 0.587 * rgb.green + 0.114 * rgb.blue
+        return luminance < 0.55
+    }
+
     public var history: [HistoryEntry] {
         coordinator.history
     }
