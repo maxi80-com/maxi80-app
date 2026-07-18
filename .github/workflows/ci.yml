@@ -125,9 +125,19 @@ jobs:
           swift --version
           skip checkup || true
 
-      # `make build-android` runs `skip android build` (the Swift -> Kotlin
-      # transpile + Swift-for-Android cross-compile) then `gradle assembleDebug`
-      # (compiles the generated Kotlin/Android project). Reused from the Makefile
-      # so CI matches the local dev flow exactly.
-      - name: Android build (transpile + gradle)
-        run: make build-android
+      # Step 1: Swift -> Kotlin transpile + Swift-for-Android cross-compile.
+      - name: Skip android build
+        run: skip android build
+
+      # Diagnostic: settings.gradle.kts runs `skip plugin --prebuild` via
+      # gradle's providers.exec, which swallows skip's stderr on failure. Run it
+      # directly first so any error is visible in the log. Non-fatal.
+      - name: Skip plugin prebuild (diagnostic)
+        run: |
+          skip plugin --prebuild --package-path "$PWD" --plugin-ref /tmp/skip-plugin-ref.tmp || \
+            echo "::warning::skip plugin --prebuild exited non-zero (see output above)"
+
+      # Step 2: compile the generated Kotlin/Android project (matches the
+      # Makefile `build-android` target's gradle invocation).
+      - name: Gradle assembleDebug
+        run: cd Android && gradle --stacktrace --warning-mode none -x lint assembleDebug
