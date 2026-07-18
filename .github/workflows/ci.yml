@@ -125,17 +125,43 @@ jobs:
           swift --version
           skip checkup || true
 
+      # Android/settings.gradle.kts runs `skip plugin --prebuild`, and Skip's
+      # toolchain lookup shells out to `xcrun` to locate a build tool. `xcrun`
+      # is macOS-only, so on the Linux runner we install a tiny shim that
+      # resolves the requested tool from PATH (xcrun's two common forms are
+      # `xcrun --find <tool>` -> print its path, and `xcrun [flags] <tool> args`
+      # -> run it). It also logs each invocation to aid debugging.
+      - name: Install xcrun shim (Linux)
+        run: |
+          sudo tee /usr/local/bin/xcrun >/dev/null <<'SHIM'
+          #!/usr/bin/env bash
+          echo "xcrun shim called with: $*" >&2
+          find_mode=0
+          tools=()
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              -f|--find) find_mode=1; shift;;
+              --sdk|-sdk|--toolchain) shift 2;;
+              --show-sdk-path|--show-sdk-version|--show-sdk-build-version) echo ""; exit 0;;
+              -r|--run|--no-cache|--kill-cache|--verbose|-v|-l|--log) shift;;
+              --) shift;;
+              -*) shift;;
+              *) tools+=("$1"); shift;;
+            esac
+          done
+          if [ "${#tools[@]}" -eq 0 ]; then exit 0; fi
+          if [ "$find_mode" = "1" ]; then
+            command -v "${tools[0]}"
+          else
+            exec "${tools[@]}"
+          fi
+          SHIM
+          sudo chmod +x /usr/local/bin/xcrun
+          echo "xcrun -> $(command -v xcrun)"
+
       # Step 1: Swift -> Kotlin transpile + Swift-for-Android cross-compile.
       - name: Skip android build
         run: skip android build
-
-      # Diagnostic: settings.gradle.kts runs `skip plugin --prebuild` via
-      # gradle's providers.exec, which swallows skip's stderr on failure. Run it
-      # directly first so any error is visible in the log. Non-fatal.
-      - name: Skip plugin prebuild (diagnostic)
-        run: |
-          skip plugin --prebuild --package-path "$PWD" --plugin-ref /tmp/skip-plugin-ref.tmp || \
-            echo "::warning::skip plugin --prebuild exited non-zero (see output above)"
 
       # Step 2: compile the generated Kotlin/Android project (matches the
       # Makefile `build-android` target's gradle invocation).
