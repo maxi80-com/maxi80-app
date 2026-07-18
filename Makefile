@@ -183,7 +183,13 @@ test: ## Run the real Swift/Swift-Testing suite (used as the publish gate)
 	# Android verification is done on a device/emulator via `skip app launch`,
 	# not this Robolectric harness. We exclude ONLY that class by name so every
 	# real Swift test still runs and still gates the release.
-	swift test --skip XCSkipTests
+	#
+	# --scratch-path: run the host (macOS) test build in its OWN build dir. The
+	# shared .build/ can hold Android artifacts (aarch64-unknown-linux-android28)
+	# from `skip android build`; mixing them into the macOS test bundle makes the
+	# swift-testing runner crash on teardown with signal 5 (SIGTRAP) even though
+	# every test passes. An isolated scratch path keeps the host tests immune.
+	swift test --skip XCSkipTests --scratch-path .build/host-test
 
 # ------------------------------------------------------------------------------
 # Clean
