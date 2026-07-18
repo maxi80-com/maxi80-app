@@ -73,6 +73,21 @@ If screenshots are regenerated, re-copy the fr-FR versions into `assets/` (filen
 `shot-now-playing.png` iOS, `shot-android-phone.png` Android, `shot-history.png`, `shot-coverflow.png`,
 `tv-apple.png`, `tv-android.png`, `logo-neon.png`, `app-icon.png`).
 
+## Deploy & custom domain (READ before touching CNAME)
+
+Deployed via `.github/workflows/pages.yml` (push to `main` touching `website/**`) to
+**`https://maxi80-com.github.io/maxi80-app/`**. The intended custom domain is
+**`app.maxi80.com`**, but its **DNS is not set up yet** (`nslookup app.maxi80.com` → `NXDOMAIN`;
+same blocker tracked in `docs/publish.md §2`).
+
+- **There is deliberately NO `CNAME` file** right now. A `CNAME` makes GitHub Pages 301-redirect
+  the whole site to that domain whether or not it resolves — with DNS dead, those redirects
+  dead-end and images render as broken placeholders (the redirect propagates unevenly across CDN
+  edges, so it looks like "only some images break"). This already bit the `#salon` TV shots once.
+- **When `app.maxi80.com` DNS is live** (and the Pages custom domain is added + verified in the repo
+  settings): re-add `website/CNAME` containing the single line `app.maxi80.com`. Only then.
+- Until then the site is reachable at the `github.io` URL above; nothing else needs changing.
+
 ## Known TODO / loose ends
 
 - Fastlane `marketing_url` / `support_url` / `privacy_url` (all locales) are still `REPLACE-ME-*`.
