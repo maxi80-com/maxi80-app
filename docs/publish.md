@@ -23,9 +23,10 @@ Legend: `[x]` done · `[ ]` todo · `[!]` blocked / needs you
 
 ## TODO — the short list
 
-- [!] **Real privacy + support URLs** — all locales still hold `REPLACE-ME`
-      placeholders. Apple *requires* both; maxi80.com has no such pages today.
-      → create the pages, then replace the sentinels (see §2).
+- [!] **Publish the privacy/support pages** — URLs are now written into all locales
+      (`privacy: https://app.maxi80.com/confidentialite.html`, `support: https://app.maxi80.com`),
+      but `app.maxi80.com` is **not live yet**. Apple's reviewer fetches the privacy URL —
+      the page MUST be up before the iOS submission or it's rejected (see §2).
 - [x] **Google Play service-account key** — `fastlane@maxi80.iam.gserviceaccount.com`,
       stored in `secrets/play_service_account.json`, symlinked to `Android/fastlane/apikey.json`.
       Auth + Play access verified (HTTP 200). Key rotated after setup; live key id `39dafa3c…`.
@@ -39,10 +40,15 @@ Legend: `[x]` done · `[ ]` todo · `[!]` blocked / needs you
 - [x] **Play feature graphic (1024×500)** + **Android TV banner (320×180)** — generated
       from the Maxi 80 neon logo, placed per-locale as `images/featureGraphic.png` and
       `images/tvBanner.png` (supply picks them up automatically).
-- [ ] **Android upload keystore** — release AAB is currently debug-signed; add
-      `Android/keystore.properties` before `publish-android` (see Makefile `doctor`).
-- [ ] **Bump build number before upload** — TestFlight already has build 1; run
-      `make bump` (or a publish target) so `CURRENT_PROJECT_VERSION` > 1.
+- [x] **Android upload keystore** — the 2018 `upload` alias (Play App Signing upload
+      key, cert valid to 2043) is in `secrets/maxi80-upload.keystore`, wired via
+      `Android/keystore.properties` (git-ignored). Both passwords verified with keytool;
+      release AAB is now upload-signed.
+- [x] **Build number scheme fixed** — reworked to `yyyyMMddNN` because the last published
+      Play versionCode was `2021122500` (a 2-digit-year scheme would be *lower* and rejected).
+      `make bump` / the publish targets set it automatically. Verified `1 → 2026071800`.
+- [x] **Publication recipe written** — safe-staging flow (TestFlight / Play internal),
+      Makefile targets + Fastfile lanes (`metadata`/`beta`/`release`), documented in §4.
 
 ---
 
@@ -104,25 +110,28 @@ with the key, gets a token, and opens a Play edit for the package; HTTP 200 = go
 
 ---
 
-## 2. URLs — ACTION REQUIRED  🚧
+## 2. URLs — written, page not live yet  🟡
 
-Every locale holds placeholder URLs. Replace before publishing:
+All locales now hold the real URLs (no `REPLACE-ME` left):
 
-- `privacy_url.txt`  → privacy policy URL (**Apple requires this**)
-- `support_url.txt`  → support page URL (**Apple requires this**)
-- `marketing_url.txt` / `software_url.txt` → marketing page (optional)
+- `privacy_url.txt`  → `https://app.maxi80.com/confidentialite.html` (**Apple requires**)
+- `support_url.txt`  → `https://app.maxi80.com` (**Apple requires**)
+- `marketing_url.txt` / `software_url.txt` → `https://www.maxi80.com`
 
 Apple files: `Darwin/fastlane/metadata/<locale>/`. Play takes the privacy URL in
-the Console UI (Store presence → App content), not from a metadata file.
+the Console UI (Store presence → App content), not from a metadata file — use the
+same `https://app.maxi80.com/confidentialite.html`.
 
-> Note: maxi80.com currently has **no** privacy-policy or support/contact page.
-> A homepage will not pass Apple review as a privacy policy — a dedicated page
-> is needed. Decision (2026-07-18): leave placeholders in place and track here.
+> ⚠️ **BLOCKER for iOS:** `app.maxi80.com` is not live yet. Apple's reviewer
+> fetches the privacy URL during review; a dead link = rejection. Publish
+> `confidentialite.html` (and have the host serve `app.maxi80.com`) before
+> submitting iOS. Android can ship first (Play doesn't fetch the page at upload).
 
-Check none slipped through:
+Confirm none slipped through, and that the page resolves before iOS submit:
 
 ```bash
-grep -rl "REPLACE-ME" Darwin/fastlane Android/fastlane
+grep -rl "REPLACE-ME" Darwin/fastlane Android/fastlane   # must be empty
+curl -sI https://app.maxi80.com/confidentialite.html | head -1   # want 200
 ```
 
 ---
@@ -189,19 +198,74 @@ Folders (created on first capture):
 
 ---
 
-## 4. Ship
+## 4. Publication recipe (reusable — follow this for every release)
+
+Philosophy: **safe staging**. Binaries first go to TestFlight (iOS) / internal
+testing (Android). You verify on a real device, then promote to production
+**manually** in each Console. Nothing ships to users straight from the CLI.
+
+The `make` targets enforce a gate order: **clean git tree → tests pass → bump
+build number → commit the bump → build+sign+upload → git tag** (no auto-push).
+
+### Prerequisites (once per machine / release)
 
 ```bash
-# iOS + tvOS
-cd Darwin && fastlane release     # assemble + upload_to_app_store (submits for review)
-
-# Android (phone + TV)
-cd Android && fastlane release    # bundleRelease + upload_to_play_store
+export JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home
+make doctor        # must print "doctor: OK" — checks tools, credentials, keystore
 ```
 
-- iOS `Deliverfile`: `submit_for_review(true)` + `automatic_release(true)`.
-- Android `release` uploads the AAB to the default track — set `track:
-  'production'` in `Android/fastlane/Fastfile` for a staged rollout.
+- Working tree must be **clean** (commit everything first) or the publish aborts.
+- Update the release notes: `Darwin/fastlane/metadata/<locale>/release_notes.txt`
+  and `Android/fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt`.
+- iOS only: confirm the privacy page is live —
+  `curl -sI https://app.maxi80.com/confidentialite.html | head -1` → `200`.
+
+### A. Android (Google Play)
+
+```bash
+make publish-android
+```
+Runs tests → bumps build → commits → builds a **signed** AAB (upload key) →
+uploads to the **internal testing** track as a **draft** → tags the commit.
+
+Then, in the **Play Console**:
+1. Testing → Internal testing → install on a device, confirm it works.
+2. First release only: Store presence → App content → set the **privacy policy
+   URL** = `https://app.maxi80.com/confidentialite.html`; complete Data safety,
+   content rating, target audience if prompted.
+3. Promote: Internal testing release → **Promote to Production** (or start a
+   staged % rollout). Review and roll out.
+
+### B. iOS + Apple TV (App Store)
+
+First push the listing (text + screenshots) as a draft, then the binary:
+```bash
+make publish-metadata-ios     # uploads listing + screenshots (no binary, no review)
+make publish-ios              # tests → bump → commit → build+sign → TestFlight → tag
+```
+`publish-ios` uploads to **TestFlight** (not the review queue).
+
+Then, in **App Store Connect**:
+1. TestFlight → install via the TestFlight app, confirm it works.
+2. First release only: fill App Privacy answers (the app collects no data — see
+   `Darwin/fastlane/metadata/app_privacy_details.json`), confirm privacy/support
+   URLs, age rating.
+3. App Store → select the build → **Submit for Review**. (Or from the CLI:
+   `cd Darwin && fastlane release` — submits for review with metadata.)
+
+### C. After a release ships
+
+```bash
+git push && git push origin <the tag printed by the publish target>
+```
+
+### Notes / knobs
+- Build number scheme: `yyyyMMddNN` (see Makefile header). Must exceed the last
+  published Play versionCode (`2021122500`) and stay < 2,100,000,000.
+- To push Android straight to production instead of internal:
+  `cd Android && fastlane release track:production release_status:draft`.
+- iOS lanes: `metadata` (listing draft), `beta` (TestFlight), `release` (submit
+  for review) — in `Darwin/fastlane/Fastfile`.
 
 ---
 

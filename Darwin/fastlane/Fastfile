@@ -19,9 +19,34 @@ lane :assemble do |options|
   )
 end
 
-lane :release do |options|
-  desc "Build and release app"
+desc "Push store listing (text + screenshots) as a DRAFT — no binary, no review"
+lane :metadata do |options|
+  # Uploads metadata/<locale>/*.txt and screenshots/<locale>/* to the App Store
+  # Connect listing without touching the binary and WITHOUT submitting for review.
+  # Safe to run anytime; the listing sits as an editable draft until you submit.
+  upload_to_app_store(
+    api_key_path: "fastlane/apikey.json",
+    app_rating_config_path: "fastlane/metadata/rating.json",
+    skip_binary_upload: true,
+    submit_for_review: false,
+    automatic_release: false,
+    force: true,                          # skip the HTML preview confirmation
+    precheck_include_in_app_purchases: false
+  )
+end
 
+desc "Build + upload the binary to TestFlight (staging — no App Store review)"
+lane :beta do |options|
+  get_provisioning_profile(api_key_path: "fastlane/apikey.json")
+  assemble
+  upload_to_testflight(
+    api_key_path: "fastlane/apikey.json",
+    skip_waiting_for_build_processing: true   # don't block on Apple's processing
+  )
+end
+
+desc "Full App Store submission — submits the current build FOR REVIEW (promote step)"
+lane :release do |options|
   # see https://docs.fastlane.tools/uploading-app-privacy-details/
   #upload_app_privacy_details_to_app_store(json_path: "fastlane/app_privacy_details.json")
 

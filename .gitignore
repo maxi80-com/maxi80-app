@@ -25,6 +25,9 @@ captures/
 # Keystores — never commit signing keys
 *.jks
 *.keystore
+# Signing config holds keystore + key passwords in plaintext
+keystore.properties
+**/keystore.properties
 
 # Skip
 .skip/
