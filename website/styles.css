@@ -396,7 +396,36 @@ section { padding: 6.5rem 1.5rem; }
   font-family: var(--font-display); font-weight: 600; font-size: 1.15rem;
   color: var(--white); margin-bottom: 1rem;
 }
+.footer__contact { margin-bottom: 1.4rem; }
+.footer__contact-lede { color: var(--muted); font-size: .95rem; margin-bottom: .8rem; }
 .footer__small { color: var(--muted-2); font-size: .85rem; }
+.footer__small a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; transition: color .2s; }
+.footer__small a:hover { color: var(--amber); }
+
+/* =========================================================
+   LEGAL / PRIVACY PAGE
+   ========================================================= */
+.legal { padding-top: 5rem; padding-bottom: 6rem; }
+.legal__inner { max-width: 720px; margin: 0 auto; }
+.legal__title { font-size: clamp(2.4rem, 6vw, 4rem); font-weight: 800; margin: .3rem 0 0; }
+.legal__lede { color: var(--muted); font-size: 1.2rem; margin-top: 1.6rem; }
+.legal__lede strong { color: var(--white); }
+.legal__prose { margin-top: 3rem; }
+.legal__prose h2 {
+  font-size: 1.3rem; margin: 2.6rem 0 .9rem;
+  padding-top: 2rem; border-top: 1px solid var(--line);
+}
+.legal__prose h2:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+.legal__prose p { color: var(--muted); font-size: 1.05rem; }
+.legal__prose > .btn { margin-top: 1.2rem; }
+
+/* cross-mark variant of the tick list (for "what we don't do") */
+.ticks--cross li { color: var(--muted); font-weight: 500; }
+.ticks--cross li::before {
+  background: var(--amber);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6l12 12M18 6L6 18' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") center/66% no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6l12 12M18 6L6 18' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") center/66% no-repeat;
+}
 
 /* =========================================================
    SCROLL REVEAL
