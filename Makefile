@@ -49,13 +49,18 @@ BUILD_NUMBER      := $(shell grep '^CURRENT_PROJECT_VERSION' $(SKIP_ENV) | sed -
 
 # --- Paths --------------------------------------------------------------------
 CONFIG_PLIST := Sources/Maxi80/Resources/Configuration.plist
-IPA_DIR      := .build/fastlane/Darwin
+# Apple artifacts are per-platform (the assemble lane outputs to Darwin/<platform>)
+IOS_DIR      := .build/fastlane/Darwin/ios
+TVOS_DIR     := .build/fastlane/Darwin/tvos
+MACOS_DIR    := .build/fastlane/Darwin/macos
 AAB_PATH     := .build/Android/app/outputs/bundle/release/app-release.aab
 
 .PHONY: help version doctor verify check-config check-clean-tree test \
         clean build-ios build-android build-all \
-        package-ios package-android \
-        bump publish-metadata-ios publish-ios publish-android publish-all screenshots
+        package-ios package-tvos package-macos package-android package-all \
+        publish-metadata-ios publish-metadata-tvos publish-metadata-mac publish-metadata-all \
+        publish-ios publish-tvos publish-macos publish-android publish-all \
+        bump release screenshots
 
 # ------------------------------------------------------------------------------
 # Help / info
@@ -78,15 +83,25 @@ help: ## Show this help (default target)
 	@echo "    build-all         build-ios + build-android"
 	@echo ""
 	@echo "  Package (signed artifacts, no upload)"
-	@echo "    package-ios       Signed IPA via fastlane (Darwin/assemble)"
-	@echo "    package-android   Release AAB via fastlane (Android/assemble)"
+	@echo "    package-ios       Signed iOS IPA (incl. CarPlay)"
+	@echo "    package-tvos      Signed Apple TV IPA"
+	@echo "    package-macos     Signed macOS build"
+	@echo "    package-android   Release AAB (upload-signed)"
+	@echo "    package-all       All of the above"
 	@echo ""
-	@echo "  Release"
-	@echo "    bump                 Rewrite build number in Skip.env (yyyyMMddNN)"
-	@echo "    publish-metadata-ios Push App Store listing as draft (no binary/review)"
-	@echo "    publish-ios          Gate -> bump -> commit -> TestFlight -> tag"
-	@echo "    publish-android      Gate -> bump -> commit -> Play internal draft -> tag"
-	@echo "    publish-all          publish-ios + publish-android"
+	@echo "  Release (one version across all platforms)"
+	@echo "    release              Bump -> build+sign ALL -> test -> commit+tag (no upload)"
+	@echo "    bump                 Rewrite build number in Skip.env (yyyyMMddNN, low-level)"
+	@echo ""
+	@echo "  Publish metadata (listing text + screenshots, draft; no binary/review)"
+	@echo "    publish-metadata-ios / -tvos / -mac / -all"
+	@echo ""
+	@echo "  Publish binaries (to TEST tracks; promote to prod manually in each Console)"
+	@echo "    publish-ios / publish-tvos / publish-macos   TestFlight"
+	@echo "    publish-android                              Play internal (draft)"
+	@echo "    publish-all      Everything: all metadata + all binaries"
+	@echo ""
+	@echo "  Typical:  make release && make publish-all"
 	@echo ""
 	@echo "  Misc"
 	@echo "    screenshots       Helper wrapping fastlane/capture_screenshots.sh"
@@ -131,13 +146,13 @@ doctor: ## Check required tools and credentials are present
 	  if [ -e "$$f" ]; then echo "  ok   $$f"; \
 	  else echo "  MISS $$f"; MISSING=1; fi; \
 	done; \
-	if [ -f Android/keystore.properties ]; then \
-	  echo "  ok   Android/keystore.properties (release AAB signed with the UPLOAD key)"; \
+	if [ -f Android/app/keystore.properties ]; then \
+	  echo "  ok   Android/app/keystore.properties (release AAB signed with the UPLOAD key)"; \
 	else \
-	  echo "  WARN Android/keystore.properties absent — release AAB is signed with the"; \
-	  echo "       DEBUG key (see Android/app/build.gradle.kts). Google Play upload"; \
-	  echo "       needs a real UPLOAD key. Add Android/keystore.properties before"; \
-	  echo "       a production Play submission (Play App Signing handles the rest)."; \
+	  echo "  WARN Android/app/keystore.properties absent — release AAB is signed with the"; \
+	  echo "       DEBUG key (see Android/app/build.gradle.kts, which reads keystore.properties"; \
+	  echo "       relative to the app MODULE dir). Google Play upload needs the UPLOAD key."; \
+	  echo "       Add Android/app/keystore.properties before a Play upload."; \
 	fi; \
 	if [ -n "$$MISSING" ]; then \
 	  echo "==> doctor: some tools/files are missing (see above)"; exit 1; \
@@ -231,23 +246,32 @@ build-all: build-ios build-android ## Build both platforms
 # ------------------------------------------------------------------------------
 # Package (signed artifacts, no upload)
 # ------------------------------------------------------------------------------
-package-ios: check-config ## Produce a signed IPA (App Store codesigned)
-	# The Darwin `assemble` lane runs build_app with scheme "Maxi80 App" and
-	# fastlane/AppStore.xcconfig; it codesigns for the App Store. Output lands in
-	# $(IPA_DIR).
-	cd Darwin && fastlane assemble
-	@echo "==> IPA in $(IPA_DIR)"
+package-ios: check-config ## Produce a signed iOS IPA (App Store, incl. CarPlay)
+	# build_app (scheme "Maxi80 App", sdk iphoneos) app-store export, signed with
+	# team 56U756R2L2. CarPlay ships inside this binary (carplay-audio entitlement).
+	cd Darwin && fastlane assemble platform:ios
+	@echo "==> iOS IPA in $(IOS_DIR)"
+
+package-tvos: check-config ## Produce a signed Apple TV IPA (App Store)
+	cd Darwin && fastlane assemble platform:tvos
+	@echo "==> tvOS IPA in $(TVOS_DIR)"
+
+package-macos: check-config ## Produce a signed macOS build (App Store)
+	cd Darwin && fastlane assemble platform:macos
+	@echo "==> macOS artifact in $(MACOS_DIR)"
 
 package-android: check-config ## Produce a release AAB (gradle bundleRelease)
 	# The Android `assemble` lane runs `gradle bundleRelease` -> $(AAB_PATH).
-	# SIGNING: Android/app/build.gradle.kts signs the release build with the
-	# keystore named in Android/keystore.properties. That file is present here
-	# (git-ignored) and points at the UPLOAD key, so this AAB is UPLOAD-signed and
-	# ready for Google Play (Play App Signing re-signs with the app key on their
-	# side). If keystore.properties is ever removed, the build falls back to the
-	# DEBUG key — fine to inspect locally, but rejected by Play. See `doctor`.
+	# SIGNING: Android/app/build.gradle.kts reads `keystore.properties` relative to
+	# the app MODULE dir, so the file MUST live at Android/app/keystore.properties
+	# (git-ignored). It points at the UPLOAD key, so this AAB is upload-signed and
+	# accepted by Google Play (Play App Signing re-signs with the app key). If that
+	# file is missing, gradle falls back to the DEBUG key and Play rejects the
+	# upload ("signed with the wrong key"). See `doctor`.
 	cd Android && fastlane assemble
 	@echo "==> AAB at $(AAB_PATH)"
+
+package-all: package-ios package-tvos package-macos package-android ## Build+sign every binary
 
 # ------------------------------------------------------------------------------
 # Release
@@ -266,53 +290,79 @@ bump: ## Rewrite CURRENT_PROJECT_VERSION in Skip.env to a fresh build number
 	sed -i '' -E "s/^(CURRENT_PROJECT_VERSION[[:space:]]*=[[:space:]]*).*/\1$$NEW/" $(SKIP_ENV); \
 	echo "==> build number: $$OLD -> $$NEW"
 
-# publish-ios / publish-android compute the build number INSIDE the shell (by
-# re-reading Skip.env AFTER `make bump`) rather than via the make $(BUILD_NUMBER)
-# variable: that variable is expanded via $(shell ...) when the Makefile is read,
-# i.e. BEFORE the bump runs, so it would hold the stale pre-bump number. The
-# final block is one `set -e; ...` shell so a failed git commit or upload aborts
-# the sequence instead of falling through to the tag (the installed GNU Make 3.81
-# ignores .SHELLFLAGS/.ONESHELL, so we can't rely on those for fail-fast here).
-publish-metadata-ios: ## Push the App Store listing (text + screenshots) as a DRAFT (no binary, no review)
-	# Safe: uploads metadata/screenshots only, does not submit for review.
+# RELEASE MODEL (one codebase -> one build number -> one commit+tag -> two binaries)
+#
+#   make release   Prepare a versioned, signed release of BOTH platforms:
+#                    clean-tree check -> bump -> build+sign IPA & AAB at that
+#                    version -> run tests -> ONLY if all succeed: commit the bump
+#                    + one shared tag. Produces signed .ipa and .aab; uploads NOTHING.
+#                  Because the version is baked into each binary AT BUILD TIME, the
+#                  bump MUST precede the build; the commit+tag land LAST, so a build
+#                  or test failure aborts with a clean git tree (fix and rerun).
+#
+#   make publish-android | publish-ios | publish-all
+#                  Upload the ALREADY-BUILT signed binary from `make release` to its
+#                  TEST track (Play internal draft / TestFlight). No bump, no build,
+#                  no tag. Uploading is NOT a production release — you promote to
+#                  production manually in each Console.
+#
+#   Typical flow:  make release   &&   make publish-all
+#                  (then test on device, then promote to prod in the Consoles)
+
+release: ## Prepare a signed, versioned release of ALL platforms (no upload)
+	# One codebase -> one build number -> one commit+tag -> all binaries.
+	# The version is compiled into each binary, so bump BEFORE building; commit+tag
+	# land LAST so a failed build/test leaves git clean (fix and rerun). GNU Make
+	# 3.81 ignores .ONESHELL, so each step is its own line.
+	@$(MAKE) --no-print-directory check-clean-tree
+	@$(MAKE) --no-print-directory bump
+	@echo "==> Building + signing iOS(+CarPlay), tvOS, macOS and Android at the new version"
+	@$(MAKE) --no-print-directory package-ios
+	@$(MAKE) --no-print-directory package-tvos
+	@$(MAKE) --no-print-directory package-macos
+	@$(MAKE) --no-print-directory package-android
+	@echo "==> Running tests"
+	@$(MAKE) --no-print-directory test
+	@set -e; \
+	BUILD="$$(grep '^CURRENT_PROJECT_VERSION' $(SKIP_ENV) | sed -E 's/.*=[[:space:]]*//')"; \
+	TAG="v$(MARKETING_VERSION)-$$BUILD"; \
+	git add $(SKIP_ENV); \
+	git commit -m "chore(release): $(MARKETING_VERSION) build $$BUILD"; \
+	git tag -a "$$TAG" -m "Maxi 80 $(MARKETING_VERSION) (build $$BUILD)"; \
+	echo "==> Release $$TAG prepared (iOS/tvOS/macOS IPAs+pkg, Android AAB), committed + tagged (not pushed)."; \
+	echo "    Next: make publish-all    (metadata + binaries to all test tracks)"; \
+	echo "    Then: git push && git push origin $$TAG"
+
+# --- Metadata uploads (listing text + screenshots as draft; no binary, no review) ---
+publish-metadata-ios: ## App Store iOS listing (text + iPhone screenshots) as draft
 	cd Darwin && fastlane metadata
 
-publish-ios: ## Gate -> bump -> commit -> upload to TestFlight (staging) -> tag
-	# SAFE STAGING: uploads the build to TestFlight, NOT the App Store review queue.
-	# Test it via TestFlight, then promote to the store manually in App Store Connect
-	# (or run `cd Darwin && fastlane release` to submit for review from the CLI).
-	@$(MAKE) --no-print-directory check-clean-tree
-	@echo "==> Running tests (publish gate)"
-	@$(MAKE) --no-print-directory test
-	@$(MAKE) --no-print-directory bump
-	@set -e; \
-	BUILD="$$(grep '^CURRENT_PROJECT_VERSION' $(SKIP_ENV) | sed -E 's/.*=[[:space:]]*//')"; \
-	git add $(SKIP_ENV); \
-	git commit -m "chore(release): bump build number to $$BUILD for iOS release $(MARKETING_VERSION)"; \
-	echo "==> Building, signing and uploading to TestFlight"; \
-	( cd Darwin && fastlane beta ); \
-	TAG="v$(MARKETING_VERSION)-$$BUILD"; \
-	git tag -a "$$TAG" -m "iOS release $(MARKETING_VERSION) (build $$BUILD) — TestFlight"; \
-	echo "==> Tagged $$TAG (not pushed). To push:"; \
-	echo "      git push && git push origin $$TAG"
+publish-metadata-tvos: ## App Store tvOS listing (text + Apple TV screenshots) as draft
+	cd Darwin && fastlane metadata_tvos
 
-publish-android: ## Gate -> bump -> commit -> Play internal draft -> tag
-	@$(MAKE) --no-print-directory check-clean-tree
-	@echo "==> Running tests (publish gate)"
-	@$(MAKE) --no-print-directory test
-	@$(MAKE) --no-print-directory bump
-	@set -e; \
-	BUILD="$$(grep '^CURRENT_PROJECT_VERSION' $(SKIP_ENV) | sed -E 's/.*=[[:space:]]*//')"; \
-	git add $(SKIP_ENV); \
-	git commit -m "chore(release): bump build number to $$BUILD for Android release $(MARKETING_VERSION)"; \
-	echo "==> Building, signing and uploading to Google Play (internal track, draft)"; \
-	( cd Android && fastlane release track:internal release_status:draft ); \
-	TAG="v$(MARKETING_VERSION)-$$BUILD-android"; \
-	git tag -a "$$TAG" -m "Android release $(MARKETING_VERSION) (build $$BUILD)"; \
-	echo "==> Tagged $$TAG (not pushed). To push:"; \
-	echo "      git push && git push origin $$TAG"
+publish-metadata-mac: ## App Store macOS listing (text + Mac screenshots) as draft
+	cd Darwin && fastlane metadata_mac
 
-publish-all: publish-ios publish-android ## Publish both platforms
+publish-metadata-all: publish-metadata-ios publish-metadata-tvos publish-metadata-mac ## All Apple listings
+
+# --- Binary uploads (test tracks; promote to production manually in each Console) ---
+publish-ios: ## Upload the built iOS IPA to TestFlight
+	@ls $(IOS_DIR)/*.ipa >/dev/null 2>&1 || { echo "no iOS IPA in $(IOS_DIR) — run 'make package-ios' (or release) first"; exit 1; }
+	cd Darwin && fastlane upload platform:ios
+
+publish-tvos: ## Upload the built Apple TV IPA to TestFlight
+	@ls $(TVOS_DIR)/*.ipa >/dev/null 2>&1 || { echo "no tvOS IPA in $(TVOS_DIR) — run 'make package-tvos' (or release) first"; exit 1; }
+	cd Darwin && fastlane upload platform:tvos
+
+publish-macos: ## Upload the built macOS pkg to TestFlight/App Store
+	@ls $(MACOS_DIR)/*.pkg >/dev/null 2>&1 || { echo "no macOS pkg in $(MACOS_DIR) — run 'make package-macos' (or release) first"; exit 1; }
+	cd Darwin && fastlane upload platform:macos
+
+publish-android: ## Upload the built AAB to Google Play (internal track, draft)
+	@test -f "$(AAB_PATH)" || { echo "no AAB at $(AAB_PATH) — run 'make package-android' (or release) first"; exit 1; }
+	cd Android && fastlane upload track:internal release_status:draft
+
+publish-all: publish-metadata-all publish-ios publish-tvos publish-macos publish-android ## Upload EVERYTHING (metadata + all binaries)
 
 # ------------------------------------------------------------------------------
 # Misc

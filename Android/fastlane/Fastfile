@@ -40,18 +40,25 @@ lane :assemble do
   # sh "your_script.sh"
 end
 
-desc "Deploy Skip Android App to Google Play"
+AAB_PATH = '../.build/Android/app/outputs/bundle/release/app-release.aab'
+
+desc "Upload the EXISTING signed AAB to Google Play (no rebuild)"
+# The Makefile builds the AAB once via `make release`, then calls this to upload
+# exactly that binary (the one that was version-stamped + tagged) — no rebuild, so
+# what ships is what was tested/tagged.
 # options:
-#   track          : Play track to upload to (default: 'internal')
-#   release_status : 'draft' | 'completed' | ... (default: 'draft', so the
-#                    Makefile's publish-android uploads to internal as a draft)
-lane :release do |options|
-
-  assemble
-
+#   track          : Play track (default: 'internal')
+#   release_status : 'draft' | 'completed' | ... (default: 'draft')
+lane :upload do |options|
   upload_to_play_store(
-    aab: '../.build/Android/app/outputs/bundle/release/app-release.aab',
+    aab: AAB_PATH,
     track: options[:track] || 'internal',
     release_status: options[:release_status] || 'draft'
   )
+end
+
+desc "Build + upload to Google Play (rebuilds, then uploads) — standalone convenience"
+lane :release do |options|
+  assemble
+  upload(options)
 end

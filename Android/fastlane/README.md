@@ -1,13 +1,61 @@
-This is a stock fastlane configuration file for your Skip project.
-To use fastlane to distribute your app:
+fastlane documentation
+----
 
-1. Update the metadata text files in metadata/android/en-US/
-2. Add screenshots to screenshots/en-US
-3. Download your Android API JSON file to apikey.json (see https://docs.fastlane.tools/actions/upload_to_play_store/)
-4. Run `fastlane assemble` to build the app
-5. Run `fastlane release` to submit a new release to the App Store
+# Installation
 
-For the bundle name and version numbers, the ../Skip.env file will be used.
+Make sure you have the latest version of the Xcode command line tools installed:
+
+```sh
+xcode-select --install
+```
+
+For _fastlane_ installation instructions, see [Installing _fastlane_](https://docs.fastlane.tools/#installing-fastlane)
+
+# Available Actions
+
+### build
+
+```sh
+[bundle exec] fastlane build
+```
+
+Build Skip Android App
+
+### test
+
+```sh
+[bundle exec] fastlane test
+```
+
+Test Skip Android App
+
+### assemble
+
+```sh
+[bundle exec] fastlane assemble
+```
+
+Assemble Skip Android App
+
+### upload
+
+```sh
+[bundle exec] fastlane upload
+```
+
+Upload the EXISTING signed AAB to Google Play (no rebuild)
+
+### release
+
+```sh
+[bundle exec] fastlane release
+```
+
+Build + upload to Google Play (rebuilds, then uploads) — standalone convenience
+
+----
+
+This README.md is auto-generated and will be re-generated every time [_fastlane_](https://fastlane.tools) is run.
 
 More information about _fastlane_ can be found on [fastlane.tools](https://fastlane.tools).
 
