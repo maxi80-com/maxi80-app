@@ -32,6 +32,9 @@ public struct RadioPlayerView: View {
       // The branded default background is always dark, so force dark text/controls when
       // it's showing (no artwork color). With artwork, respect the device scheme.
       .environment(\.colorScheme, viewModel.dominantColor == nil ? .dark : colorScheme)
+      // A rotation recreates the CoverFlowView; open a short window where its selection write-back
+      // is dropped so the browsed cover survives the recreation.
+      .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
     }
     .overlay(alignment: .top) {
       if let errorMessage = viewModel.errorMessage {
@@ -140,7 +143,13 @@ public struct RadioPlayerView: View {
   private func coverFlow() -> some View {
     CoverFlowView(
       covers: viewModel.covers,
-      selection: $viewModel.selectedCoverID,
+      // The carousel reads `selectedCoverID` but writes through the view model, which drops writes
+      // during a rotation so the recreated carousel's leftmost-cover relayout can't lose the
+      // browsed cover.
+      selection: Binding(
+        get: { viewModel.selectedCoverID },
+        set: { viewModel.setSelectionFromCarousel($0) }
+      ),
       // Pin to the now slot unless the user is browsing history; re-pin whenever the
       // cover set changes (history loads to the left, shifting the viewport).
       pinTarget: viewModel.isBrowsingHistory ? nil : viewModel.liveCoverID,

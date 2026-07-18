@@ -180,6 +180,32 @@ public final class RadioPlayerViewModel {
     returnToLiveNonce += 1
   }
 
+  /// True for a short window around an orientation change. The carousel is recreated on rotation
+  /// (portrait and landscape host it in different structural slots), and its fresh layout reports
+  /// the leftmost cover. This lock lives in the view model — which survives that recreation — so the
+  /// carousel's selection write-back can be dropped while set, preserving the browsed cover.
+  public private(set) var isReorienting = false
+
+  @ObservationIgnored
+  private var reorientClearTask: Task<Void, Never>?
+
+  /// Begin the reorientation lock, auto-clearing once the recreated carousel has settled.
+  func beginReorientation() {
+    isReorienting = true
+    reorientClearTask?.cancel()
+    reorientClearTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(nanoseconds: 700_000_000)
+      self?.isReorienting = false
+    }
+  }
+
+  /// Set the selection unless a reorientation is in flight, so transient relayout centering during
+  /// a rotation can't clobber the browsed cover.
+  func setSelectionFromCarousel(_ newValue: AnyHashable?) {
+    guard !isReorienting else { return }
+    selectedCoverID = newValue
+  }
+
   public var station: Station? {
     coordinator.station
   }

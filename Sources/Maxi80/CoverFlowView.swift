@@ -65,45 +65,33 @@ struct CoverFlowView: View {
         // Snap each cover to center after a scroll. Works with macOS two-finger/trackpad
         // horizontal scrolling too (it settles the scroll, it doesn't block the gesture).
         .scrollTargetBehavior(.viewAligned)
-        // scrollPosition(id:) only *reports* the focused cover; ScrollViewReader does the
-        // actual scrolling. Pin on first appearance and whenever pinToken changes.
-        //
-        // Android also folds the rounded container width into the id so a rotation (width
-        // change) re-fires the pin: the transpiled Compose ScrollView/LazyHStack resets its
-        // scroll offset to the leftmost (oldest) cover on relayout, whereas iOS keeps its
-        // offset — so iOS keys on pinToken alone and its behavior is unchanged.
+        // scrollPosition(id:) only reports the focused cover; ScrollViewReader does the scrolling.
+        // Re-pin on first appearance, whenever pinToken changes, and whenever the container width
+        // changes: a rotation recreates this view (portrait and landscape host it in different
+        // slots) and its fresh ScrollView lays out at the leftmost cover, so the pin must re-center
+        // on the browsed/live cover. The parent preserves `selection` across the recreation, so
+        // `pinTarget ?? selection` is the correct target.
         .task(id: repinToken(width: outer.size.width)) {
-          // When browsing history `pinTarget` is nil; on Android fall back to the current
-          // selection so a rotation preserves the browsed cover instead of jumping. iOS
-          // keeps the original `pinTarget`-only behavior (it never loses its offset).
-          #if SKIP
-            let target = pinTarget ?? selection
-          #else
-            let target = pinTarget
-          #endif
-          guard let target else { return }
-          // Let layout settle after content changes, then jump (NOT animate) to center
-          // the target. anchor: .center avoids landing off-center + tilting. A
-          // *non-animated* jump is deliberate: an animated scrollTo sweeps the
-          // LazyHStack across every intermediate cover, kicking off then cancelling
-          // their AsyncImage loads, which then never restart → older covers stuck on the
+          let target = pinTarget ?? selection
+          // Let layout settle, then jump (not animate) to center the target. A non-animated jump is
+          // deliberate: an animated scrollTo sweeps the LazyHStack across every intermediate cover,
+          // starting then cancelling their AsyncImage loads so those covers stick on the
           // placeholder. Jumping lands directly without instantiating the cells between.
           try? await Task.sleep(nanoseconds: 60_000_000)
-          proxy.scrollTo(target, anchor: .center)
+          if let target { proxy.scrollTo(target, anchor: .center) }
         }
-        // Reports which cover the user swiped to. On iOS 26/macOS, scrollPosition(id:) writes
-        // the centered id back into `selection` and drives the title. On iOS 27 that
-        // write-back regressed (verified: proxy-scrolling the viewport never updated the
-        // binding), so on Apple platforms we instead derive the centered id ourselves from
-        // each cell's distance-to-center (see CenteredCoverKey) and skip scrollPosition's
-        // read-back entirely. Android's scrollPosition(id:) still works and its
-        // scrollPosition(id:anchor:) fatalErrors on a non-nil anchor, so it keeps this path.
+        // Reports which cover the user swiped to. Apple derives the centered id from each cell's
+        // distance-to-center (CenteredCoverKey) because scrollPosition(id:) doesn't report proxy
+        // scrolls on iOS 27. Android's scrollPosition(id:) works and its anchor variant traps on a
+        // non-nil anchor, so it keeps that path.
         #if SKIP
           .scrollPosition(id: $selection)
         #else
           .onPreferenceChange(CenteredCoverKey.self) { centered in
             guard let id = centered?.id else { return }
             if AnyHashable(id) != selection {
+              // The parent drops this write during a rotation, so the recreated carousel's transient
+              // leftmost-cover centering can't lose the browsed cover.
               selection = AnyHashable(id)
             }
           }
@@ -113,16 +101,10 @@ struct CoverFlowView: View {
     .frame(height: coverSize + verticalMargin * 2)
   }
 
-  /// Identity for the re-pin `.task`. iOS keys on `pinToken` alone — its scroll offset survives
-  /// rotation. Android folds in the rounded container width, because the transpiled Compose
-  /// ScrollView/LazyHStack resets its scroll offset to the leftmost (oldest) cover on relayout
-  /// (e.g. a portrait↔landscape rotation), so the width change must re-fire the pin.
+  /// Identity for the re-pin `.task`. Folds in the rounded container width so a rotation re-fires
+  /// the pin, since relayout at the new width resets the scroll to the leftmost cover.
   private func repinToken(width: CGFloat) -> String {
-    #if SKIP
-      return "\(pinToken)|\(Int(width))"
-    #else
-      return pinToken
-    #endif
+    "\(pinToken)|\(Int(width))"
   }
 
   @ViewBuilder
