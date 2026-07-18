@@ -5,12 +5,12 @@
 # This workflow deliberately contains NO release, fastlane, signing, upload, or
 # emulator steps — it only compiles and tests the app.
 #
-# The two platforms split across two runners because this app has no Linux-HOST
-# code path (the Apple side needs CoreGraphics/SwiftUI; the Android side is
-# reached only via the Skip transpile / Swift-for-Android cross-compile):
+# Everything runs on macOS runners, where the full toolchain (Xcode, the Swift
+# toolchain, and `xcrun` used by Skip's gradle prebuild) is native:
 #
-#   macOS job  — Apple side: `xcodebuild build` (unsigned) + `swift test`.
-#   Linux job  — Android side: `skip android build` + gradle (cross-compile).
+#   - xcodebuild build (unsigned)  — the Apple app compiles.
+#   - swift test                   — the native Swift test suite passes.
+#   - skip android build + gradle  — the Android transpile + Kotlin build works.
 name: CI
 
 on:
@@ -32,14 +32,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Apple side: build the Xcode app (unsigned) + run the native test suite.
-  # ---------------------------------------------------------------------------
-  macos:
-    name: macOS (xcodebuild, unsigned)
+  build-and-test:
+    name: macOS build + test (unsigned)
     # macos-26 ships Xcode 26, which this project assumes (Xcode 26+).
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -52,24 +49,23 @@ jobs:
       - name: Set up Skip toolchain
         uses: skiptools/actions/setup-skip@v1
         with:
-          # Android is built on the Linux job; this job stays Apple-only, so it
-          # does not need the (slow-to-install) Swift Android SDK.
-          install-swift-android-sdk: false
+          # Needed for `skip android build` (Swift-for-Android cross-compile).
+          install-swift-android-sdk: true
 
       - name: Versions
         run: |
           swift --version
           xcodebuild -version
-          skip --version || true
+          skip checkup || true
 
       # SKIP_ACTION=none disables the Xcode "Run skip gradle" build phase so this
-      # job builds only the Apple app and needs no Android toolchain. It MUST be
-      # passed as an xcodebuild command-line build setting (not a process env
-      # var): Darwin/Maxi80.xcconfig sets SKIP_ACTION=build, and an xcconfig
+      # step builds only the Apple app (the Android build is exercised in its own
+      # step below). It MUST be a command-line build setting, not a process env
+      # var: Darwin/Maxi80.xcconfig sets SKIP_ACTION=build, and the xcconfig
       # value is injected into the script phase's environment where it would
-      # otherwise override an inherited env var. A command-line build setting
-      # outranks the xcconfig. Signing is fully disabled (no certs in CI).
-      - name: Build (macOS, unsigned)
+      # otherwise win. A command-line build setting outranks the xcconfig.
+      # Signing is fully disabled (no certs in CI).
+      - name: Build Apple app (unsigned)
         run: |
           xcodebuild build \
             -project Darwin/Maxi80.xcodeproj \
@@ -88,82 +84,12 @@ jobs:
       # live in the SwiftPM package, not the .xcodeproj), so `xcodebuild test`
       # against it would run ZERO tests. This project's blessed test gate is
       # `swift test` (the Makefile `test` target), which runs natively on macOS.
-      - name: Test (macOS)
+      - name: Test
         run: make test
 
-  # ---------------------------------------------------------------------------
-  # Android side: Skip transpile + Swift-for-Android cross-compile + gradle.
-  # This runs on Linux (the Android build does not need macOS) and catches
-  # transpiler errors and Kotlin/gradle compile errors before release.
-  # ---------------------------------------------------------------------------
-  linux:
-    name: Linux (Android build)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-
-      # Android SDK 36 requires Java 21; the ubuntu-24.04 runner defaults to
-      # Java 17. JAVA_HOME_21_X64 is a runner environment variable, so it must
-      # be resolved in a step (not the job-level env: context, which is
-      # evaluated before the runner shell exists).
-      - name: Select Java 21
-        run: echo "JAVA_HOME=${JAVA_HOME_21_X64}" >> "$GITHUB_ENV"
-
-      - name: Seed Configuration.plist
-        run: cp Sources/Maxi80/Resources/Configuration.plist.template Sources/Maxi80/Resources/Configuration.plist
-
-      - name: Set up Skip toolchain
-        uses: skiptools/actions/setup-skip@v1
-        with:
-          # The native Fuse modules cross-compile to Android, so the
-          # Swift-Android SDK is required here.
-          install-swift-android-sdk: true
-
-      - name: Versions
-        run: |
-          swift --version
-          skip checkup || true
-
-      # Android/settings.gradle.kts runs `skip plugin --prebuild`, and Skip's
-      # toolchain lookup shells out to `xcrun` to locate a build tool. `xcrun`
-      # is macOS-only, so on the Linux runner we install a tiny shim that
-      # resolves the requested tool from PATH (xcrun's two common forms are
-      # `xcrun --find <tool>` -> print its path, and `xcrun [flags] <tool> args`
-      # -> run it). It also logs each invocation to aid debugging.
-      - name: Install xcrun shim (Linux)
-        run: |
-          sudo tee /usr/local/bin/xcrun >/dev/null <<'SHIM'
-          #!/usr/bin/env bash
-          echo "xcrun shim called with: $*" >&2
-          find_mode=0
-          tools=()
-          while [ $# -gt 0 ]; do
-            case "$1" in
-              -f|--find) find_mode=1; shift;;
-              --sdk|-sdk|--toolchain) shift 2;;
-              --show-sdk-path|--show-sdk-version|--show-sdk-build-version) echo ""; exit 0;;
-              -r|--run|--no-cache|--kill-cache|--verbose|-v|-l|--log) shift;;
-              --) shift;;
-              -*) shift;;
-              *) tools+=("$1"); shift;;
-            esac
-          done
-          if [ "${#tools[@]}" -eq 0 ]; then exit 0; fi
-          if [ "$find_mode" = "1" ]; then
-            command -v "${tools[0]}"
-          else
-            exec "${tools[@]}"
-          fi
-          SHIM
-          sudo chmod +x /usr/local/bin/xcrun
-          echo "xcrun -> $(command -v xcrun)"
-
-      # Step 1: Swift -> Kotlin transpile + Swift-for-Android cross-compile.
-      - name: Skip android build
-        run: skip android build
-
-      # Step 2: compile the generated Kotlin/Android project (matches the
-      # Makefile `build-android` target's gradle invocation).
-      - name: Gradle assembleDebug
-        run: cd Android && gradle --stacktrace --warning-mode none -x lint assembleDebug
+      # `make build-android` runs `skip android build` (Swift -> Kotlin
+      # transpile + Swift-for-Android cross-compile) then `gradle assembleDebug`
+      # (compiles the generated Kotlin/Android project). Reused from the Makefile
+      # so CI matches the local dev flow exactly.
+      - name: Build Android (transpile + gradle)
+        run: make build-android
