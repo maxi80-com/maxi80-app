@@ -73,20 +73,28 @@ If screenshots are regenerated, re-copy the fr-FR versions into `assets/` (filen
 `shot-now-playing.png` iOS, `shot-android-phone.png` Android, `shot-history.png`, `shot-coverflow.png`,
 `tv-apple.png`, `tv-android.png`, `logo-neon.png`, `app-icon.png`).
 
-## Deploy & custom domain (READ before touching CNAME)
+## Deploy & custom domain
 
-Deployed via `.github/workflows/pages.yml` (push to `main` touching `website/**`) to
-**`https://maxi80-com.github.io/maxi80-app/`**. The intended custom domain is
-**`app.maxi80.com`**, but its **DNS is not set up yet** (`nslookup app.maxi80.com` → `NXDOMAIN`;
-same blocker tracked in `docs/publish.md §2`).
+Deployed via `.github/workflows/pages.yml` (push to `main` touching `website/**`) to GitHub Pages.
+Live at the custom domain **`https://app.maxi80.com/`** (the `github.io` URL
+`https://maxi80-com.github.io/maxi80-app/` still works and redirects there).
 
-- **There is deliberately NO `CNAME` file** right now. A `CNAME` makes GitHub Pages 301-redirect
-  the whole site to that domain whether or not it resolves — with DNS dead, those redirects
-  dead-end and images render as broken placeholders (the redirect propagates unevenly across CDN
-  edges, so it looks like "only some images break"). This already bit the `#salon` TV shots once.
-- **When `app.maxi80.com` DNS is live** (and the Pages custom domain is added + verified in the repo
-  settings): re-add `website/CNAME` containing the single line `app.maxi80.com`. Only then.
-- Until then the site is reachable at the `github.io` URL above; nothing else needs changing.
+Custom-domain wiring — all three pieces are needed and easy to forget one:
+
+1. **DNS** — `app.maxi80.com` → GitHub Pages (`185.199.108–111.153`). Verify: `nslookup app.maxi80.com`.
+2. **`website/CNAME`** — one line, `app.maxi80.com`. It ships in the deployed artifact.
+3. **Pages custom-domain registration** — because this repo uses the **Actions** build type
+   (`actions/deploy-pages`), a `CNAME` file in the artifact does NOT auto-bind the domain. It must
+   also be set in repo Settings → Pages (or via `gh api -X PUT repos/maxi80-com/maxi80-app/pages
+   -f cname='app.maxi80.com'`). Without this the domain returns "Site not found" and no TLS cert is
+   issued. Confirm with `gh api repos/maxi80-com/maxi80-app/pages` → `cname` set + `https_certificate.state:
+   "issued"`. **Enforce HTTPS** only after HTTPS actually serves (cert propagation lags cert issuance
+   by minutes), else visitors hit a redirect to a not-yet-valid cert.
+
+Gotcha this already caused once: with DNS dead but a `CNAME` present, Pages 301-redirects assets to
+the dead domain, and the redirect propagates unevenly across CDN edges — so it looks like "only some
+images break" (it was the `#salon` TV shots). If images break again, check the domain resolves and
+the cert is `issued` before touching the files.
 
 ## Known TODO / loose ends
 
