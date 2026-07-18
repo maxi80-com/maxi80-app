@@ -1,5 +1,5 @@
 {
-  "originHash" : "1497974337cff000e564282e1ed1637b03289dc8aea6c7228a5e10bc55adf5c7",
+  "originHash" : "fd9da096013c6e9c4ef17cb5e72ff03668876d9a3e60c0901a1dfbcf39c97147",
   "pins" : [
     {
       "identity" : "chalk",
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://source.skip.tools/skip-android-bridge.git",
       "state" : {
-        "revision" : "e9c30eb0f0278e8407435ef6fed50c362a3279c2",
-        "version" : "0.6.3"
+        "revision" : "545ea1b2d7ba4abc82daa2be00f81f4ea8e64e5b",
+        "version" : "0.6.4"
       }
     },
     {
@@ -51,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://source.skip.tools/skip-foundation.git",
       "state" : {
-        "revision" : "1854caad39cc2c9ce18e4d6765c79f026059e67e",
-        "version" : "1.4.1"
+        "revision" : "94d47aeed3bb8027ef3ad8e07a8771b52529c238",
+        "version" : "1.4.2"
       }
     },
     {
@@ -96,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://source.skip.tools/skip-ui.git",
       "state" : {
-        "revision" : "190192416ad1e977e8e2ebd9b02f232cc2c62ee1",
-        "version" : "1.58.0"
+        "revision" : "9c3911354f138eb0346644f7899c0657c70b58d6",
+        "version" : "1.59.0"
       }
     },
     {
