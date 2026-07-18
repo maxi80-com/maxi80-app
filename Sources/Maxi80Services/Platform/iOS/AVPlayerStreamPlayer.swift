@@ -2,324 +2,353 @@ import Foundation
 
 #if !SKIP_BRIDGE
 
-#if SKIP
-// Android implementation handled in ExoPlayerStreamPlayer.swift
-#else
+  #if SKIP
+    // Android implementation handled in ExoPlayerStreamPlayer.swift
+  #else
 
-#if os(iOS) || os(tvOS)
-import AVFoundation
+    #if os(iOS) || os(tvOS)
+      import AVFoundation
 
-// MARK: - iOS AVPlayer Implementation
+      // MARK: - iOS AVPlayer Implementation
 
-extension AudioStreamPlayer {
+      extension AudioStreamPlayer {
 
-    /// Set up the iOS audio player with AVPlayer and configure the audio session.
-    func platformPlay(url: String) {
-        guard let streamURL = URL(string: url) else {
+        /// Set up the iOS audio player with AVPlayer and configure the audio session.
+        func platformPlay(url: String) {
+          guard let streamURL = URL(string: url) else {
             onError?("Invalid stream URL: \(url)")
             return
-        }
+          }
 
-        configureAudioSession()
-        registerNotifications()
+          configureAudioSession()
+          registerNotifications()
 
-        let playerItem = AVPlayerItem(url: streamURL)
-        attachMetadataOutput(to: playerItem)
+          let playerItem = AVPlayerItem(url: streamURL)
+          attachMetadataOutput(to: playerItem)
 
-        if avPlayer == nil {
+          if avPlayer == nil {
             avPlayer = AVPlayer(playerItem: playerItem)
-        } else {
+          } else {
             avPlayer?.replaceCurrentItem(with: playerItem)
+          }
+
+          observePlayerStatus()
+
+          // Apply the current in-app volume to the freshly-built player.
+          avPlayer?.volume = Float(volume)
+
+          avPlayer?.play()
+          isPlaying = true
+          onPlaybackStateChanged?(true)
         }
 
-        observePlayerStatus()
+        /// Stop playback and release resources.
+        func platformStop() {
+          avPlayer?.pause()
+          avPlayer?.replaceCurrentItem(with: nil)
+          isPlaying = false
+          onPlaybackStateChanged?(false)
 
-        // Apply the current in-app volume to the freshly-built player.
-        avPlayer?.volume = Float(volume)
+          removeObservers()
+          unregisterNotifications()
+        }
 
-        avPlayer?.play()
-        isPlaying = true
-        onPlaybackStateChanged?(true)
-    }
+        /// Set playback volume. Uses `AVPlayer`'s per-player volume (0...1, relative to the system
+        /// volume) — apps cannot set the system output volume programmatically, but they can attenuate
+        /// their own player, which is what the in-app slider controls.
+        func platformSetVolume(_ newVolume: Double) {
+          let clamped = max(0, min(1, newVolume))
+          self.volume = clamped
+          avPlayer?.volume = Float(clamped)
+        }
 
-    /// Stop playback and release resources.
-    func platformStop() {
-        avPlayer?.pause()
-        avPlayer?.replaceCurrentItem(with: nil)
-        isPlaying = false
-        onPlaybackStateChanged?(false)
+        // MARK: - Audio Session Configuration
 
-        removeObservers()
-        unregisterNotifications()
-    }
-
-    /// Set playback volume. Uses `AVPlayer`'s per-player volume (0...1, relative to the system
-    /// volume) — apps cannot set the system output volume programmatically, but they can attenuate
-    /// their own player, which is what the in-app slider controls.
-    func platformSetVolume(_ newVolume: Double) {
-        let clamped = max(0, min(1, newVolume))
-        self.volume = clamped
-        avPlayer?.volume = Float(clamped)
-    }
-
-    // MARK: - Audio Session Configuration
-
-    private func configureAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        // Setting the category is cheap; do it synchronously so it's in place before activation.
-        do {
+        private func configureAudioSession() {
+          let session = AVAudioSession.sharedInstance()
+          // Setting the category is cheap; do it synchronously so it's in place before activation.
+          do {
             try session.setCategory(.playback, mode: .default, options: [])
-        } catch {
+          } catch {
             onError?("Failed to set audio session category: \(error.localizedDescription)")
-        }
+          }
 
-        // `setActive(true)` performs synchronous IPC with the audio daemon and can block the main
-        // thread (AVFoundation warns about this). Activate off the main actor; AVAudioSession is
-        // thread-safe. Errors hop back to the main actor to reach `onError`.
-        Task.detached { [weak self] in
+          // `setActive(true)` performs synchronous IPC with the audio daemon and can block the main
+          // thread (AVFoundation warns about this). Activate off the main actor; AVAudioSession is
+          // thread-safe. Errors hop back to the main actor to reach `onError`.
+          Task.detached { [weak self] in
             do {
-                try session.setActive(true)
+              try session.setActive(true)
             } catch {
-                await MainActor.run { [weak self] in
-                    self?.onError?("Failed to activate audio session: \(error.localizedDescription)")
-                }
+              await MainActor.run { [weak self] in
+                self?.onError?("Failed to activate audio session: \(error.localizedDescription)")
+              }
             }
+          }
         }
-    }
 
-    // MARK: - Metadata Output
+        // MARK: - Metadata Output
 
-    private func attachMetadataOutput(to playerItem: AVPlayerItem) {
-        let metadataOutput = AVPlayerItemMetadataOutput(identifiers: nil)
-        let delegate = MetadataOutputDelegate(player: self)
-        metadataOutput.setDelegate(delegate, queue: .main)
-        playerItem.add(metadataOutput)
-        metadataDelegate = delegate
-    }
+        private func attachMetadataOutput(to playerItem: AVPlayerItem) {
+          let metadataOutput = AVPlayerItemMetadataOutput(identifiers: nil)
+          let delegate = MetadataOutputDelegate(player: self)
+          metadataOutput.setDelegate(delegate, queue: .main)
+          playerItem.add(metadataOutput)
+          metadataDelegate = delegate
+        }
 
-    // MARK: - Player Status Observation
+        // MARK: - Player Status Observation
 
-    private func observePlayerStatus() {
-        statusObservation = avPlayer?.observe(\.currentItem?.status, options: [.new]) { @Sendable [weak self] player, _ in
+        private func observePlayerStatus() {
+          statusObservation = avPlayer?.observe(\.currentItem?.status, options: [.new]) {
+            @Sendable [weak self] player, _ in
             // Extract Sendable values here; the KVO callback isn't main-actor-isolated, so
             // hop to the main actor before touching the player's callbacks.
             guard player.currentItem?.status == .failed else { return }
             let message = player.currentItem?.error?.localizedDescription ?? "Playback failed"
             Task { @MainActor [weak self] in
-                self?.onError?(message)
+              self?.onError?(message)
             }
-        }
+          }
 
-        // Also observe timeControlStatus for actual playback state
-        timeControlObservation = avPlayer?.observe(\.timeControlStatus, options: [.new]) { @Sendable [weak self] player, _ in
+          // Also observe timeControlStatus for actual playback state
+          timeControlObservation = avPlayer?.observe(\.timeControlStatus, options: [.new]) {
+            @Sendable [weak self] player, _ in
             let playing = player.timeControlStatus == .playing
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.isPlaying = playing
-                self.onPlaybackStateChanged?(playing)
+              guard let self else { return }
+              self.isPlaying = playing
+              self.onPlaybackStateChanged?(playing)
             }
+          }
         }
-    }
 
-    // MARK: - System Volume Observation
+        // MARK: - System Volume Observation
 
-    // MARK: - Notification Handling
+        // MARK: - Notification Handling
 
-    private func registerNotifications() {
-        let nc = NotificationCenter.default
+        private func registerNotifications() {
+          let nc = NotificationCenter.default
 
-        interruptionObserver = nc.addObserver(
+          interruptionObserver = nc.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: AVAudioSession.sharedInstance(),
             queue: .main
-        ) { [weak self] notification in
+          ) { [weak self] notification in
             // Parse the non-Sendable notification here, then hop to the main actor
             // with only Sendable values (no notification crosses the isolation boundary).
             guard let userInfo = notification.userInfo,
-                  let typeRaw = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  let type = AVAudioSession.InterruptionType(rawValue: typeRaw) else {
-                return
+              let typeRaw = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeRaw)
+            else {
+              return
             }
             let optionsRaw = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             Task { @MainActor [weak self] in
-                self?.handleInterruption(type: type, optionsRaw: optionsRaw)
+              self?.handleInterruption(type: type, optionsRaw: optionsRaw)
             }
-        }
+          }
 
-        routeChangeObserver = nc.addObserver(
+          routeChangeObserver = nc.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: AVAudioSession.sharedInstance(),
             queue: .main
-        ) { [weak self] notification in
+          ) { [weak self] notification in
             guard let userInfo = notification.userInfo,
-                  let reasonRaw = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
-                  let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw) else {
-                return
+              let reasonRaw = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonRaw)
+            else {
+              return
             }
             Task { @MainActor [weak self] in
-                self?.handleRouteChange(reason: reason)
+              self?.handleRouteChange(reason: reason)
             }
+          }
         }
-    }
 
-    private func unregisterNotifications() {
-        let nc = NotificationCenter.default
-        if let observer = interruptionObserver {
+        private func unregisterNotifications() {
+          let nc = NotificationCenter.default
+          if let observer = interruptionObserver {
             nc.removeObserver(observer)
             interruptionObserver = nil
-        }
-        if let observer = routeChangeObserver {
+          }
+          if let observer = routeChangeObserver {
             nc.removeObserver(observer)
             routeChangeObserver = nil
+          }
         }
-    }
 
-    private func handleInterruption(type: AVAudioSession.InterruptionType, optionsRaw: UInt) {
-        switch type {
-        case .began:
+        private func handleInterruption(type: AVAudioSession.InterruptionType, optionsRaw: UInt) {
+          switch type {
+          case .began:
             avPlayer?.pause()
             isPlaying = false
             onPlaybackStateChanged?(false)
             onInterruption?(true)
 
-        case .ended:
+          case .ended:
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
             if options.contains(.shouldResume) {
-                avPlayer?.play()
-                isPlaying = true
-                onPlaybackStateChanged?(true)
-                onInterruption?(false)
+              avPlayer?.play()
+              isPlaying = true
+              onPlaybackStateChanged?(true)
+              onInterruption?(false)
             } else {
-                // Stay paused, notify that interruption ended without resume
-                onInterruption?(false)
+              // Stay paused, notify that interruption ended without resume
+              onInterruption?(false)
             }
 
-        @unknown default:
+          @unknown default:
             break
+          }
         }
-    }
 
-    private func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
-        switch reason {
-        case .oldDeviceUnavailable:
+        private func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
+          switch reason {
+          case .oldDeviceUnavailable:
             // Headphones/Bluetooth disconnected — pause playback per Apple guidelines
             avPlayer?.pause()
             isPlaying = false
             onPlaybackStateChanged?(false)
             onInterruption?(true)
 
-        case .newDeviceAvailable:
+          case .newDeviceAvailable:
             // New device connected (headphones, Bluetooth) — audio routes automatically
             break
 
-        default:
+          default:
             break
+          }
         }
-    }
 
-    // MARK: - Observer Cleanup
+        // MARK: - Observer Cleanup
 
-    private func removeObservers() {
-        statusObservation?.invalidate()
-        statusObservation = nil
-        timeControlObservation?.invalidate()
-        timeControlObservation = nil
-        volumeObservation?.invalidate()
-        volumeObservation = nil
-    }
-}
+        private func removeObservers() {
+          statusObservation?.invalidate()
+          statusObservation = nil
+          timeControlObservation?.invalidate()
+          timeControlObservation = nil
+          volumeObservation?.invalidate()
+          volumeObservation = nil
+        }
+      }
 
-// MARK: - Stored Properties via Associated Objects
+      // MARK: - Stored Properties via Associated Objects
 
-// Since Swift extensions cannot add stored properties, we use associated objects
-// to attach the AVPlayer and observers to the AudioStreamPlayer instance.
+      // Since Swift extensions cannot add stored properties, we use associated objects
+      // to attach the AVPlayer and observers to the AudioStreamPlayer instance.
 
-private nonisolated(unsafe) var avPlayerKey: UInt8 = 0
-private nonisolated(unsafe) var metadataDelegateKey: UInt8 = 0
-private nonisolated(unsafe) var statusObservationKey: UInt8 = 0
-private nonisolated(unsafe) var timeControlObservationKey: UInt8 = 0
-private nonisolated(unsafe) var volumeObservationKey: UInt8 = 0
-private nonisolated(unsafe) var interruptionObserverKey: UInt8 = 0
-private nonisolated(unsafe) var routeChangeObserverKey: UInt8 = 0
+      private nonisolated(unsafe) var avPlayerKey: UInt8 = 0
+      private nonisolated(unsafe) var metadataDelegateKey: UInt8 = 0
+      private nonisolated(unsafe) var statusObservationKey: UInt8 = 0
+      private nonisolated(unsafe) var timeControlObservationKey: UInt8 = 0
+      private nonisolated(unsafe) var volumeObservationKey: UInt8 = 0
+      private nonisolated(unsafe) var interruptionObserverKey: UInt8 = 0
+      private nonisolated(unsafe) var routeChangeObserverKey: UInt8 = 0
 
-extension AudioStreamPlayer {
+      extension AudioStreamPlayer {
 
-    var avPlayer: AVPlayer? {
-        get { objc_getAssociatedObject(self, &avPlayerKey) as? AVPlayer }
-        set { objc_setAssociatedObject(self, &avPlayerKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
+        var avPlayer: AVPlayer? {
+          get { objc_getAssociatedObject(self, &avPlayerKey) as? AVPlayer }
+          set {
+            objc_setAssociatedObject(
+              self, &avPlayerKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+          }
+        }
 
-    var metadataDelegate: MetadataOutputDelegate? {
-        get { objc_getAssociatedObject(self, &metadataDelegateKey) as? MetadataOutputDelegate }
-        set { objc_setAssociatedObject(self, &metadataDelegateKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
+        var metadataDelegate: MetadataOutputDelegate? {
+          get { objc_getAssociatedObject(self, &metadataDelegateKey) as? MetadataOutputDelegate }
+          set {
+            objc_setAssociatedObject(
+              self, &metadataDelegateKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+          }
+        }
 
-    var statusObservation: NSKeyValueObservation? {
-        get { objc_getAssociatedObject(self, &statusObservationKey) as? NSKeyValueObservation }
-        set { objc_setAssociatedObject(self, &statusObservationKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
+        var statusObservation: NSKeyValueObservation? {
+          get { objc_getAssociatedObject(self, &statusObservationKey) as? NSKeyValueObservation }
+          set {
+            objc_setAssociatedObject(
+              self, &statusObservationKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+          }
+        }
 
-    var timeControlObservation: NSKeyValueObservation? {
-        get { objc_getAssociatedObject(self, &timeControlObservationKey) as? NSKeyValueObservation }
-        set { objc_setAssociatedObject(self, &timeControlObservationKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
+        var timeControlObservation: NSKeyValueObservation? {
+          get {
+            objc_getAssociatedObject(self, &timeControlObservationKey) as? NSKeyValueObservation
+          }
+          set {
+            objc_setAssociatedObject(
+              self, &timeControlObservationKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+          }
+        }
 
-    var volumeObservation: NSKeyValueObservation? {
-        get { objc_getAssociatedObject(self, &volumeObservationKey) as? NSKeyValueObservation }
-        set { objc_setAssociatedObject(self, &volumeObservationKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
+        var volumeObservation: NSKeyValueObservation? {
+          get { objc_getAssociatedObject(self, &volumeObservationKey) as? NSKeyValueObservation }
+          set {
+            objc_setAssociatedObject(
+              self, &volumeObservationKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+          }
+        }
 
-    var interruptionObserver: NSObjectProtocol? {
-        get { objc_getAssociatedObject(self, &interruptionObserverKey) as? NSObjectProtocol }
-        set { objc_setAssociatedObject(self, &interruptionObserverKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
+        var interruptionObserver: NSObjectProtocol? {
+          get { objc_getAssociatedObject(self, &interruptionObserverKey) as? NSObjectProtocol }
+          set {
+            objc_setAssociatedObject(
+              self, &interruptionObserverKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+          }
+        }
 
-    var routeChangeObserver: NSObjectProtocol? {
-        get { objc_getAssociatedObject(self, &routeChangeObserverKey) as? NSObjectProtocol }
-        set { objc_setAssociatedObject(self, &routeChangeObserverKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
-}
+        var routeChangeObserver: NSObjectProtocol? {
+          get { objc_getAssociatedObject(self, &routeChangeObserverKey) as? NSObjectProtocol }
+          set {
+            objc_setAssociatedObject(
+              self, &routeChangeObserverKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+          }
+        }
+      }
 
-// MARK: - Metadata Output Delegate
+      // MARK: - Metadata Output Delegate
 
-/// Delegate that receives timed metadata from the AVPlayerItem and forwards it to the
-/// AudioStreamPlayer's onMetadataChanged callback.
-final class MetadataOutputDelegate: NSObject, AVPlayerItemMetadataOutputPushDelegate, @unchecked Sendable {
-    private weak var player: AudioStreamPlayer?
+      /// Delegate that receives timed metadata from the AVPlayerItem and forwards it to the
+      /// AudioStreamPlayer's onMetadataChanged callback.
+      final class MetadataOutputDelegate: NSObject, AVPlayerItemMetadataOutputPushDelegate,
+        @unchecked Sendable
+      {
+        private weak var player: AudioStreamPlayer?
 
-    init(player: AudioStreamPlayer) {
-        self.player = player
-        super.init()
-    }
+        init(player: AudioStreamPlayer) {
+          self.player = player
+          super.init()
+        }
 
-    func metadataOutput(
-        _ output: AVPlayerItemMetadataOutput,
-        didOutputTimedMetadataGroups groups: [AVTimedMetadataGroup],
-        from track: AVPlayerItemTrack?
-    ) {
-        guard let first = groups.first?.items.first else { return }
-        // SAFETY: AVFoundation delivers this callback serially on the main queue (the output is
-        // registered with `queue: .main`), and `AVMetadataItem` is read-once immutable timed
-        // metadata. It isn't Sendable and its value must be loaded asynchronously (iOS 16+), so
-        // `nonisolated(unsafe)` lets us carry it into the load task; only the resulting `String`
-        // crosses to the main-actor-isolated player.
-        nonisolated(unsafe) let item = first
-        let player = self.player
-        Task {
+        func metadataOutput(
+          _ output: AVPlayerItemMetadataOutput,
+          didOutputTimedMetadataGroups groups: [AVTimedMetadataGroup],
+          from track: AVPlayerItemTrack?
+        ) {
+          guard let first = groups.first?.items.first else { return }
+          // SAFETY: AVFoundation delivers this callback serially on the main queue (the output is
+          // registered with `queue: .main`), and `AVMetadataItem` is read-once immutable timed
+          // metadata. It isn't Sendable and its value must be loaded asynchronously (iOS 16+), so
+          // `nonisolated(unsafe)` lets us carry it into the load task; only the resulting `String`
+          // crosses to the main-actor-isolated player.
+          nonisolated(unsafe) let item = first
+          let player = self.player
+          Task {
             let value: String?
             if let data = try? await item.load(.dataValue) {
-                value = String(data: data, encoding: .utf8)
+              value = String(data: data, encoding: .utf8)
             } else {
-                value = try? await item.load(.stringValue)
+              value = try? await item.load(.stringValue)
             }
             guard let value else { return }
             await player?.emitMetadata(value)
+          }
         }
-    }
-}
+      }
 
-#endif // os(iOS)
+    #endif  // os(iOS)
 
-#endif // SKIP
+  #endif  // SKIP
 
-#endif // !SKIP_BRIDGE
+#endif  // !SKIP_BRIDGE

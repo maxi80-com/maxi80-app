@@ -9,28 +9,28 @@ import Maxi80Services
 @MainActor
 public enum SharedPlayer {
 
-    public static let coordinator: RadioPlayerCoordinator = {
-        // 1. Platform-appropriate audio player.
-        let player = AudioStreamPlayer()
+  public static let coordinator: RadioPlayerCoordinator = {
+    // 1. Platform-appropriate audio player.
+    let player = AudioStreamPlayer()
 
-        // 2. Platform-appropriate Now Playing controller.
-        let nowPlaying = NowPlayingController()
+    // 2. Platform-appropriate Now Playing controller.
+    let nowPlaying = NowPlayingController()
 
-        // 3. Load configuration and create the API client.
-        let config = ConfigurationLoader.loadAPIConfiguration()
-        let apiClient = APIClient(configuration: config)
+    // 3. Load configuration and create the API client.
+    let config = ConfigurationLoader.loadAPIConfiguration()
+    let apiClient = APIClient(configuration: config)
 
-        // 4. Artwork service backed by the API client.
-        let artworkService = ArtworkService(apiClient: apiClient)
+    // 4. Artwork service backed by the API client.
+    let artworkService = ArtworkService(apiClient: apiClient)
 
-        // 5. Coordinator with all dependencies injected.
-        return RadioPlayerCoordinator(
-            player: player,
-            nowPlaying: nowPlaying,
-            apiClient: apiClient,
-            artworkService: artworkService
-        )
-    }()
+    // 5. Coordinator with all dependencies injected.
+    return RadioPlayerCoordinator(
+      player: player,
+      nowPlaying: nowPlaying,
+      apiClient: apiClient,
+      artworkService: artworkService
+    )
+  }()
 
-    public static let viewModel = RadioPlayerViewModel(coordinator: coordinator)
+  public static let viewModel = RadioPlayerViewModel(coordinator: coordinator)
 }

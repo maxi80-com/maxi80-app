@@ -1,5 +1,6 @@
-import Testing
 import SwiftUI
+import Testing
+
 @testable import Maxi80
 @testable import Maxi80Model
 @testable import Maxi80Services
@@ -13,33 +14,35 @@ import SwiftUI
 @Suite("Now Playing placeholder")
 struct CarPlayNowPlayingTests {
 
-    @MainActor
-    private func makeCoordinator() -> RadioPlayerCoordinator {
-        let player = AudioStreamPlayer()
-        let nowPlaying = NowPlayingController()
-        let apiClient = APIClient(baseURL: "https://test.example.com", authToken: "test-key")
-        let artworkService = ArtworkService(apiClient: apiClient)
-        return RadioPlayerCoordinator(
-            player: player,
-            nowPlaying: nowPlaying,
-            apiClient: apiClient,
-            artworkService: artworkService
-        )
-    }
+  @MainActor
+  private func makeCoordinator() -> RadioPlayerCoordinator {
+    let player = AudioStreamPlayer()
+    let nowPlaying = NowPlayingController()
+    let apiClient = APIClient(baseURL: "https://test.example.com", authToken: "test-key")
+    let artworkService = ArtworkService(apiClient: apiClient)
+    return RadioPlayerCoordinator(
+      player: player,
+      nowPlaying: nowPlaying,
+      apiClient: apiClient,
+      artworkService: artworkService
+    )
+  }
 
-    @Test("Placeholder is published for missing artwork")
-    @MainActor
-    func placeholderForMissingArtwork() {
-        let coordinator = makeCoordinator()
-        // Missing cover (nil or empty) → publish the generic placeholder.
-        #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: nil) == true)
-        #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: "") == true)
-    }
+  @Test("Placeholder is published for missing artwork")
+  @MainActor
+  func placeholderForMissingArtwork() {
+    let coordinator = makeCoordinator()
+    // Missing cover (nil or empty) → publish the generic placeholder.
+    #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: nil) == true)
+    #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: "") == true)
+  }
 
-    @Test("A present cover is never overridden by the placeholder")
-    @MainActor
-    func realCoverNotOverridden() {
-        let coordinator = makeCoordinator()
-        #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: "https://cover.example/x.jpg") == false)
-    }
+  @Test("A present cover is never overridden by the placeholder")
+  @MainActor
+  func realCoverNotOverridden() {
+    let coordinator = makeCoordinator()
+    #expect(
+      coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: "https://cover.example/x.jpg")
+        == false)
+  }
 }

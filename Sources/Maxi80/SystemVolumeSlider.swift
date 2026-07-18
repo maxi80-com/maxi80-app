@@ -8,19 +8,19 @@ import SwiftUI
 /// a dedicated `AVRoutePickerView` (`AirPlayRoutePicker`); MPVolumeView no longer shows a route
 /// button of its own since iOS 13.
 #if !SKIP && canImport(UIKit) && !os(tvOS)
-import MediaPlayer
+  import MediaPlayer
 
-struct SystemVolumeSlider: UIViewRepresentable {
+  struct SystemVolumeSlider: UIViewRepresentable {
     var tint: Color = .primary
 
     func makeUIView(context: Context) -> MPVolumeView {
-        let view = MPVolumeView()
-        view.tintColor = UIColor(tint)
-        return view
+      let view = MPVolumeView()
+      view.tintColor = UIColor(tint)
+      return view
     }
 
     func updateUIView(_ uiView: MPVolumeView, context: Context) {
-        uiView.tintColor = UIColor(tint)
+      uiView.tintColor = UIColor(tint)
     }
-}
+  }
 #endif

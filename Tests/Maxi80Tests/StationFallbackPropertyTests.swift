@@ -1,5 +1,6 @@
-import Testing
 import SwiftCheck
+import Testing
+
 @testable import Maxi80
 @testable import Maxi80Model
 
@@ -7,111 +8,114 @@ import SwiftCheck
 @Suite("Station Fallback Property Tests — P5: Station Fallback Chain")
 struct StationFallbackPropertyTests {
 
-    // MARK: - Helpers
+  // MARK: - Helpers
 
-    /// A fake APIClient that returns a controllable JSON response for station requests.
-    /// Uses a distinct name to avoid conflicts with StationProviderTests.MockAPIClient.
-    actor FallbackMockAPIClient: APIClientProtocol {
-        private var stationJSON: String?
+  /// A fake APIClient that returns a controllable JSON response for station requests.
+  /// Uses a distinct name to avoid conflicts with StationProviderTests.MockAPIClient.
+  actor FallbackMockAPIClient: APIClientProtocol {
+    private var stationJSON: String?
 
-        init(stationJSON: String? = nil) {
-            self.stationJSON = stationJSON
-        }
-
-        func setStationJSON(_ json: String?) {
-            stationJSON = json
-        }
-
-        func fetchStation() async throws(APIClientError) -> String {
-            guard let stationJSON else { throw .noContent }
-            return stationJSON
-        }
-
-        func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
-            throw .noContent
-        }
-
-        func fetchHistory() async throws(APIClientError) -> String {
-            throw .noContent
-        }
+    init(stationJSON: String? = nil) {
+      self.stationJSON = stationJSON
     }
 
-    // MARK: - Property Tests
-
-    /// Property 5: When the API fails but a cached Station exists, the provider returns the cached Station.
-    /// Generated optional Station fields are used to populate the cache, then API failure is simulated.
-    @Test("P5: API failure with cached station returns cached station")
-    @MainActor
-    func fallbackToCachedStation() async {
-        // Use SwiftCheck generators to produce arbitrary test data, then verify the property with async calls.
-        let iterations = 100
-        for _ in 0..<iterations {
-            let name = String.arbitrary.generate
-            let streamUrl = String.arbitrary.generate
-            let shortDesc = String.arbitrary.generate
-
-            // Skip empty names — station needs a valid name to be meaningful
-            guard !name.isEmpty else { continue }
-
-            // Escape special characters for JSON safety
-            let escapedName = escapeJSON(name)
-            let escapedStreamUrl = escapeJSON(streamUrl)
-            let escapedShortDesc = escapeJSON(shortDesc)
-
-            let validJSON = """
-            {"name":"\(escapedName)","streamUrl":"\(escapedStreamUrl)","image":"","shortDesc":"\(escapedShortDesc)","longDesc":"","websiteUrl":"","donationUrl":"","defaultCoverUrl":""}
-            """
-
-            let mockClient = FallbackMockAPIClient(stationJSON: validJSON)
-            let provider = StationProvider(apiClient: mockClient)
-
-            // First fetch succeeds — populates cache
-            let firstResult = await provider.loadStation()
-
-            // If JSON encoding caused decode failure, skip this case
-            guard firstResult.name == name else { continue }
-
-            // Simulate API failure
-            await mockClient.setStationJSON(nil)
-            let fallbackResult = await provider.loadStation()
-
-            // Property: cached station is returned on failure
-            #expect(fallbackResult.name == name,
-                    "Expected cached name '\(name)' but got '\(fallbackResult.name)'")
-            #expect(fallbackResult.shortDesc == shortDesc,
-                    "Expected cached shortDesc '\(shortDesc)' but got '\(fallbackResult.shortDesc)'")
-        }
+    func setStationJSON(_ json: String?) {
+      stationJSON = json
     }
 
-    /// Property 5: When the API fails and no cached Station exists, the provider returns hardcoded defaults.
-    @Test("P5: API failure with no cache returns hardcoded defaults")
-    @MainActor
-    func fallbackToHardcodedDefaults() async {
-        property("hardcoded defaults returned when no cache and API fails") <- forAll(Gen<Int>.fromElements(in: 1...100)) { _ in
-            // This property is deterministic — the result is always the same hardcoded station.
-            // We just verify it holds across arbitrary "iterations" (no generated state needed).
-            let mockClient = FallbackMockAPIClient(stationJSON: nil)
-            let provider = StationProvider(apiClient: mockClient)
-
-            // currentStation (synchronous) returns the default when no cache exists
-            let result = provider.currentStation
-
-            let nameCorrect = result.name == "Maxi 80"
-            let descCorrect = result.shortDesc == "La radio de toute une génération"
-            let streamCorrect = result.streamUrl == "https://audio1.maxi80.com"
-
-            return nameCorrect && descCorrect && streamCorrect
-        }
+    func fetchStation() async throws(APIClientError) -> String {
+      guard let stationJSON else { throw .noContent }
+      return stationJSON
     }
 
-    // MARK: - Private Helpers
-
-    private func escapeJSON(_ string: String) -> String {
-        string
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "\t", with: "\\t")
+    func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
+      throw .noContent
     }
+
+    func fetchHistory() async throws(APIClientError) -> String {
+      throw .noContent
+    }
+  }
+
+  // MARK: - Property Tests
+
+  /// Property 5: When the API fails but a cached Station exists, the provider returns the cached Station.
+  /// Generated optional Station fields are used to populate the cache, then API failure is simulated.
+  @Test("P5: API failure with cached station returns cached station")
+  @MainActor
+  func fallbackToCachedStation() async {
+    // Use SwiftCheck generators to produce arbitrary test data, then verify the property with async calls.
+    let iterations = 100
+    for _ in 0..<iterations {
+      let name = String.arbitrary.generate
+      let streamUrl = String.arbitrary.generate
+      let shortDesc = String.arbitrary.generate
+
+      // Skip empty names — station needs a valid name to be meaningful
+      guard !name.isEmpty else { continue }
+
+      // Escape special characters for JSON safety
+      let escapedName = escapeJSON(name)
+      let escapedStreamUrl = escapeJSON(streamUrl)
+      let escapedShortDesc = escapeJSON(shortDesc)
+
+      let validJSON = """
+        {"name":"\(escapedName)","streamUrl":"\(escapedStreamUrl)","image":"","shortDesc":"\(escapedShortDesc)","longDesc":"","websiteUrl":"","donationUrl":"","defaultCoverUrl":""}
+        """
+
+      let mockClient = FallbackMockAPIClient(stationJSON: validJSON)
+      let provider = StationProvider(apiClient: mockClient)
+
+      // First fetch succeeds — populates cache
+      let firstResult = await provider.loadStation()
+
+      // If JSON encoding caused decode failure, skip this case
+      guard firstResult.name == name else { continue }
+
+      // Simulate API failure
+      await mockClient.setStationJSON(nil)
+      let fallbackResult = await provider.loadStation()
+
+      // Property: cached station is returned on failure
+      #expect(
+        fallbackResult.name == name,
+        "Expected cached name '\(name)' but got '\(fallbackResult.name)'")
+      #expect(
+        fallbackResult.shortDesc == shortDesc,
+        "Expected cached shortDesc '\(shortDesc)' but got '\(fallbackResult.shortDesc)'")
+    }
+  }
+
+  /// Property 5: When the API fails and no cached Station exists, the provider returns hardcoded defaults.
+  @Test("P5: API failure with no cache returns hardcoded defaults")
+  @MainActor
+  func fallbackToHardcodedDefaults() async {
+    property("hardcoded defaults returned when no cache and API fails")
+      <- forAll(Gen<Int>.fromElements(in: 1...100)) { _ in
+        // This property is deterministic — the result is always the same hardcoded station.
+        // We just verify it holds across arbitrary "iterations" (no generated state needed).
+        let mockClient = FallbackMockAPIClient(stationJSON: nil)
+        let provider = StationProvider(apiClient: mockClient)
+
+        // currentStation (synchronous) returns the default when no cache exists
+        let result = provider.currentStation
+
+        let nameCorrect = result.name == "Maxi 80"
+        let descCorrect = result.shortDesc == "La radio de toute une génération"
+        let streamCorrect = result.streamUrl == "https://audio1.maxi80.com"
+
+        return nameCorrect && descCorrect && streamCorrect
+      }
+  }
+
+  // MARK: - Private Helpers
+
+  private func escapeJSON(_ string: String) -> String {
+    string
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+      .replacingOccurrences(of: "\n", with: "\\n")
+      .replacingOccurrences(of: "\r", with: "\\r")
+      .replacingOccurrences(of: "\t", with: "\\t")
+  }
 }

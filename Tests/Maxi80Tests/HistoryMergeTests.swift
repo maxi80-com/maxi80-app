@@ -1,4 +1,5 @@
 import Testing
+
 @testable import Maxi80
 @testable import Maxi80Model
 @testable import Maxi80Services
@@ -9,220 +10,226 @@ import Testing
 @Suite("History Merge Tests")
 struct HistoryMergeTests {
 
-    /// Fake API client returning a fixed `/history` payload and, optionally, a resolvable artwork
-    /// URL for every song (so tests can exercise artwork resolution / healing).
-    actor HistoryMockAPIClient: APIClientProtocol {
-        private let historyJSON: String
-        private let servesArtwork: Bool
-        init(historyJSON: String, servesArtwork: Bool = false) {
-            self.historyJSON = historyJSON
-            self.servesArtwork = servesArtwork
-        }
-
-        func fetchStation() async throws(APIClientError) -> String { throw .noContent }
-        func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
-            guard servesArtwork else { throw .noContent }
-            return "{\"url\":\"https://art.example/\(title).jpg\"}"
-        }
-        func fetchHistory() async throws(APIClientError) -> String { historyJSON }
+  /// Fake API client returning a fixed `/history` payload and, optionally, a resolvable artwork
+  /// URL for every song (so tests can exercise artwork resolution / healing).
+  actor HistoryMockAPIClient: APIClientProtocol {
+    private let historyJSON: String
+    private let servesArtwork: Bool
+    init(historyJSON: String, servesArtwork: Bool = false) {
+      self.historyJSON = historyJSON
+      self.servesArtwork = servesArtwork
     }
 
-    /// Builds a `/history` response body from (artist, title, timestamp) tuples.
-    static func historyJSON(_ entries: [(String, String, String)]) -> String {
-        let items = entries.map { artist, title, ts in
-            "{\"artist\":\"\(artist)\",\"title\":\"\(title)\",\"artwork\":\"k/\(title)/artwork.jpg\",\"timestamp\":\"\(ts)\"}"
-        }.joined(separator: ",")
-        return "{\"entries\":[\(items)]}"
+    func fetchStation() async throws(APIClientError) -> String { throw .noContent }
+    func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
+      guard servesArtwork else { throw .noContent }
+      return "{\"url\":\"https://art.example/\(title).jpg\"}"
     }
+    func fetchHistory() async throws(APIClientError) -> String { historyJSON }
+  }
 
-    @MainActor
-    private func makeCoordinator(historyJSON: String, servesArtwork: Bool = false) -> RadioPlayerCoordinator {
-        let apiClient = HistoryMockAPIClient(historyJSON: historyJSON, servesArtwork: servesArtwork)
-        return RadioPlayerCoordinator(
-            player: AudioStreamPlayer(),
-            nowPlaying: NowPlayingController(),
-            apiClient: apiClient,
-            artworkService: ArtworkService(apiClient: apiClient)
-        )
-    }
+  /// Builds a `/history` response body from (artist, title, timestamp) tuples.
+  static func historyJSON(_ entries: [(String, String, String)]) -> String {
+    let items = entries.map { artist, title, ts in
+      "{\"artist\":\"\(artist)\",\"title\":\"\(title)\",\"artwork\":\"k/\(title)/artwork.jpg\",\"timestamp\":\"\(ts)\"}"
+    }.joined(separator: ",")
+    return "{\"entries\":[\(items)]}"
+  }
 
-    @Test("New backend entries merge in timestamp order, newest nearest the now-slot")
-    @MainActor
-    func newEntriesMergeInOrder() async {
-        // Backend now has an older song plus two NEW ones (played while stopped).
-        let json = Self.historyJSON([
-            ("Old", "Old Song", "2026-07-15T10:00:00Z"),
-            ("Mid", "Mid Song", "2026-07-15T10:30:00Z"),
-            ("New", "New Song", "2026-07-15T10:45:00Z"),
-        ])
-        let coordinator = makeCoordinator(historyJSON: json)
+  @MainActor
+  private func makeCoordinator(historyJSON: String, servesArtwork: Bool = false)
+    -> RadioPlayerCoordinator
+  {
+    let apiClient = HistoryMockAPIClient(historyJSON: historyJSON, servesArtwork: servesArtwork)
+    return RadioPlayerCoordinator(
+      player: AudioStreamPlayer(),
+      nowPlaying: NowPlayingController(),
+      apiClient: apiClient,
+      artworkService: ArtworkService(apiClient: apiClient)
+    )
+  }
 
-        // Pre-existing in-memory list holds only the old song (as if fetched earlier).
-        coordinator.history = [
-            HistoryEntry(artist: "Old", title: "Old Song", timestamp: "2026-07-15T10:00:00Z")
-        ]
+  @Test("New backend entries merge in timestamp order, newest nearest the now-slot")
+  @MainActor
+  func newEntriesMergeInOrder() async {
+    // Backend now has an older song plus two NEW ones (played while stopped).
+    let json = Self.historyJSON([
+      ("Old", "Old Song", "2026-07-15T10:00:00Z"),
+      ("Mid", "Mid Song", "2026-07-15T10:30:00Z"),
+      ("New", "New Song", "2026-07-15T10:45:00Z"),
+    ])
+    let coordinator = makeCoordinator(historyJSON: json)
 
-        await coordinator.fetchHistory()
+    // Pre-existing in-memory list holds only the old song (as if fetched earlier).
+    coordinator.history = [
+      HistoryEntry(artist: "Old", title: "Old Song", timestamp: "2026-07-15T10:00:00Z")
+    ]
 
-        // All three present, sorted oldest → newest (carousel renders left → right).
-        #expect(coordinator.history.map(\.title) == ["Old Song", "Mid Song", "New Song"])
-        // The newest sits last (nearest the now-slot), not buried at the front.
-        #expect(coordinator.history.last?.title == "New Song")
-    }
+    await coordinator.fetchHistory()
 
-    @Test("No new entries → history is left unchanged")
-    @MainActor
-    func noNewEntriesIsNoOp() async {
-        let json = Self.historyJSON([("Old", "Old Song", "2026-07-15T10:00:00Z")])
-        let coordinator = makeCoordinator(historyJSON: json)
+    // All three present, sorted oldest → newest (carousel renders left → right).
+    #expect(coordinator.history.map(\.title) == ["Old Song", "Mid Song", "New Song"])
+    // The newest sits last (nearest the now-slot), not buried at the front.
+    #expect(coordinator.history.last?.title == "New Song")
+  }
 
-        let existing = HistoryEntry(
-            artist: "Old", title: "Old Song", timestamp: "2026-07-15T10:00:00Z", artworkURL: "already-resolved"
-        )
-        coordinator.history = [existing]
+  @Test("No new entries → history is left unchanged")
+  @MainActor
+  func noNewEntriesIsNoOp() async {
+    let json = Self.historyJSON([("Old", "Old Song", "2026-07-15T10:00:00Z")])
+    let coordinator = makeCoordinator(historyJSON: json)
 
-        await coordinator.fetchHistory()
+    let existing = HistoryEntry(
+      artist: "Old", title: "Old Song", timestamp: "2026-07-15T10:00:00Z",
+      artworkURL: "already-resolved"
+    )
+    coordinator.history = [existing]
 
-        // Same single entry, and its already-resolved URL was preserved (not rebuilt).
-        #expect(coordinator.history.count == 1)
-        #expect(coordinator.history.first?.artworkURL == "already-resolved")
-    }
+    await coordinator.fetchHistory()
 
-    @Test("Empty in-memory history seeds from the backend")
-    @MainActor
-    func emptyHistorySeeds() async {
-        let json = Self.historyJSON([
-            ("A", "Song A", "2026-07-15T10:00:00Z"),
-            ("B", "Song B", "2026-07-15T10:10:00Z"),
-        ])
-        let coordinator = makeCoordinator(historyJSON: json)
-        coordinator.history = []
+    // Same single entry, and its already-resolved URL was preserved (not rebuilt).
+    #expect(coordinator.history.count == 1)
+    #expect(coordinator.history.first?.artworkURL == "already-resolved")
+  }
 
-        await coordinator.fetchHistory()
+  @Test("Empty in-memory history seeds from the backend")
+  @MainActor
+  func emptyHistorySeeds() async {
+    let json = Self.historyJSON([
+      ("A", "Song A", "2026-07-15T10:00:00Z"),
+      ("B", "Song B", "2026-07-15T10:10:00Z"),
+    ])
+    let coordinator = makeCoordinator(historyJSON: json)
+    coordinator.history = []
 
-        #expect(coordinator.history.map(\.title) == ["Song A", "Song B"])
-    }
+    await coordinator.fetchHistory()
 
-    @Test("An existing entry missing artwork is healed from the backend on refresh")
-    @MainActor
-    func missingArtworkIsHealedOnRefresh() async {
-        // Backend has the song and can resolve its artwork now.
-        let json = Self.historyJSON([("Change", "A Lover's Holiday", "2026-07-15T10:24:27Z")])
-        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+    #expect(coordinator.history.map(\.title) == ["Song A", "Song B"])
+  }
 
-        // In-memory entry was live-appended earlier WITHOUT artwork (collector hadn't produced it).
-        coordinator.history = [
-            HistoryEntry(
-                artist: "Change", title: "A Lover's Holiday",
-                timestamp: "2026-07-15T10:24:27Z", artworkURL: nil
-            )
-        ]
+  @Test("An existing entry missing artwork is healed from the backend on refresh")
+  @MainActor
+  func missingArtworkIsHealedOnRefresh() async {
+    // Backend has the song and can resolve its artwork now.
+    let json = Self.historyJSON([("Change", "A Lover's Holiday", "2026-07-15T10:24:27Z")])
+    let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
 
-        await coordinator.fetchHistory()
+    // In-memory entry was live-appended earlier WITHOUT artwork (collector hadn't produced it).
+    coordinator.history = [
+      HistoryEntry(
+        artist: "Change", title: "A Lover's Holiday",
+        timestamp: "2026-07-15T10:24:27Z", artworkURL: nil
+      )
+    ]
 
-        // The stale nil-artwork entry is healed in place — not duplicated, not left blank.
-        #expect(coordinator.history.count == 1)
-        #expect(coordinator.history.first?.artworkURL == "https://art.example/A Lover's Holiday.jpg")
-    }
+    await coordinator.fetchHistory()
 
-    @Test("A live artist-less program collapses with its backend Maxi80 copy into one entry")
-    @MainActor
-    func stationArtistProgramCollapses() async {
-        // Backend serves the program with the `Maxi80` artist and resolvable artwork.
-        let json = Self.historyJSON([("Maxi80", "Maxi Club avec Dj Lucky", "2026-07-15T19:24:00Z")])
-        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+    // The stale nil-artwork entry is healed in place — not duplicated, not left blank.
+    #expect(coordinator.history.count == 1)
+    #expect(coordinator.history.first?.artworkURL == "https://art.example/A Lover's Holiday.jpg")
+  }
 
-        // In-memory copy was live-appended artist-less (the stream metadata had no " - " separator).
-        coordinator.history = [
-            HistoryEntry(artist: "", title: "Maxi Club avec Dj Lucky", timestamp: "2026-07-15T19:24:00Z")
-        ]
+  @Test("A live artist-less program collapses with its backend Maxi80 copy into one entry")
+  @MainActor
+  func stationArtistProgramCollapses() async {
+    // Backend serves the program with the `Maxi80` artist and resolvable artwork.
+    let json = Self.historyJSON([("Maxi80", "Maxi Club avec Dj Lucky", "2026-07-15T19:24:00Z")])
+    let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
 
-        await coordinator.fetchHistory()
+    // In-memory copy was live-appended artist-less (the stream metadata had no " - " separator).
+    coordinator.history = [
+      HistoryEntry(artist: "", title: "Maxi Club avec Dj Lucky", timestamp: "2026-07-15T19:24:00Z")
+    ]
 
-        // One entry, not two: the live copy healed into the backend copy.
-        #expect(coordinator.history.count == 1)
-        // Keeps the `Maxi80` artist (backend wins the empty live one) and gains the artwork.
-        #expect(coordinator.history.first?.artist == "Maxi80")
-        #expect(coordinator.history.first?.artworkURL == "https://art.example/Maxi Club avec Dj Lucky.jpg")
-    }
+    await coordinator.fetchHistory()
 
-    @Test("Genuine repeat plays of the same song are preserved (not collapsed)")
-    @MainActor
-    func repeatPlaysArePreserved() async {
-        // Backend reports the song once; in-memory has two real plays at different timestamps.
-        let json = Self.historyJSON([("Change", "A Lover's Holiday", "2026-07-15T10:00:00Z")])
-        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
-        coordinator.history = [
-            HistoryEntry(artist: "Change", title: "A Lover's Holiday",
-                         timestamp: "2026-07-15T10:00:00Z", artworkURL: "url-1"),
-            HistoryEntry(artist: "Change", title: "A Lover's Holiday",
-                         timestamp: "2026-07-15T11:30:00Z", artworkURL: "url-2"),
-        ]
+    // One entry, not two: the live copy healed into the backend copy.
+    #expect(coordinator.history.count == 1)
+    // Keeps the `Maxi80` artist (backend wins the empty live one) and gains the artwork.
+    #expect(coordinator.history.first?.artist == "Maxi80")
+    #expect(
+      coordinator.history.first?.artworkURL == "https://art.example/Maxi Club avec Dj Lucky.jpg")
+  }
 
-        await coordinator.fetchHistory()
+  @Test("Genuine repeat plays of the same song are preserved (not collapsed)")
+  @MainActor
+  func repeatPlaysArePreserved() async {
+    // Backend reports the song once; in-memory has two real plays at different timestamps.
+    let json = Self.historyJSON([("Change", "A Lover's Holiday", "2026-07-15T10:00:00Z")])
+    let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+    coordinator.history = [
+      HistoryEntry(
+        artist: "Change", title: "A Lover's Holiday",
+        timestamp: "2026-07-15T10:00:00Z", artworkURL: "url-1"),
+      HistoryEntry(
+        artist: "Change", title: "A Lover's Holiday",
+        timestamp: "2026-07-15T11:30:00Z", artworkURL: "url-2"),
+    ]
 
-        // Both plays survive — dedup heals/appends, it never collapses distinct timestamps.
-        #expect(coordinator.history.count == 2)
-        #expect(coordinator.history.map(\.artworkURL) == ["url-1", "url-2"])
-    }
+    await coordinator.fetchHistory()
 
-    @Test("First metadata after launch doesn't duplicate the song already seeded from the backend")
-    @MainActor
-    func firstMetadataDoesNotDuplicateSeededNowPlaying() async {
-        // Backend history ends with the song currently playing at launch ("Song A").
-        let json = Self.historyJSON([
-            ("Older", "Older Song", "2026-07-15T10:00:00Z"),
-            ("A", "Song A", "2026-07-15T10:30:00Z"),
-        ])
-        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+    // Both plays survive — dedup heals/appends, it never collapses distinct timestamps.
+    #expect(coordinator.history.count == 2)
+    #expect(coordinator.history.map(\.artworkURL) == ["url-1", "url-2"])
+  }
 
-        // Seed history exactly as launch does (currentSong still nil, no live entry yet).
-        await coordinator.fetchHistory()
-        #expect(coordinator.history.map(\.title) == ["Older Song", "Song A"])
+  @Test("First metadata after launch doesn't duplicate the song already seeded from the backend")
+  @MainActor
+  func firstMetadataDoesNotDuplicateSeededNowPlaying() async {
+    // Backend history ends with the song currently playing at launch ("Song A").
+    let json = Self.historyJSON([
+      ("Older", "Older Song", "2026-07-15T10:00:00Z"),
+      ("A", "Song A", "2026-07-15T10:30:00Z"),
+    ])
+    let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
 
-        // First ICY metadata event is for Song A — the song already at the tail of the seeded list.
-        await coordinator.handleMetadataChanged("A - Song A")
-        // It must heal in place, NOT append a second copy.
-        #expect(coordinator.history.map(\.title) == ["Older Song", "Song A"])
+    // Seed history exactly as launch does (currentSong still nil, no live entry yet).
+    await coordinator.fetchHistory()
+    #expect(coordinator.history.map(\.title) == ["Older Song", "Song A"])
 
-        // Next song B starts. Song A is no longer the now-slot, so it surfaces in history — exactly
-        // once (the bug was it surfaced twice here).
-        await coordinator.handleMetadataChanged("B - Song B")
-        #expect(coordinator.history.map(\.title) == ["Older Song", "Song A", "Song B"])
-        #expect(coordinator.history.filter { $0.title == "Song A" }.count == 1)
-    }
+    // First ICY metadata event is for Song A — the song already at the tail of the seeded list.
+    await coordinator.handleMetadataChanged("A - Song A")
+    // It must heal in place, NOT append a second copy.
+    #expect(coordinator.history.map(\.title) == ["Older Song", "Song A"])
 
-    @Test("A genuine repeat of the launch song (A → B → A) still records a second play")
-    @MainActor
-    func repeatOfLaunchSongStillAppends() async {
-        let json = Self.historyJSON([("A", "Song A", "2026-07-15T10:30:00Z")])
-        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
-        await coordinator.fetchHistory()
+    // Next song B starts. Song A is no longer the now-slot, so it surfaces in history — exactly
+    // once (the bug was it surfaced twice here).
+    await coordinator.handleMetadataChanged("B - Song B")
+    #expect(coordinator.history.map(\.title) == ["Older Song", "Song A", "Song B"])
+    #expect(coordinator.history.filter { $0.title == "Song A" }.count == 1)
+  }
 
-        await coordinator.handleMetadataChanged("A - Song A") // heals seeded A
-        await coordinator.handleMetadataChanged("B - Song B") // A surfaces once
-        await coordinator.handleMetadataChanged("A - Song A") // genuine repeat — tail is B, so append
+  @Test("A genuine repeat of the launch song (A → B → A) still records a second play")
+  @MainActor
+  func repeatOfLaunchSongStillAppends() async {
+    let json = Self.historyJSON([("A", "Song A", "2026-07-15T10:30:00Z")])
+    let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+    await coordinator.fetchHistory()
 
-        #expect(coordinator.history.map(\.title) == ["Song A", "Song B", "Song A"])
-    }
+    await coordinator.handleMetadataChanged("A - Song A")  // heals seeded A
+    await coordinator.handleMetadataChanged("B - Song B")  // A surfaces once
+    await coordinator.handleMetadataChanged("A - Song A")  // genuine repeat — tail is B, so append
 
-    @Test("An existing entry that already has artwork is not re-resolved")
-    @MainActor
-    func existingArtworkIsPreserved() async {
-        let json = Self.historyJSON([("Change", "A Lover's Holiday", "2026-07-15T10:24:27Z")])
-        let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
+    #expect(coordinator.history.map(\.title) == ["Song A", "Song B", "Song A"])
+  }
 
-        coordinator.history = [
-            HistoryEntry(
-                artist: "Change", title: "A Lover's Holiday",
-                timestamp: "2026-07-15T10:24:27Z", artworkURL: "live-resolved-url"
-            )
-        ]
+  @Test("An existing entry that already has artwork is not re-resolved")
+  @MainActor
+  func existingArtworkIsPreserved() async {
+    let json = Self.historyJSON([("Change", "A Lover's Holiday", "2026-07-15T10:24:27Z")])
+    let coordinator = makeCoordinator(historyJSON: json, servesArtwork: true)
 
-        await coordinator.fetchHistory()
+    coordinator.history = [
+      HistoryEntry(
+        artist: "Change", title: "A Lover's Holiday",
+        timestamp: "2026-07-15T10:24:27Z", artworkURL: "live-resolved-url"
+      )
+    ]
 
-        // Left untouched (no reload/flicker) since it already had artwork.
-        #expect(coordinator.history.count == 1)
-        #expect(coordinator.history.first?.artworkURL == "live-resolved-url")
-    }
+    await coordinator.fetchHistory()
+
+    // Left untouched (no reload/flicker) since it already had artwork.
+    #expect(coordinator.history.count == 1)
+    #expect(coordinator.history.first?.artworkURL == "live-resolved-url")
+  }
 }

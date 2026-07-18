@@ -11,15 +11,15 @@ import Foundation
 /// a cross-module type dependency across the JNI boundary.
 /* SKIP @bridge */
 #if !SKIP_BRIDGE
-public struct ImageColorSampler {
+  public struct ImageColorSampler {
 
     public init() {}
 
     /// Decode `data` and return its average color as "#RRGGBB", or `nil` if the bytes can't be
     /// decoded into an image on this platform.
     public func dominantColorHex(from data: Data) -> String? {
-        guard let rgb = averagedComponents(from: data) else { return nil }
-        return hexString(red: rgb.red, green: rgb.green, blue: rgb.blue)
+      guard let rgb = averagedComponents(from: data) else { return nil }
+      return hexString(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
 
     /// Format 0…1 RGB components as an uppercase "#RRGGBB" string. Built manually (no
@@ -29,7 +29,7 @@ public struct ImageColorSampler {
     /// a transpiled (Lite) module exposes only its public surface across the module boundary, so
     /// `@testable`'s internal access — which works on Apple — does not resolve for the Android test build.
     public func hexString(red: Double, green: Double, blue: Double) -> String {
-        "#" + hexComponent(red) + hexComponent(green) + hexComponent(blue)
+      "#" + hexComponent(red) + hexComponent(green) + hexComponent(blue)
     }
 
     /// One clamped, zero-padded, uppercase hex byte for a 0…1 component. Built from a nibble lookup
@@ -37,10 +37,12 @@ public struct ImageColorSampler {
     /// `String(Int, radix:)` constructor — use only transpile-safe string ops here). The digit table
     /// is an `[Character]` subscripted by `Int`, which transpiles to Kotlin `List` indexing.
     public func hexComponent(_ value: Double) -> String {
-        let digits: [Character] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"]
-        let scaled = (value * 255).rounded()
-        let clamped = Int(max(0.0, min(255.0, scaled)))
-        return String(digits[clamped / 16]) + String(digits[clamped % 16])
+      let digits: [Character] = [
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F",
+      ]
+      let scaled = (value * 255).rounded()
+      let clamped = Int(max(0.0, min(255.0, scaled)))
+      return String(digits[clamped / 16]) + String(digits[clamped % 16])
     }
-}
+  }
 #endif

@@ -2,19 +2,19 @@ import Foundation
 
 #if !SKIP_BRIDGE
 
-#if SKIP
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Color
+  #if SKIP
+    import android.graphics.Bitmap
+    import android.graphics.BitmapFactory
+    import android.graphics.Color
 
-// MARK: - Android sampling
-//
-// Decode the bytes, downscale to 40×40, read the pixels, average — mirroring the Apple path so
-// the live background color matches across platforms for the same artwork.
+    // MARK: - Android sampling
+    //
+    // Decode the bytes, downscale to 40×40, read the pixels, average — mirroring the Apple path so
+    // the live background color matches across platforms for the same artwork.
 
-extension ImageColorSampler {
+    extension ImageColorSampler {
 
-    func averagedComponents(from data: Data) -> (red: Double, green: Double, blue: Double)? {
+      func averagedComponents(from data: Data) -> (red: Double, green: Double, blue: Double)? {
         // `data.platformValue` is the underlying kotlin.ByteArray (SkipFoundation).
         let bytes = data.platformValue
         guard let bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) else { return nil }
@@ -31,19 +31,19 @@ extension ImageColorSampler {
         var totalB: Double = 0
 
         for i in 0..<pixelCount {
-            let pixel = pixels[i]
-            totalR += Double(Color.red(pixel))
-            totalG += Double(Color.green(pixel))
-            totalB += Double(Color.blue(pixel))
+          let pixel = pixels[i]
+          totalR += Double(Color.red(pixel))
+          totalG += Double(Color.green(pixel))
+          totalB += Double(Color.blue(pixel))
         }
 
         return (
-            red: totalR / Double(pixelCount) / 255.0,
-            green: totalG / Double(pixelCount) / 255.0,
-            blue: totalB / Double(pixelCount) / 255.0
+          red: totalR / Double(pixelCount) / 255.0,
+          green: totalG / Double(pixelCount) / 255.0,
+          blue: totalB / Double(pixelCount) / 255.0
         )
+      }
     }
-}
-#endif // SKIP
+  #endif  // SKIP
 
-#endif // !SKIP_BRIDGE
+#endif  // !SKIP_BRIDGE

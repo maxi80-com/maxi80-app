@@ -8,49 +8,50 @@ import Maxi80Services
 /// 3. Return hardcoded default station
 @MainActor
 public final class StationProvider {
-    private let apiClient: any APIClientProtocol
-    private var cachedStation: Station?
+  private let apiClient: any APIClientProtocol
+  private var cachedStation: Station?
 
-    /// Hardcoded fallback station used when API fails and no cache is available.
-    private let defaultStation = Station(
-        name: BrandConstants.name,
-        streamUrl: BrandConstants.streamURL,
-        image: "",
-        shortDesc: BrandConstants.tagline,
-        longDesc: BrandConstants.longDescription,
-        websiteUrl: BrandConstants.websiteURL,
-        donationUrl: BrandConstants.donationURL,
-        defaultCoverUrl: ""
-    )
+  /// Hardcoded fallback station used when API fails and no cache is available.
+  private let defaultStation = Station(
+    name: BrandConstants.name,
+    streamUrl: BrandConstants.streamURL,
+    image: "",
+    shortDesc: BrandConstants.tagline,
+    longDesc: BrandConstants.longDescription,
+    websiteUrl: BrandConstants.websiteURL,
+    donationUrl: BrandConstants.donationURL,
+    defaultCoverUrl: ""
+  )
 
-    public init(apiClient: any APIClientProtocol) {
-        self.apiClient = apiClient
+  public init(apiClient: any APIClientProtocol) {
+    self.apiClient = apiClient
+  }
+
+  /// The current station: cached if available, otherwise the hardcoded default.
+  public var currentStation: Station {
+    cachedStation ?? defaultStation
+  }
+
+  /// Fetches station metadata from the API with fallback chain.
+  /// - Returns the API result on success (also caches it),
+  ///   the previously cached station on failure,
+  ///   or the hardcoded default if no cache exists.
+  public func loadStation() async -> Station {
+    let jsonString = try? await apiClient.fetchStation()
+
+    if let jsonString,
+      let data = jsonString.data(using: .utf8)
+    {
+      do {
+        let station = try JSONDecoder().decode(Station.self, from: data)
+        cachedStation = station
+        return station
+      } catch {
+        print("[StationProvider] Failed to decode station JSON: \(error.localizedDescription)")
+      }
     }
 
-    /// The current station: cached if available, otherwise the hardcoded default.
-    public var currentStation: Station {
-        cachedStation ?? defaultStation
-    }
-
-    /// Fetches station metadata from the API with fallback chain.
-    /// - Returns the API result on success (also caches it),
-    ///   the previously cached station on failure,
-    ///   or the hardcoded default if no cache exists.
-    public func loadStation() async -> Station {
-        let jsonString = try? await apiClient.fetchStation()
-
-        if let jsonString,
-           let data = jsonString.data(using: .utf8) {
-            do {
-                let station = try JSONDecoder().decode(Station.self, from: data)
-                cachedStation = station
-                return station
-            } catch {
-                print("[StationProvider] Failed to decode station JSON: \(error.localizedDescription)")
-            }
-        }
-
-        // API failed or decode failed — use cache or default
-        return currentStation
-    }
+    // API failed or decode failed — use cache or default
+    return currentStation
+  }
 }
