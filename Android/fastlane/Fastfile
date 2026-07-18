@@ -41,11 +41,17 @@ lane :assemble do
 end
 
 desc "Deploy Skip Android App to Google Play"
-lane :release do
+# options:
+#   track          : Play track to upload to (default: 'internal')
+#   release_status : 'draft' | 'completed' | ... (default: 'draft', so the
+#                    Makefile's publish-android uploads to internal as a draft)
+lane :release do |options|
 
   assemble
 
   upload_to_play_store(
-    aab: '../.build/Android/app/outputs/bundle/release/app-release.aab'
+    aab: '../.build/Android/app/outputs/bundle/release/app-release.aab',
+    track: options[:track] || 'internal',
+    release_status: options[:release_status] || 'draft'
   )
 end
