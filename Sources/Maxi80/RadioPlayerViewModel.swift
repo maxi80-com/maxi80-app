@@ -266,7 +266,8 @@ public final class RadioPlayerViewModel {
     public func shareCurrentTrack() -> ShareContent {
         let artist = displayedArtist
         let title = displayedTitle
-        let text = "I'm listening to \(title) by \(artist) on Maxi 80 via Maxi80 for iOS. Check it out at https://www.maxi80.com"
+        let format = String(localized: "I'm listening to %@ by %@ on Maxi 80. Listen at %@", bundle: .module)
+        let text = String(format: format, title, artist, BrandConstants.websiteURL)
         return ShareContent(text: text, image: currentArtwork)
     }
 }

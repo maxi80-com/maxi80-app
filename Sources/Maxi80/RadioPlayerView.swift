@@ -146,7 +146,7 @@ public struct RadioPlayerView: View {
             pinTarget: viewModel.isBrowsingHistory ? nil : viewModel.liveCoverID,
             pinToken: viewModel.coverPinToken
         )
-        .accessibilityLabel("Song history. Swipe to browse previously played tracks.")
+        .accessibilityLabel(Text("Song history. Swipe to browse previously played tracks.", bundle: .module))
     }
 
     // MARK: - Song Label
@@ -255,10 +255,14 @@ public struct RadioPlayerView: View {
         #if os(Android)
         HStack(spacing: 6) {
             AndroidIcon(symbol: .liveBroadcast, size: 15, tint: .white)
-            Text("Back to live")
+            Text("Back to live", bundle: .module)
         }
         #else
-        Label("Back to live", systemImage: "dot.radiowaves.left.and.right")
+        Label {
+            Text("Back to live", bundle: .module)
+        } icon: {
+            Image(systemName: "dot.radiowaves.left.and.right")
+        }
         #endif
     }
 
@@ -279,15 +283,17 @@ public struct RadioPlayerView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
 
-            Text(message)
+            Text(verbatim: message)
                 .font(.subheadline)
                 .foregroundStyle(.primary)
                 .lineLimit(2)
 
             Spacer()
 
-            Button("Retry") {
+            Button {
                 viewModel.retry()
+            } label: {
+                Text("Retry", bundle: .module)
             }
             .buttonStyle(.borderedProminent)
         }

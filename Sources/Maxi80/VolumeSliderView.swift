@@ -11,7 +11,7 @@ struct VolumeSliderView: View {
             speakerIcon("speaker.fill", android: .volumeDown)
 
             volumeSlider
-                .accessibilityLabel("Volume")
+                .accessibilityLabel(Text("Volume", bundle: .module))
 
             speakerIcon("speaker.wave.3.fill", android: .volumeUp)
 
@@ -19,7 +19,7 @@ struct VolumeSliderView: View {
             // gray glyphs; it flips to orange (its activeTint) only when audio is routed out.
             AirPlayRoutePicker(tint: .secondary)
                 .frame(width: 28, height: 28)
-                .accessibilityLabel("AirPlay output")
+                .accessibilityLabel(Text("AirPlay output", bundle: .module))
         }
         .padding(.horizontal)
     }

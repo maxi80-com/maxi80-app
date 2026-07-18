@@ -24,15 +24,17 @@ struct ShareSheetContent: View {
         #else
         // macOS / Android fallback
         VStack(spacing: 16) {
-            Text("Share")
+            Text("Share", bundle: .module)
                 .font(.headline)
-            Text(text)
+            Text(verbatim: text)
                 .padding()
-            Button("Copy") {
+            Button {
                 #if canImport(AppKit)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
                 #endif
+            } label: {
+                Text("Copy", bundle: .module)
             }
         }
         .padding()

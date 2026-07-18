@@ -294,7 +294,9 @@ public struct TVRadioPlayerView: View {
             }
             .frame(width: playGlyphSize, height: playGlyphSize)
         }
-        .accessibilityLabel(viewModel.isPlaying ? "Pause" : "Play")
+        .accessibilityLabel(viewModel.isPlaying
+            ? Text("Pause", bundle: .module)
+            : Text("Play", bundle: .module))
 
         #if os(tvOS)
         // Both `.card` and `.plain` draw tvOS's opaque focus platter (the harsh white box) behind the
@@ -345,7 +347,7 @@ public struct TVRadioPlayerView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "dot.radiowaves.left.and.right")
-                Text("Back to live")
+                Text("Back to live", bundle: .module)
             }
             .font(.system(size: 24, weight: .semibold))
             .padding(.horizontal, 28)
@@ -370,7 +372,7 @@ public struct TVRadioPlayerView: View {
         } label: {
             HStack(spacing: 8) {
                 AndroidIcon(symbol: .liveBroadcast, size: 15, tint: .white)
-                Text("Back to live")
+                Text("Back to live", bundle: .module)
             }
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(.white)
@@ -400,8 +402,8 @@ public struct TVRadioPlayerView: View {
     private func errorBanner(message: String) -> some View {
         VStack {
             HStack(spacing: 16) {
-                Text(message).font(.title3).foregroundStyle(titleColor).lineLimit(2)
-                Button("Retry") { viewModel.retry() }
+                Text(verbatim: message).font(.title3).foregroundStyle(titleColor).lineLimit(2)
+                Button { viewModel.retry() } label: { Text("Retry", bundle: .module) }
             }
             .padding(24)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))

@@ -69,7 +69,7 @@ public final class RadioPlayerCoordinator {
     #endif
 
     /// Default stream URL used when station hasn't loaded yet.
-    private let defaultStreamURL = "https://audio1.maxi80.com"
+    private let defaultStreamURL = BrandConstants.streamURL
 
     /// How long to wait after issuing a reconnect `play()` before checking whether the
     /// stream actually resumed.
@@ -189,7 +189,7 @@ public final class RadioPlayerCoordinator {
     /// title so Now Playing isn't blank before the first song.
     private func republishNowPlaying() {
         let playing = { if case .playing = playbackState { return true } else { return false } }()
-        let artist = currentSong?.artist ?? station?.name ?? "Maxi 80"
+        let artist = currentSong?.artist ?? station?.name ?? BrandConstants.name
         let title = currentSong?.title ?? station?.shortDesc ?? ""
         let url = currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
         publishNowPlaying(artist: artist, title: title, artworkURL: url, isPlaying: playing)
@@ -211,12 +211,12 @@ public final class RadioPlayerCoordinator {
             logger.notice("loadStation: /station failed, using hardcoded fallback")
             // Hardcoded fallback
             station = Station(
-                name: "Maxi 80",
+                name: BrandConstants.name,
                 streamUrl: defaultStreamURL,
                 image: "",
-                shortDesc: "La radio de toute une génération",
+                shortDesc: BrandConstants.tagline,
                 longDesc: "",
-                websiteUrl: "https://www.maxi80.com",
+                websiteUrl: BrandConstants.websiteURL,
                 donationUrl: "",
                 defaultCoverUrl: ""
             )
@@ -410,7 +410,7 @@ public final class RadioPlayerCoordinator {
         if let modernNowPlaying {
             modernNowPlaying.activate()
             modernNowPlaying.update(
-                stationName: station?.name ?? "Maxi 80",
+                stationName: station?.name ?? BrandConstants.name,
                 programName: "\(title) — \(artist)",
                 artworkURL: publishedArtworkURL,
                 isPlaying: isPlaying

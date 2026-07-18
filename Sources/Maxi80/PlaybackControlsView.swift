@@ -53,7 +53,7 @@ struct PlaybackControlsView: View {
                               tint: secondaryControlColor.opacity(viewModel.canShare ? 1.0 : 0.5))
             }
             .disabled(!viewModel.canShare)
-            .accessibilityLabel("Share current track")
+            .accessibilityLabel(Text("Share current track", bundle: .module))
 
             // Play/pause button — the primary control
             Button {
@@ -77,7 +77,9 @@ struct PlaybackControlsView: View {
                 }
                 .frame(width: 68, height: 68)
             }
-            .accessibilityLabel(viewModel.isPlaying ? "Pause" : "Play")
+            .accessibilityLabel(viewModel.isPlaying
+                ? Text("Pause", bundle: .module)
+                : Text("Play", bundle: .module))
 
             // Donation button
             if let donationUrl = viewModel.station?.donationUrl,
@@ -89,7 +91,7 @@ struct PlaybackControlsView: View {
                 // Link tints its label with the app accent (orange) by default; force the concrete
                 // secondary gray so donate matches the share button and the volume/AirPlay row.
                 .tint(secondaryControlColor)
-                .accessibilityLabel("Support Maxi 80")
+                .accessibilityLabel(Text("Support Maxi 80", bundle: .module))
             } else {
                 secondaryIcon("heart.circle", android: .favorite, tint: secondaryControlColor.opacity(0.5))
                     .accessibilityHidden(true)

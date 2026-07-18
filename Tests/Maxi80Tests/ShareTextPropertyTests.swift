@@ -35,7 +35,7 @@ struct ShareTextPropertyTests {
             vm.selectedCoverID = nil
 
             let shareContent = vm.shareCurrentTrack()
-            let expected = "I'm listening to \(title) by \(artist) on Maxi 80 via Maxi80 for iOS. Check it out at https://www.maxi80.com"
+            let expected = "I'm listening to \(title) by \(artist) on Maxi 80. Listen at \(BrandConstants.websiteURL)"
 
             return shareContent.text == expected
         }

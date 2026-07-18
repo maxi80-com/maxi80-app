@@ -13,13 +13,13 @@ public final class StationProvider {
 
     /// Hardcoded fallback station used when API fails and no cache is available.
     private let defaultStation = Station(
-        name: "Maxi 80",
-        streamUrl: "https://audio1.maxi80.com",
+        name: BrandConstants.name,
+        streamUrl: BrandConstants.streamURL,
         image: "",
-        shortDesc: "La radio de toute une génération",
-        longDesc: "Maxi 80, la radio de toute une génération",
-        websiteUrl: "https://www.maxi80.com",
-        donationUrl: "https://www.maxi80.com/don",
+        shortDesc: BrandConstants.tagline,
+        longDesc: BrandConstants.longDescription,
+        websiteUrl: BrandConstants.websiteURL,
+        donationUrl: BrandConstants.donationURL,
         defaultCoverUrl: ""
     )
 

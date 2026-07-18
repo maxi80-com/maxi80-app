@@ -71,7 +71,8 @@ public final class ReconnectionManager {
             }
 
             // All attempts exhausted — transition to error
-            self.onStateChanged?(.error("Connection lost. All reconnection attempts failed."))
+            let message = String(localized: "Connection lost. All reconnection attempts failed.", bundle: .module)
+            self.onStateChanged?(.error(message))
         }
     }
 
