@@ -36,8 +36,9 @@ Legend: `[x]` done · `[ ]` todo · `[!]` blocked / needs you
       Play key connects (`validate_play_store_json_key` OK). Both lanes parse.
 - [x] Apple App Store Connect credentials wired (see §1).
 - [x] Descriptions written, localized, TV copy added, within store limits.
-- [ ] **Play feature graphic (1024×500)** + **Android TV banner (320×180)** — designed
-      assets, added in the Play Console UI (not screenshots). Still needed for Android submit.
+- [x] **Play feature graphic (1024×500)** + **Android TV banner (320×180)** — generated
+      from the Maxi 80 neon logo, placed per-locale as `images/featureGraphic.png` and
+      `images/tvBanner.png` (supply picks them up automatically).
 - [ ] **Android upload keystore** — release AAB is currently debug-signed; add
       `Android/keystore.properties` before `publish-android` (see Makefile `doctor`).
 - [ ] **Bump build number before upload** — TestFlight already has build 1; run
