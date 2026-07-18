@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Maxi 80 — L'appli de la radio de toute une génération</title>
+  <meta name="description" content="L'application Maxi 80 : les plus grands tubes des années 80 en direct 24h/24. Sur iPhone, Android, en voiture et sur votre téléviseur." />
+
+  <meta property="og:title" content="Maxi 80 — L'appli" />
+  <meta property="og:description" content="Les tubes des 80, en direct 24h/24. Sur mobile, en voiture et sur grand écran." />
+  <meta property="og:type" content="website" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ============ NAV ============ -->
+  <header class="nav" id="nav">
+    <div class="nav__inner">
+      <a class="nav__brand" href="#top" aria-label="Maxi 80, accueil">
+        <img src="assets/logo-neon.png" alt="Maxi 80" class="nav__logo" />
+      </a>
+      <nav class="nav__links" aria-label="Navigation principale">
+        <a href="#ecrans">Écrans</a>
+        <a href="#coverflow">Historique</a>
+        <a href="#salon">Salon</a>
+        <a href="#route">Route</a>
+      </nav>
+      <a href="#telecharger" class="btn btn--amber nav__cta">Télécharger</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ============ HERO ============ -->
+    <section class="hero">
+      <div class="hero__glow" aria-hidden="true"></div>
+      <div class="hero__grid">
+        <div class="hero__copy">
+          <p class="eyebrow"><span class="on-air"></span>En direct&nbsp;·&nbsp;24h/24&nbsp;·&nbsp;web radio</p>
+          <h1 class="hero__title">La radio de<br />toute une<br /><span class="hero__title-accent">génération.</span></h1>
+          <p class="hero__lede">
+            Épaulettes et gros tubes. L'appli <strong>Maxi&nbsp;80</strong> diffuse les plus
+            grands titres des années 80, en direct et sans interruption. Reconstruite de
+            zéro&nbsp;: plus rapide, plus nette, plus belle.
+          </p>
+
+          <!-- SIGNATURE: neon graphic equaliser -->
+          <div class="eq" role="img" aria-label="Égaliseur lumineux, la radio joue en direct">
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+
+          <div class="store-row">
+            <a href="https://apps.apple.com/be/app/maxi80/id335551519" class="store-badge" target="_blank" rel="noopener" aria-label="Télécharger sur l'App Store">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.42 2.2-1.13 2.99-.86.98-2.27 1.73-3.42 1.64-.14-1.1.42-2.25 1.08-2.98.75-.83 2.06-1.45 3.15-1.5.09.42.32.42.32-.15zM20.9 17.02c-.55 1.27-.82 1.84-1.53 2.96-1 1.56-2.4 3.5-4.14 3.52-1.55.02-1.95-1.01-4.05-1-2.1.01-2.53 1.02-4.08 1-1.74-.02-3.07-1.77-4.06-3.33C-.02 17.66-.32 12.1 1.7 9.13c1.02-1.48 2.63-2.42 4.13-2.42 1.53 0 2.49 1.02 3.75 1.02 1.22 0 1.97-1.02 3.74-1.02 1.33 0 2.75.73 3.75 1.99-3.3 1.8-2.76 6.5.83 8.32z"/></svg>
+              <span><small>Télécharger sur l'</small><strong>App Store</strong></span>
+            </a>
+            <a href="https://play.google.com/store/apps/details?id=com.stormacq.android.maxi80" class="store-badge" target="_blank" rel="noopener" aria-label="Disponible sur Google Play">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 1.85a1.2 1.2 0 0 0-.32.83v18.64c0 .34.12.63.34.84l10.03-10.16L3.6 1.85zm11.05 8.1L5.5 2.02l11.4 6.55-2.25 1.38zm3.7 2.05 2.4-1.37c.86-.5.86-1.55 0-2.05l-2.4-1.38-2.6 2.4 2.6 2.4zM5.5 21.98l9.15-7.93 2.25 1.38-11.4 6.55z"/></svg>
+              <span><small>Disponible sur</small><strong>Google Play</strong></span>
+            </a>
+          </div>
+          <p class="hero__note">Gratuit. iPhone, iPad, Mac, Android, voiture et téléviseur.</p>
+        </div>
+
+        <div class="hero__device">
+          <div class="phone" id="heroPhone">
+            <div class="phone__screens">
+              <img src="assets/shot-now-playing.png" class="phone__shot is-active" data-platform="iOS" alt="L'écran de lecture de Maxi 80 sur iPhone : une pochette et le titre en cours." />
+              <img src="assets/shot-android-phone.png" class="phone__shot" data-platform="Android" alt="L'écran de lecture de Maxi 80 sur Android : une pochette et le titre en cours." />
+            </div>
+            <span class="phone__badge" id="heroBadge" aria-hidden="true">iOS</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ECRANS ============ -->
+    <section class="screens" id="ecrans">
+      <div class="section-head">
+        <p class="eyebrow">01 — Partout</p>
+        <h2>Une radio, tous vos écrans.</h2>
+        <p class="section-lede">Le même direct, de la poche au salon. Appuyez sur lecture&nbsp;; les tubes s'enchaînent.</p>
+      </div>
+      <ul class="screens__grid">
+        <li class="screen-card">
+          <span class="screen-card__ico" aria-hidden="true">📱</span>
+          <h3>Mobile</h3>
+          <p>iPhone, iPad et Android. En Wi-Fi, en 4G ou en 5G, le direct vous suit.</p>
+        </li>
+        <li class="screen-card">
+          <span class="screen-card__ico" aria-hidden="true">💻</span>
+          <h3>Sur Mac</h3>
+          <p>Une app native sur macOS. Les tubes en fond pendant que vous travaillez.</p>
+        </li>
+        <li class="screen-card">
+          <span class="screen-card__ico" aria-hidden="true">🚗</span>
+          <h3>En voiture</h3>
+          <p>CarPlay et Android&nbsp;Auto. La bande-son de vos trajets, mains sur le volant.</p>
+        </li>
+        <li class="screen-card">
+          <span class="screen-card__ico" aria-hidden="true">📺</span>
+          <h3>Grand écran</h3>
+          <p>Apps natives Apple&nbsp;TV et Android&nbsp;TV. Les pochettes en grand dans le salon.</p>
+        </li>
+        <li class="screen-card">
+          <span class="screen-card__ico" aria-hidden="true">🔊</span>
+          <h3>Sur vos enceintes</h3>
+          <p>AirPlay vers l'enceinte ou l'Apple&nbsp;TV, commandes sur l'écran de verrouillage.</p>
+        </li>
+        <li class="screen-card">
+          <span class="screen-card__ico" aria-hidden="true">🔒</span>
+          <h3>Écran verrouillé</h3>
+          <p>Lecture, pause et titre en cours depuis le verrouillage et les notifications.</p>
+        </li>
+      </ul>
+    </section>
+
+    <!-- ============ COVER FLOW ============ -->
+    <section class="feature feature--flip" id="coverflow">
+      <div class="feature__media">
+        <div class="frame-wide">
+          <img src="assets/shot-coverflow.png" alt="Le carrousel Cover Flow de Maxi 80 avec les pochettes des derniers titres diffusés." />
+        </div>
+      </div>
+      <div class="feature__copy">
+        <p class="eyebrow">02 — Historique</p>
+        <h2>Vous avez raté<br />le morceau d'avant&nbsp;?</h2>
+        <p>Revenez en arrière dans un superbe carrousel <strong>Cover&nbsp;Flow</strong>. Faites défiler les derniers titres, retrouvez celui qui vous trottait dans la tête, puis d'un geste&nbsp;: <em>retour au direct</em>.</p>
+        <ul class="ticks">
+          <li>Les derniers titres, pochettes à l'appui</li>
+          <li>Retour au direct instantané</li>
+          <li>Un coup de cœur&nbsp;? Partagez-le tout de suite</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ HD COVERS ============ -->
+    <section class="feature" id="pochettes">
+      <div class="feature__media">
+        <div class="phone phone--sm">
+          <img src="assets/shot-history.png" alt="Une pochette d'album en haute résolution avec le titre et l'artiste en cours." />
+        </div>
+      </div>
+      <div class="feature__copy">
+        <p class="eyebrow">03 — Pochettes</p>
+        <h2>Chaque cover,<br />nette et en grand.</h2>
+        <p>Des pochettes en <strong>haute résolution</strong>, et le nom de l'artiste et du titre toujours sous les yeux, toujours à jour. Vous savez ce qui passe, à la seconde près.</p>
+        <div class="mini-stats">
+          <div><strong>24h</strong><span>de direct par jour</span></div>
+          <div><strong>HD</strong><span>pochettes haute déf.</span></div>
+          <div><strong>0</strong><span>coupure, jamais</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SALON / TV ============ -->
+    <section class="tv" id="salon">
+      <div class="section-head section-head--center">
+        <p class="eyebrow">04 — Le salon</p>
+        <h2>Les tubes, sur grand écran.</h2>
+        <p class="section-lede">Une app native pour Apple&nbsp;TV et Android&nbsp;TV amène le direct et les pochettes dans votre salon.</p>
+      </div>
+      <div class="tv__screens">
+        <figure class="tv-frame">
+          <img src="assets/tv-apple.png" alt="Maxi 80 sur Apple TV : lecture en cours et rangée de pochettes récentes." />
+          <figcaption>Apple&nbsp;TV</figcaption>
+        </figure>
+        <figure class="tv-frame">
+          <img src="assets/tv-android.png" alt="Maxi 80 sur Android TV : lecture en cours et rangée de pochettes récentes." />
+          <figcaption>Android&nbsp;TV</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ============ ROUTE / CAR ============ -->
+    <section class="road" id="route">
+      <div class="road__inner">
+        <div class="road__copy">
+          <p class="eyebrow">05 — La route</p>
+          <h2>La bande-son<br />de vos trajets.</h2>
+          <p>Compatible <strong>CarPlay</strong> et <strong>Android&nbsp;Auto</strong>. Montez à bord, lancez le direct, gardez les mains sur le volant. Les années 80 vous accompagnent, kilomètre après kilomètre.</p>
+          <div class="chips">
+            <span class="chip">CarPlay</span>
+            <span class="chip">Android Auto</span>
+            <span class="chip">Écran verrouillé</span>
+            <span class="chip">Commandes vocales</span>
+          </div>
+        </div>
+        <div class="road__eq" aria-hidden="true">
+          <div class="eq eq--tall">
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ EXTRA GRID ============ -->
+    <section class="extras">
+      <div class="section-head">
+        <p class="eyebrow">06 — Et aussi</p>
+        <h2>Les petits plus.</h2>
+      </div>
+      <ul class="extras__grid">
+        <li><h3>Partagez l'instant</h3><p>Un coup de cœur pour le morceau du moment&nbsp;? Envoyez-le à un ami en un geste.</p></li>
+        <li><h3>Commandes où il faut</h3><p>Lecture et pause depuis l'écran de verrouillage et les notifications.</p></li>
+        <li><h3>Soutenez la radio</h3><p>Maxi 80 vous met de bonne humeur&nbsp;? Faites un don directement depuis l'appli.</p></li>
+        <li><h3>Reconstruite de zéro</h3><p>Technos modernes, app plus rapide, plus fluide, avec un tout nouveau look.</p></li>
+      </ul>
+    </section>
+
+    <!-- ============ DOWNLOAD ============ -->
+    <section class="cta" id="telecharger">
+      <div class="cta__glow" aria-hidden="true"></div>
+      <img src="assets/app-icon.png" alt="" class="cta__icon" aria-hidden="true" />
+      <h2>Montez le son.<br />Les années 80 vous appellent.</h2>
+      <div class="store-row store-row--center">
+        <a href="https://apps.apple.com/be/app/maxi80/id335551519" class="store-badge" target="_blank" rel="noopener" aria-label="Télécharger sur l'App Store">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.42 2.2-1.13 2.99-.86.98-2.27 1.73-3.42 1.64-.14-1.1.42-2.25 1.08-2.98.75-.83 2.06-1.45 3.15-1.5.09.42.32.42.32-.15zM20.9 17.02c-.55 1.27-.82 1.84-1.53 2.96-1 1.56-2.4 3.5-4.14 3.52-1.55.02-1.95-1.01-4.05-1-2.1.01-2.53 1.02-4.08 1-1.74-.02-3.07-1.77-4.06-3.33C-.02 17.66-.32 12.1 1.7 9.13c1.02-1.48 2.63-2.42 4.13-2.42 1.53 0 2.49 1.02 3.75 1.02 1.22 0 1.97-1.02 3.74-1.02 1.33 0 2.75.73 3.75 1.99-3.3 1.8-2.76 6.5.83 8.32z"/></svg>
+          <span><small>Télécharger sur l'</small><strong>App Store</strong></span>
+        </a>
+        <a href="https://play.google.com/store/apps/details?id=com.stormacq.android.maxi80" class="store-badge" target="_blank" rel="noopener" aria-label="Disponible sur Google Play">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 1.85a1.2 1.2 0 0 0-.32.83v18.64c0 .34.12.63.34.84l10.03-10.16L3.6 1.85zm11.05 8.1L5.5 2.02l11.4 6.55-2.25 1.38zm3.7 2.05 2.4-1.37c.86-.5.86-1.55 0-2.05l-2.4-1.38-2.6 2.4 2.6 2.4zM5.5 21.98l9.15-7.93 2.25 1.38-11.4 6.55z"/></svg>
+          <span><small>Disponible sur</small><strong>Google Play</strong></span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ FOOTER ============ -->
+  <footer class="footer">
+    <div class="footer__inner">
+      <div class="footer__brand">
+        <img src="assets/logo-neon.png" alt="Maxi 80" />
+        <p>Cette page présente <strong>l'application</strong> Maxi 80. Pour la station, les programmes et l'écoute directe sur le web, rendez-vous sur le site officiel.</p>
+        <a class="btn btn--ghost" href="https://maxi80.com" target="_blank" rel="noopener">maxi80.com ↗</a>
+      </div>
+      <div class="footer__meta">
+        <p class="footer__tag">La radio de toute une génération.</p>
+        <p class="footer__small">© Maxi 80 — Les plus grands tubes des années 80, en direct.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
