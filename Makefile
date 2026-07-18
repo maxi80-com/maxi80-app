@@ -184,12 +184,17 @@ test: ## Run the real Swift/Swift-Testing suite (used as the publish gate)
 	# not this Robolectric harness. We exclude ONLY that class by name so every
 	# real Swift test still runs and still gates the release.
 	#
-	# --scratch-path: run the host (macOS) test build in its OWN build dir. The
-	# shared .build/ can hold Android artifacts (aarch64-unknown-linux-android28)
-	# from `skip android build`; mixing them into the macOS test bundle makes the
-	# swift-testing runner crash on teardown with signal 5 (SIGTRAP) even though
-	# every test passes. An isolated scratch path keeps the host tests immune.
-	swift test --skip XCSkipTests --scratch-path .build/host-test
+	# --no-parallel: run the suite SERIALLY. The intermittent signal-5 (SIGTRAP)
+	# crashes were a data race in the swift-testing PARALLEL runner over
+	# APIClientTests' shared `MockURLProtocol.mockResponses` (a
+	# `nonisolated(unsafe) static var` mutated across concurrently-running tests).
+	# Serial execution removes the race — verified 4/4 clean, exit 0 — so the raw
+	# exit code is a trustworthy gate again (a real failure returns non-zero).
+	#
+	# --scratch-path: keep the macOS test build in its own dir, isolated from any
+	# Android artifacts (aarch64-unknown-linux-android28) that skip android build
+	# leaves in the shared .build/.
+	swift test --skip XCSkipTests --no-parallel --scratch-path .build/host-test
 
 # ------------------------------------------------------------------------------
 # Clean
