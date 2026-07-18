@@ -28,16 +28,38 @@ default_platform(:ios)
 # TODO (see the tvOS/macOS sections below).
 # ---------------------------------------------------------------------------
 
+# Build + sign an App Store archive for one Apple platform.
+#   options[:platform] = "ios" (default) | "tvos" | "macos"
+# One Xcode target ("Maxi80 App") supports all three (SUPPORTED_PLATFORMS covers
+# iphoneos/appletvos/macosx); we pick the sdk per platform. CarPlay ships INSIDE
+# the iOS build (entitlement com.apple.developer.carplay-audio) — nothing separate.
+# The output_directory is per-platform so the three artifacts don't clobber.
 lane :assemble do |options|
-  # only build the iOS side of the app
+  platform = options[:platform] || "ios"
+  # Pin the archive to ONE OS via the xcodebuild destination. `sdk:` alone does NOT
+  # constrain which platform the "Maxi80 App" scheme archives (it supports all
+  # three), so an iOS build could wrongly produce a tvOS archive. The destination
+  # generic/platform=<OS> is what forces the correct one.
+  dest = {
+    "ios"   => "generic/platform=iOS",
+    "tvos"  => "generic/platform=tvOS",
+    "macos" => "generic/platform=macOS",
+  }[platform]
+  UI.user_error!("unknown platform '#{platform}' (use ios|tvos|macos)") unless dest
+
   ENV["SKIP_ZERO"] = "true"
+  # Fetch/create the App Store provisioning profile for this platform via the API
+  # key (macOS App Store uses a different signing flow, handled by build_app).
+  get_provisioning_profile(api_key_path: "fastlane/apikey.json") unless platform == "macos"
+
   build_app(
     scheme: "Maxi80 App",
-    sdk: "iphoneos",
+    destination: dest,
+    export_method: "app-store",
     xcconfig: "fastlane/AppStore.xcconfig",
     xcargs: "-skipPackagePluginValidation -skipMacroValidation",
-    derived_data_path: "../.build/Darwin/DerivedData",
-    output_directory: "../.build/fastlane/Darwin",
+    derived_data_path: "../.build/Darwin/DerivedData-#{platform}",
+    output_directory: "../.build/fastlane/Darwin/#{platform}",
     skip_archive: ENV["FASTLANE_SKIP_ARCHIVE"] == "YES",
     skip_codesigning: ENV["FASTLANE_SKIP_CODESIGNING"] == "YES"
   )
@@ -64,14 +86,34 @@ lane :metadata do |options|
   )
 end
 
-desc "iOS: build + upload the binary to TestFlight (staging — no App Store review)"
-lane :beta do |options|
-  get_provisioning_profile(api_key_path: "fastlane/apikey.json")
-  assemble
-  upload_to_testflight(
-    api_key_path: "fastlane/apikey.json",
-    skip_waiting_for_build_processing: true   # don't block on Apple's processing
-  )
+desc "Upload the EXISTING built binary to TestFlight (no rebuild). options[:platform]=ios|tvos|macos"
+# The Makefile builds each binary once via `make release`, then calls this to
+# upload exactly that artifact — no rebuild, so what ships is what was
+# version-stamped + tagged. Per-platform output dir: ../.build/fastlane/Darwin/<platform>.
+lane :upload do |options|
+  platform = options[:platform] || "ios"
+  # Anchor to the repo root via the Fastfile location (__dir__ = Darwin/fastlane),
+  # NOT the CWD: fastlane runs lanes with CWD = Darwin/fastlane, so a bare
+  # "../.build/..." would wrongly resolve to Darwin/.build. Two levels up = repo root.
+  repo_root = File.expand_path("../..", __dir__)
+  dir = File.join(repo_root, ".build/fastlane/Darwin/#{platform}")
+  if platform == "macos"
+    pkg = Dir["#{dir}/*.pkg"].max_by { |f| File.mtime(f) }
+    UI.user_error!("No .pkg in #{dir} — run `make package-macos` first") unless pkg
+    upload_to_testflight(
+      api_key_path: "fastlane/apikey.json",
+      pkg: pkg,
+      skip_waiting_for_build_processing: true
+    )
+  else
+    ipa = Dir["#{dir}/*.ipa"].max_by { |f| File.mtime(f) }
+    UI.user_error!("No IPA in #{dir} — run `make package-#{platform}` first") unless ipa
+    upload_to_testflight(
+      api_key_path: "fastlane/apikey.json",
+      ipa: ipa,
+      skip_waiting_for_build_processing: true   # don't block on Apple's processing
+    )
+  end
 end
 
 desc "iOS: full App Store submission — submits the current build FOR REVIEW (promote step)"

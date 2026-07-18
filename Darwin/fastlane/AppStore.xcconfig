@@ -2,4 +2,15 @@
 
 // This file can be used to override various properties from Skip.env
 //PRODUCT_BUNDLE_IDENTIFIER =
-//DEVELOPMENT_TEAM =
+
+// Team of the Apple Distribution cert (56U756R2L2) — build_app signs the App
+// Store archive with this. get_provisioning_profile fetches the matching profile
+// via the App Store Connect API key.
+DEVELOPMENT_TEAM = 56U756R2L2
+
+// The base Maxi80.xcconfig narrows SUPPORTED_PLATFORMS to iphoneos/macosx and
+// TARGETED_DEVICE_FAMILY to 1,2 (phone/iPad) for day-to-day builds. For App Store
+// release builds we restore the full set so the SAME target can archive for Apple
+// TV too (family 3). The per-platform `assemble` still picks one sdk at a time.
+SUPPORTED_PLATFORMS = appletvos appletvsimulator iphoneos iphonesimulator macosx
+TARGETED_DEVICE_FAMILY = 1,2,3
