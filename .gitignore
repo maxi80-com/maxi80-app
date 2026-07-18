@@ -54,3 +54,6 @@ Android/fastlane/report.xml
 # Claude 
 .claude 
 worktrees
+# fastlane sigh-downloaded provisioning profiles
+*.mobileprovision
+**/*.mobileprovision

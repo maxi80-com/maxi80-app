@@ -48,9 +48,14 @@ lane :assemble do |options|
   UI.user_error!("unknown platform '#{platform}' (use ios|tvos|macos)") unless dest
 
   ENV["SKIP_ZERO"] = "true"
-  # Fetch/create the App Store provisioning profile for this platform via the API
-  # key (macOS App Store uses a different signing flow, handled by build_app).
-  get_provisioning_profile(api_key_path: "fastlane/apikey.json") unless platform == "macos"
+  # Fetch/create the App Store provisioning profile FOR THIS PLATFORM. Without the
+  # platform arg, sigh only fetches an iOS profile, so a tvOS/macOS archive falls
+  # back to a Development profile and `export_method: app-store` then fails.
+  # sigh platform values: ios | tvos | catalyst | macos.
+  get_provisioning_profile(
+    api_key_path: "fastlane/apikey.json",
+    platform: platform
+  )
 
   build_app(
     scheme: "Maxi80 App",
@@ -75,64 +80,97 @@ lane :metadata do |options|
   # editable draft until you submit.
   upload_to_app_store(
     platform: "ios",
-    screenshots_path: "fastlane/screenshots/ios",
+    screenshots_path: "screenshots/ios",
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",
     skip_binary_upload: true,
+    overwrite_screenshots: true,
     submit_for_review: false,
     automatic_release: false,
     force: true,                          # skip the HTML preview confirmation
     precheck_include_in_app_purchases: false
   )
+  # App Privacy: declare "Data Not Collected" (app_privacy_details.json) so the
+  # answers are published automatically instead of by hand in the Console. This
+  # is app-level (shared across platforms), so it only needs to run once — the
+  # iOS metadata lane is a fine home for it.
+  privacy_details
 end
 
-desc "Upload the EXISTING built binary to TestFlight (no rebuild). options[:platform]=ios|tvos|macos"
+desc "Publish the App Privacy declaration (Data Not Collected) — app-level, once"
+lane :privacy_details do |options|
+  upload_app_privacy_details_to_app_store(
+    api_key_path: "fastlane/apikey.json",
+    json_path: "fastlane/metadata/app_privacy_details.json"
+  )
+end
+
+desc "Upload the EXISTING built binary to TestFlight (no rebuild)."
+# options[:platform] = ios (default) | tvos | macos
+# options[:open]     = "true" → distribute to the EXTERNAL group (public/open beta,
+#                      triggers Apple Beta App Review + waits for processing).
+#                      Default = internal only (private, no review, fire-and-forget).
+# options[:group]    = external group name (default "Public Beta").
+#
 # The Makefile builds each binary once via `make release`, then calls this to
-# upload exactly that artifact — no rebuild, so what ships is what was
-# version-stamped + tagged. Per-platform output dir: ../.build/fastlane/Darwin/<platform>.
+# upload exactly that artifact — no rebuild. Per-platform dir: ../.build/fastlane/Darwin/<platform>.
 lane :upload do |options|
   platform = options[:platform] || "ios"
-  # Anchor to the repo root via the Fastfile location (__dir__ = Darwin/fastlane),
-  # NOT the CWD: fastlane runs lanes with CWD = Darwin/fastlane, so a bare
-  # "../.build/..." would wrongly resolve to Darwin/.build. Two levels up = repo root.
-  repo_root = File.expand_path("../..", __dir__)
+  is_open  = options[:open].to_s == "true"
+  group    = options[:group] || "Public Beta"
+  repo_root = File.expand_path("../..", __dir__)   # __dir__ = Darwin/fastlane
   dir = File.join(repo_root, ".build/fastlane/Darwin/#{platform}")
-  if platform == "macos"
-    pkg = Dir["#{dir}/*.pkg"].max_by { |f| File.mtime(f) }
-    UI.user_error!("No .pkg in #{dir} — run `make package-macos` first") unless pkg
-    upload_to_testflight(
-      api_key_path: "fastlane/apikey.json",
-      pkg: pkg,
-      skip_waiting_for_build_processing: true
+
+  artifact_key = platform == "macos" ? :pkg : :ipa
+  ext = platform == "macos" ? "pkg" : "ipa"
+  artifact = Dir["#{dir}/*.#{ext}"].max_by { |f| File.mtime(f) }
+  UI.user_error!("No #{ext.upcase} in #{dir} — run `make package-#{platform}` first") unless artifact
+
+  args = {
+    :api_key_path => "fastlane/apikey.json",
+    artifact_key  => artifact,
+  }
+  if is_open
+    # OPEN/EXTERNAL: distribute to the external group. Must wait for processing
+    # (external distribution can't happen until Apple finishes processing) and
+    # this submits the build to Beta App Review.
+    args.merge!(
+      distribute_external: true,
+      groups: [group],
+      notify_external_testers: true,
+      # a "what to test" note is required for external distribution
+      changelog: "Public beta of Maxi 80 — thanks for testing!"
     )
   else
-    ipa = Dir["#{dir}/*.ipa"].max_by { |f| File.mtime(f) }
-    UI.user_error!("No IPA in #{dir} — run `make package-#{platform}` first") unless ipa
-    upload_to_testflight(
-      api_key_path: "fastlane/apikey.json",
-      ipa: ipa,
-      skip_waiting_for_build_processing: true   # don't block on Apple's processing
-    )
+    # INTERNAL: private testers only, no review, don't block on processing.
+    args[:skip_waiting_for_build_processing] = true
   end
+  upload_to_testflight(args)
 end
 
-desc "iOS: full App Store submission — submits the current build FOR REVIEW (promote step)"
+desc "iOS: submit the LATEST uploaded build FOR REVIEW (attach build + metadata + submit)"
+# The OPT-IN promote step (make submit-ios). Attaches the build already on App
+# Store Connect (from `make publish-ios` → TestFlight), pushes metadata +
+# screenshots, and SUBMITS FOR REVIEW. The Deliverfile supplies submit_for_review(true)
+# plus the export-compliance / content-rights answers, so no interactive prompts.
+#
+# ⚠️ App Store REVIEW requires a GM (release) Xcode — builds made with a beta
+# Xcode upload to TestFlight fine but are REJECTED for review ("using a beta
+# version of Xcode and can't be submitted"). Run this only on a GM-Xcode build.
+# Kept OUT of the normal publish flow so nothing auto-submits; run deliberately.
 lane :release do |options|
-  # see https://docs.fastlane.tools/uploading-app-privacy-details/
-  #upload_app_privacy_details_to_app_store(json_path: "fastlane/app_privacy_details.json")
-
-  # if you have an apikey.json file (https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api), fastlane can automatically fetch certificates and the ASC authentication information
-  #get_certificates(api_key_path: "fastlane/apikey.json")
-  get_provisioning_profile(api_key_path: "fastlane/apikey.json")
-
-  assemble
-
+  # Publish the App Privacy declaration first (required before review).
+  privacy_details
+  # No rebuild / no re-upload of the binary — submit the build that's already up.
   upload_to_app_store(
     platform: "ios",
-    screenshots_path: "fastlane/screenshots/ios",
+    screenshots_path: "screenshots/ios",
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",
+    skip_binary_upload: true,          # binary already uploaded via `make publish-ios`
+    overwrite_screenshots: true,
     release_notes: { default: "Fixes and improvements." }
+    # submit_for_review + compliance answers come from the Deliverfile
   )
 end
 
@@ -144,10 +182,11 @@ lane :metadata_tvos do |options|
   # record with the Apple TV (1920x1080) screenshots. No binary, no review.
   upload_to_app_store(
     platform: "appletvos",
-    screenshots_path: "fastlane/screenshots/appletv",
+    screenshots_path: "screenshots/appletv",
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",
     skip_binary_upload: true,
+    overwrite_screenshots: true,
     submit_for_review: false,
     automatic_release: false,
     force: true,                          # skip the HTML preview confirmation
@@ -171,10 +210,11 @@ lane :metadata_mac do |options|
   # with the Mac screenshots (2560x1600). No binary, no review.
   upload_to_app_store(
     platform: "osx",
-    screenshots_path: "fastlane/screenshots/mac",
+    screenshots_path: "screenshots/mac",
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",
     skip_binary_upload: true,
+    overwrite_screenshots: true,
     submit_for_review: false,
     automatic_release: false,
     force: true,                          # skip the HTML preview confirmation

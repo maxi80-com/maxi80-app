@@ -59,8 +59,9 @@ AAB_PATH     := .build/Android/app/outputs/bundle/release/app-release.aab
         clean build-ios build-android build-all \
         package-ios package-tvos package-macos package-android package-all \
         publish-metadata-ios publish-metadata-tvos publish-metadata-mac publish-metadata-all \
-        publish-ios publish-tvos publish-macos publish-android publish-all \
-        bump release screenshots
+        publish-ios publish-ios-open publish-tvos publish-tvos-open publish-macos \
+        publish-android publish-android-open publish-all publish-all-open \
+        promote-ios promote-android promote-all bump release screenshots
 
 # ------------------------------------------------------------------------------
 # Help / info
@@ -85,9 +86,9 @@ help: ## Show this help (default target)
 	@echo "  Package (signed artifacts, no upload)"
 	@echo "    package-ios       Signed iOS IPA (incl. CarPlay)"
 	@echo "    package-tvos      Signed Apple TV IPA"
-	@echo "    package-macos     Signed macOS build"
 	@echo "    package-android   Release AAB (upload-signed)"
-	@echo "    package-all       All of the above"
+	@echo "    package-macos     Signed macOS build (DEFERRED: needs installer cert + sandbox)"
+	@echo "    package-all       iOS + tvOS + Android (macOS binary deferred)"
 	@echo ""
 	@echo "  Release (one version across all platforms)"
 	@echo "    release              Bump -> build+sign ALL -> test -> commit+tag (no upload)"
@@ -96,12 +97,22 @@ help: ## Show this help (default target)
 	@echo "  Publish metadata (listing text + screenshots, draft; no binary/review)"
 	@echo "    publish-metadata-ios / -tvos / -mac / -all"
 	@echo ""
-	@echo "  Publish binaries (to TEST tracks; promote to prod manually in each Console)"
-	@echo "    publish-ios / publish-tvos / publish-macos   TestFlight"
-	@echo "    publish-android                              Play internal (draft)"
-	@echo "    publish-all      Everything: all metadata + all binaries"
+	@echo "  Publish binaries to TEST tracks — INTERNAL (private, no review, fast)"
+	@echo "    publish-ios / publish-tvos    TestFlight internal"
+	@echo "    publish-android               Play internal (draft)"
+	@echo "    publish-all                   metadata + all internal binaries"
 	@echo ""
-	@echo "  Typical:  make release && make publish-all"
+	@echo "  Publish binaries to TEST tracks — OPEN (public, store review)"
+	@echo "    publish-ios-open / publish-tvos-open   TestFlight external 'Public Beta'"
+	@echo "    publish-android-open                   Play open (beta) track"
+	@echo "    publish-all-open                       metadata + all open binaries"
+	@echo ""
+	@echo "  Promote to production (opt-in, AFTER testing the staged build)"
+	@echo "    promote-ios      Submit iOS build for App Store review (needs GM Xcode)"
+	@echo "    promote-android  Promote Play internal build to production"
+	@echo "    promote-all      Both"
+	@echo ""
+	@echo "  Typical:  make release && make publish-all   (test, then make promote-all)"
 	@echo ""
 	@echo "  Misc"
 	@echo "    screenshots       Helper wrapping fastlane/capture_screenshots.sh"
@@ -256,7 +267,12 @@ package-tvos: check-config ## Produce a signed Apple TV IPA (App Store)
 	cd Darwin && fastlane assemble platform:tvos
 	@echo "==> tvOS IPA in $(TVOS_DIR)"
 
-package-macos: check-config ## Produce a signed macOS build (App Store)
+package-macos: check-config ## Produce a signed macOS build (App Store) — DEFERRED, see note
+	# DEFERRED: Mac App Store distribution needs a "Mac Installer" cert (not yet
+	# created) and the App Sandbox entitlement (com.apple.security.app-sandbox, not
+	# yet added — mandatory for MAS and needs testing for a networking/audio app).
+	# This target will fail until those are in place. macOS ships METADATA ONLY for
+	# now (publish-metadata-mac); the binary is a separate follow-up task.
 	cd Darwin && fastlane assemble platform:macos
 	@echo "==> macOS artifact in $(MACOS_DIR)"
 
@@ -271,7 +287,7 @@ package-android: check-config ## Produce a release AAB (gradle bundleRelease)
 	cd Android && fastlane assemble
 	@echo "==> AAB at $(AAB_PATH)"
 
-package-all: package-ios package-tvos package-macos package-android ## Build+sign every binary
+package-all: package-ios package-tvos package-android ## Build+sign every SHIPPING binary (macOS binary deferred)
 
 # ------------------------------------------------------------------------------
 # Release
@@ -316,10 +332,10 @@ release: ## Prepare a signed, versioned release of ALL platforms (no upload)
 	# 3.81 ignores .ONESHELL, so each step is its own line.
 	@$(MAKE) --no-print-directory check-clean-tree
 	@$(MAKE) --no-print-directory bump
-	@echo "==> Building + signing iOS(+CarPlay), tvOS, macOS and Android at the new version"
+	@echo "==> Building + signing iOS(+CarPlay), tvOS and Android at the new version"
+	@echo "    (macOS binary deferred — needs Mac Installer cert + App Sandbox; ships metadata only)"
 	@$(MAKE) --no-print-directory package-ios
 	@$(MAKE) --no-print-directory package-tvos
-	@$(MAKE) --no-print-directory package-macos
 	@$(MAKE) --no-print-directory package-android
 	@echo "==> Running tests"
 	@$(MAKE) --no-print-directory test
@@ -329,7 +345,7 @@ release: ## Prepare a signed, versioned release of ALL platforms (no upload)
 	git add $(SKIP_ENV); \
 	git commit -m "chore(release): $(MARKETING_VERSION) build $$BUILD"; \
 	git tag -a "$$TAG" -m "Maxi 80 $(MARKETING_VERSION) (build $$BUILD)"; \
-	echo "==> Release $$TAG prepared (iOS/tvOS/macOS IPAs+pkg, Android AAB), committed + tagged (not pushed)."; \
+	echo "==> Release $$TAG prepared (iOS+tvOS IPAs, Android AAB), committed + tagged (not pushed)."; \
 	echo "    Next: make publish-all    (metadata + binaries to all test tracks)"; \
 	echo "    Then: git push && git push origin $$TAG"
 
@@ -345,24 +361,61 @@ publish-metadata-mac: ## App Store macOS listing (text + Mac screenshots) as dra
 
 publish-metadata-all: publish-metadata-ios publish-metadata-tvos publish-metadata-mac ## All Apple listings
 
-# --- Binary uploads (test tracks; promote to production manually in each Console) ---
-publish-ios: ## Upload the built iOS IPA to TestFlight
+# --- Binary uploads to TEST tracks -------------------------------------------
+# Two symmetric tiers on both stores:
+#   INTERNAL (default) — private testers, NO store review, fast. For your own testing.
+#     Apple: TestFlight internal   |  Play: internal track (draft)
+#   OPEN (…-open)      — PUBLIC testers, triggers store review. For a public beta.
+#     Apple: TestFlight external group "Public Beta"  |  Play: open (beta) track
+# Promote to production with `make promote-*` after testing.
+
+publish-ios: ## iOS → TestFlight internal (private, no review)
 	@ls $(IOS_DIR)/*.ipa >/dev/null 2>&1 || { echo "no iOS IPA in $(IOS_DIR) — run 'make package-ios' (or release) first"; exit 1; }
 	cd Darwin && fastlane upload platform:ios
 
-publish-tvos: ## Upload the built Apple TV IPA to TestFlight
+publish-ios-open: ## iOS → TestFlight OPEN/external "Public Beta" (public, Beta App Review)
+	@ls $(IOS_DIR)/*.ipa >/dev/null 2>&1 || { echo "no iOS IPA in $(IOS_DIR) — run 'make package-ios' (or release) first"; exit 1; }
+	cd Darwin && fastlane upload platform:ios open:true
+
+publish-tvos: ## tvOS → TestFlight internal (private, no review)
 	@ls $(TVOS_DIR)/*.ipa >/dev/null 2>&1 || { echo "no tvOS IPA in $(TVOS_DIR) — run 'make package-tvos' (or release) first"; exit 1; }
 	cd Darwin && fastlane upload platform:tvos
 
-publish-macos: ## Upload the built macOS pkg to TestFlight/App Store
+publish-tvos-open: ## tvOS → TestFlight OPEN/external "Public Beta" (public, Beta App Review)
+	@ls $(TVOS_DIR)/*.ipa >/dev/null 2>&1 || { echo "no tvOS IPA in $(TVOS_DIR) — run 'make package-tvos' (or release) first"; exit 1; }
+	cd Darwin && fastlane upload platform:tvos open:true
+
+publish-macos: ## macOS → TestFlight internal (DEFERRED — see package-macos)
 	@ls $(MACOS_DIR)/*.pkg >/dev/null 2>&1 || { echo "no macOS pkg in $(MACOS_DIR) — run 'make package-macos' (or release) first"; exit 1; }
 	cd Darwin && fastlane upload platform:macos
 
-publish-android: ## Upload the built AAB to Google Play (internal track, draft)
+publish-android: ## Android → Play internal track (private, draft)
 	@test -f "$(AAB_PATH)" || { echo "no AAB at $(AAB_PATH) — run 'make package-android' (or release) first"; exit 1; }
 	cd Android && fastlane upload track:internal release_status:draft
 
-publish-all: publish-metadata-all publish-ios publish-tvos publish-macos publish-android ## Upload EVERYTHING (metadata + all binaries)
+publish-android-open: ## Android → Play OPEN (beta) track (public, Play review)
+	@test -f "$(AAB_PATH)" || { echo "no AAB at $(AAB_PATH) — run 'make package-android' (or release) first"; exit 1; }
+	cd Android && fastlane upload track:beta release_status:completed
+
+# Metadata (all Apple listings) + binaries to the private test tracks.
+# macOS binary deferred (publish-macos exists but is excluded — see package-macos).
+publish-all: publish-metadata-all publish-ios publish-tvos publish-android ## Metadata + binaries → private test tracks
+publish-all-open: publish-metadata-all publish-ios-open publish-tvos-open publish-android-open ## Metadata + binaries → OPEN/public test tracks
+
+# --- PROMOTE TO PRODUCTION (opt-in, after you've tested the staged build) ------
+# Run these only after verifying the build on TestFlight / Play internal.
+# Separate from the safe-staging flow so nothing ships to users automatically.
+promote-ios: ## Promote the uploaded iOS build to the App Store (submit for review)
+	@echo "==> Submitting iOS for App Store REVIEW (App Privacy + metadata + submit_for_review)"
+	@echo "    NOTE: requires a GM (non-beta) Xcode, or Apple rejects the submission."
+	cd Darwin && fastlane release
+
+promote-android: ## Promote the internal build to Play PRODUCTION (100% rollout)
+	@echo "==> Promoting Play internal build to PRODUCTION (full rollout)"
+	@echo "    Staged rollout instead: cd Android && fastlane promote_production release_status:inProgress rollout:0.1"
+	cd Android && fastlane promote_production
+
+promote-all: promote-ios promote-android ## Promote both platforms to production
 
 # ------------------------------------------------------------------------------
 # Misc

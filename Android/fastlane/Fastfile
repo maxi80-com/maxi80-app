@@ -62,3 +62,22 @@ lane :release do |options|
   assemble
   upload(options)
 end
+
+desc "Promote the version already on the INTERNAL track to PRODUCTION (no upload, no rebuild)"
+# After testing the internal build, promote that exact version to production.
+# `version_code` targets the build we shipped; without it, supply promotes the
+# latest. release_status: 'completed' = full 100% rollout (set rollout: 0.1 for
+# a staged 10% instead). No AAB is re-uploaded — it moves the existing release.
+lane :promote_production do |options|
+  upload_to_play_store(
+    track: 'internal',                 # source track the build is on
+    track_promote_to: 'production',
+    version_code: options[:version_code],   # optional; omit to promote latest
+    release_status: options[:release_status] || 'completed',
+    skip_upload_aab: true,
+    skip_upload_metadata: true,
+    skip_upload_changelogs: true,
+    skip_upload_images: true,
+    skip_upload_screenshots: true
+  )
+end

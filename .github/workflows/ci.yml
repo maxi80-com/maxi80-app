@@ -3,11 +3,14 @@
 # Goal: catch build/test/transpile errors BEFORE the manual release process
 # (see the Makefile `release`/`publish-*` targets, which are NOT run here).
 # This workflow deliberately contains NO release, fastlane, signing, upload, or
-# emulator steps — it only compiles and tests both platforms.
+# emulator steps — it only compiles and tests the app.
 #
-#   macOS job  — Apple side via `xcodebuild`, code signing disabled.
-#   Linux job  — SwiftPM + gradle path, reusing the repo's Makefile targets:
-#                `swift build`, `swift test`, and `skip android build` + gradle.
+# The two platforms split across two runners because this app has no Linux-HOST
+# code path (the Apple side needs CoreGraphics/SwiftUI; the Android side is
+# reached only via the Skip transpile / Swift-for-Android cross-compile):
+#
+#   macOS job  — Apple side: `xcodebuild build` (unsigned) + `swift test`.
+#   Linux job  — Android side: `skip android build` + gradle (cross-compile).
 name: CI
 
 on:
@@ -30,20 +33,13 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Apple side: build + test the Xcode project with xcodebuild, no signature.
+  # Apple side: build the Xcode app (unsigned) + run the native test suite.
   # ---------------------------------------------------------------------------
   macos:
     name: macOS (xcodebuild, unsigned)
     # macos-26 ships Xcode 26, which this project assumes (Xcode 26+).
     runs-on: macos-26
     timeout-minutes: 90
-    env:
-      # SKIP_ACTION=none skips the Xcode "Run skip gradle" build phase so this
-      # job stays Apple-only and needs no Android toolchain. The skipstone
-      # plugin still transpiles Swift -> Kotlin during compilation, so genuine
-      # transpiler errors are still caught here; the Kotlin/gradle compile is
-      # exercised by the Linux job instead.
-      SKIP_ACTION: none
     steps:
       - uses: actions/checkout@v4
 
@@ -56,7 +52,8 @@ jobs:
       - name: Set up Skip toolchain
         uses: skiptools/actions/setup-skip@v1
         with:
-          # Gradle/Android is covered by the Linux job; no Swift-Android SDK here.
+          # Android is built on the Linux job; this job stays Apple-only, so it
+          # does not need the (slow-to-install) Swift Android SDK.
           install-swift-android-sdk: false
 
       - name: Versions
@@ -65,6 +62,13 @@ jobs:
           xcodebuild -version
           skip --version || true
 
+      # SKIP_ACTION=none disables the Xcode "Run skip gradle" build phase so this
+      # job builds only the Apple app and needs no Android toolchain. It MUST be
+      # passed as an xcodebuild command-line build setting (not a process env
+      # var): Darwin/Maxi80.xcconfig sets SKIP_ACTION=build, and an xcconfig
+      # value is injected into the script phase's environment where it would
+      # otherwise override an inherited env var. A command-line build setting
+      # outranks the xcconfig. Signing is fully disabled (no certs in CI).
       - name: Build (macOS, unsigned)
         run: |
           xcodebuild build \
@@ -74,6 +78,7 @@ jobs:
             -configuration Debug \
             -skipMacroValidation \
             -skipPackagePluginValidation \
+            SKIP_ACTION=none \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -82,26 +87,26 @@ jobs:
       # The Xcode "Maxi80 App" scheme has an empty test action (the test suites
       # live in the SwiftPM package, not the .xcodeproj), so `xcodebuild test`
       # against it would run ZERO tests. This project's blessed test gate is
-      # `swift test` (the Makefile `test` target), which runs natively on macOS
-      # — so we reuse it here to actually exercise the suite on Apple.
+      # `swift test` (the Makefile `test` target), which runs natively on macOS.
       - name: Test (macOS)
         run: make test
 
   # ---------------------------------------------------------------------------
-  # Linux side: swift build, swift test, and the Android gradle build.
-  # Reuses the repo's Makefile targets so CI matches the local dev flow exactly.
+  # Android side: Skip transpile + Swift-for-Android cross-compile + gradle.
+  # This runs on Linux (the Android build does not need macOS) and catches
+  # transpiler errors and Kotlin/gradle compile errors before release.
   # ---------------------------------------------------------------------------
   linux:
-    name: Linux (swift + gradle)
+    name: Linux (Android build)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
-      # Android SDK 36 (and the Robolectric sandbox) require Java 21; the
-      # ubuntu-24.04 runner defaults to Java 17. JAVA_HOME_21_X64 is a runner
-      # environment variable, so it must be resolved in a step (not the job-
-      # level env: context, which is evaluated before the runner shell exists).
+      # Android SDK 36 requires Java 21; the ubuntu-24.04 runner defaults to
+      # Java 17. JAVA_HOME_21_X64 is a runner environment variable, so it must
+      # be resolved in a step (not the job-level env: context, which is
+      # evaluated before the runner shell exists).
       - name: Select Java 21
         run: echo "JAVA_HOME=${JAVA_HOME_21_X64}" >> "$GITHUB_ENV"
 
@@ -111,8 +116,8 @@ jobs:
       - name: Set up Skip toolchain
         uses: skiptools/actions/setup-skip@v1
         with:
-          # Native Fuse modules must cross-compile to Android for the gradle
-          # build, so the Swift-Android SDK is required here.
+          # The native Fuse modules cross-compile to Android, so the
+          # Swift-Android SDK is required here.
           install-swift-android-sdk: true
 
       - name: Versions
@@ -120,15 +125,9 @@ jobs:
           swift --version
           skip checkup || true
 
-      # `make build-ios` is just `swift build` (native compile check); the
-      # target name is historical. `make test` runs the real Swift-Testing
-      # suite with the documented flags. `make build-android` runs
-      # `skip android build` (Swift -> Kotlin transpile) then the gradle build.
-      - name: Swift build
-        run: make build-ios
-
-      - name: Swift test
-        run: make test
-
-      - name: Android gradle build
+      # `make build-android` runs `skip android build` (the Swift -> Kotlin
+      # transpile + Swift-for-Android cross-compile) then `gradle assembleDebug`
+      # (compiles the generated Kotlin/Android project). Reused from the Makefile
+      # so CI matches the local dev flow exactly.
+      - name: Android build (transpile + gradle)
         run: make build-android
