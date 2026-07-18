@@ -123,7 +123,24 @@ end
 
 # === macOS ================================================================
 
-# TODO: macOS store listing (metadata_mac / release_mac).
-# No macOS screenshots exist yet (fastlane/screenshots/mac/<locale>/ is not
-# created). Once mac screenshots are captured, add a lane mirroring the tvOS
-# one with `platform: "osx"` and `screenshots_path: "fastlane/screenshots/mac"`.
+desc "macOS: push store listing (text + Mac screenshots) as a DRAFT — no binary, no review"
+lane :metadata_mac do |options|
+  # Same shared metadata text as iOS/tvOS, uploaded to the macOS platform record
+  # with the Mac screenshots (2560x1600). No binary, no review.
+  upload_to_app_store(
+    platform: "osx",
+    screenshots_path: "fastlane/screenshots/mac",
+    api_key_path: "fastlane/apikey.json",
+    app_rating_config_path: "fastlane/metadata/rating.json",
+    skip_binary_upload: true,
+    submit_for_review: false,
+    automatic_release: false,
+    force: true,                          # skip the HTML preview confirmation
+    precheck_include_in_app_purchases: false
+  )
+end
+
+# TODO: macOS binary upload (beta_mac / release_mac).
+# Like tvOS, `assemble` builds sdk: iphoneos only. For a Mac binary, parametrize
+# assemble with an sdk: "macosx" build (the "Maxi80 App" target already supports
+# macosx) and add a release_mac lane. Listing+screenshots work via metadata_mac.

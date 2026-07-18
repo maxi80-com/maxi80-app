@@ -15,6 +15,7 @@
 # USAGE
 #   ./fastlane/capture_screenshots.sh ios   <locale> <order> <name>
 #   ./fastlane/capture_screenshots.sh tvos  <locale> <order> <name>
+#   ./fastlane/capture_screenshots.sh mac   <locale> <order> <name>
 #   ./fastlane/capture_screenshots.sh droid <locale> <order> <name> [phone|seven|ten|tv]
 #
 #   locale : en-US | fr-FR | fr-CA
@@ -63,7 +64,7 @@ FORM="${5:-phone}"
 die() { echo "error: $*" >&2; exit 1; }
 
 [[ -n "$PLATFORM" && -n "$LOCALE" && -n "$ORDER" && -n "$NAME" ]] \
-  || die "usage: $0 <ios|tvos|droid> <locale> <order> <name> [phone|seven|ten|tv]"
+  || die "usage: $0 <ios|tvos|mac|droid> <locale> <order> <name> [phone|seven|ten|tv]"
 
 case "$LOCALE" in en-US|fr-FR|fr-CA) ;; *) die "locale must be en-US, fr-FR or fr-CA" ;; esac
 
@@ -72,15 +73,55 @@ FILE="$(printf '%02d' "$ORDER")-${NAME}.png"
 case "$PLATFORM" in
   ios|tvos)
     command -v xcrun >/dev/null || die "xcrun not found (install Xcode)"
-    OUT_DIR="$REPO_ROOT/Darwin/fastlane/screenshots/$LOCALE"
+    # deliver runs one platform per lane with a per-platform screenshots_path,
+    # so each platform has its OWN folder tree (see Darwin/fastlane/Fastfile).
+    case "$PLATFORM" in
+      ios)  SUBDIR=ios ;;
+      tvos) SUBDIR=appletv ;;
+    esac
+    OUT_DIR="$REPO_ROOT/Darwin/fastlane/screenshots/$SUBDIR/$LOCALE"
     mkdir -p "$OUT_DIR"
-    # deliver classifies App Store screenshots by pixel size, so Apple TV shots
-    # share the locale folder with iPhone shots; the "tv-" prefix stops a tvOS
-    # and an iOS shot of the same order from overwriting each other.
-    [[ "$PLATFORM" == "tvos" ]] && FILE="tv-$FILE"
     xcrun simctl io booted screenshot "$OUT_DIR/$FILE" \
       || die "no booted simulator — boot one (only one) and open Maxi 80 first"
     echo "saved ${PLATFORM} screenshot: $OUT_DIR/$FILE"
+    ;;
+  mac)
+    # macOS has no simulator: capture the REAL Maxi 80 window on this Mac, then
+    # normalize to an App-Store-accepted size. deliver requires an EXACT size —
+    # one of 1280x800, 1440x900, 2560x1600, 2880x1800. We capture the window and
+    # scale-to-fit onto a 2560x1600 black canvas (Retina; downscaled by ASC as
+    # needed). Uses `screencapture -l <windowID>` to grab just the app window.
+    command -v screencapture >/dev/null || die "screencapture not found (macOS only)"
+    OUT_DIR="$REPO_ROOT/Darwin/fastlane/screenshots/mac/$LOCALE"
+    mkdir -p "$OUT_DIR"
+    TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+    # Region-capture the Maxi 80 window by its position+size (System Events window
+    # ids are NOT CoreGraphics ids, so `screencapture -l` doesn't work; -R with the
+    # window rect does, and needs no interaction). On a Retina display the PNG comes
+    # out at 2x the point size.
+    GEO="$(osascript -e 'tell application "System Events" to tell (first process whose name contains "Maxi80")
+      set frontmost to true
+      set p to position of window 1
+      set s to size of window 1
+      set x to item 1 of p
+      set y to item 2 of p
+      set w to item 1 of s
+      set h to item 2 of s
+      return ("" & x & " " & y & " " & w & " " & h)
+    end tell' 2>/dev/null || true)"
+    [[ -n "$GEO" ]] || die "Maxi80 window not found — run the macOS app first"
+    read -r X Y W H <<< "$GEO"
+    screencapture -x -o -R"${X},${Y},${W},${H}" "$TMP/raw.png" \
+      || die "capture failed (grant your terminal Screen Recording in System Settings → Privacy)"
+    # Normalize to an exact App-Store-accepted macOS size (2560x1600, 16:10) by
+    # scaling-to-fit onto a black canvas. mkasset upsizes small captures cleanly.
+    if [[ -x /tmp/mkasset ]]; then
+      /tmp/mkasset "$TMP/raw.png" 2560 1600 "$OUT_DIR/$FILE" 1.0 || die "normalize failed"
+    else
+      cp "$TMP/raw.png" "$OUT_DIR/$FILE"
+      echo "warning: /tmp/mkasset not present — $FILE is $(sips -g pixelWidth -g pixelHeight "$OUT_DIR/$FILE" | awk '/pixelWidth/{w=$2}/pixelHeight/{h=$2}END{print w\"x\"h}'), not normalized to 2560x1600"
+    fi
+    echo "saved mac screenshot: $OUT_DIR/$FILE"
     ;;
   droid)
     case "$FORM" in
@@ -98,6 +139,6 @@ case "$PLATFORM" in
     echo "saved Android ($FORM) screenshot: $OUT_DIR/$FILE"
     ;;
   *)
-    die "first arg must be 'ios', 'tvos' or 'droid'"
+    die "first arg must be 'ios', 'tvos', 'mac' or 'droid'"
     ;;
 esac

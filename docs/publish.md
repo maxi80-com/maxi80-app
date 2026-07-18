@@ -32,7 +32,8 @@ Legend: `[x]` done · `[ ]` todo · `[!]` blocked / needs you
       Auth + Play access verified (HTTP 200). Key rotated after setup; live key id `39dafa3c…`.
 - [x] **Play Developer API enabled + access granted** — verified end-to-end: signing a JWT
       with the key opens a Play edit for `com.stormacq.android.maxi80` (HTTP 200). `supply` ready.
-- [x] **Screenshots** — captured for all four surfaces × 3 locales (see §3).
+- [x] **Screenshots** — captured for ALL surfaces × 3 locales: iPhone 6.9" (3),
+      Apple TV (3), macOS (2, 2560×1600), Android phone (2), Android TV (2). See §3.
 - [x] **fastlane credentials verified** — Apple ASC key returns latest build number;
       Play key connects (`validate_play_store_json_key` OK). Both lanes parse.
 - [x] Apple App Store Connect credentials wired (see §1).
@@ -192,8 +193,11 @@ history/Cover Flow view.
 | Android TV   | `tvScreenshots` — 1920×1080 landscape. Console also needs a **TV banner** (320×180) added in the UI. |
 | Play feature graphic | 1024×500 — required by the Console; a designed asset, add in the UI (not a screenshot). |
 
-Folders (created on first capture):
-- Apple:    `Darwin/fastlane/screenshots/<locale>/`  (tvOS shots get a `tv-` prefix)
+Folders (created on first capture) — Apple screenshots are split per platform
+because `deliver` uploads ONE platform per run (see §4B):
+- iPhone:   `Darwin/fastlane/screenshots/ios/<locale>/`
+- Apple TV: `Darwin/fastlane/screenshots/appletv/<locale>/`
+- macOS:    `Darwin/fastlane/screenshots/mac/<locale>/`  (TODO — no assets yet)
 - Android:  `Android/fastlane/metadata/android/<locale>/images/{phone,sevenInch,tenInch,tv}Screenshots/`
 
 ---
@@ -216,7 +220,9 @@ make doctor        # must print "doctor: OK" — checks tools, credentials, keys
 
 - Working tree must be **clean** (commit everything first) or the publish aborts.
 - Update the release notes: `Darwin/fastlane/metadata/<locale>/release_notes.txt`
-  and `Android/fastlane/metadata/android/<locale>/changelogs/<versionCode>.txt`.
+  and `Android/fastlane/metadata/android/<locale>/changelogs/default.txt`
+  (Android uses `default.txt` as the fallback for any versionCode — no need to
+  rename per build; drop a `<versionCode>.txt` only if you want per-build notes).
 - iOS only: confirm the privacy page is live —
   `curl -sI https://app.maxi80.com/confidentialite.html | head -1` → `200`.
 
@@ -228,6 +234,19 @@ make publish-android
 Runs tests → bumps build → commits → builds a **signed** AAB (upload key) →
 uploads to the **internal testing** track as a **draft** → tags the commit.
 
+> Unlike iOS, there is no separate Android metadata step: `upload_to_play_store`
+> pushes the listing (title/descriptions/changelog) **and** all images
+> (screenshots, `featureGraphic`, `tvBanner`) **together with the AAB** by default.
+> Release notes come from `changelogs/default.txt` per locale.
+
+> **One app, not three.** Unlike App Store Connect (separate iOS/macOS/tvOS
+> platform tabs on one record), Play has no platform concept: phone, tablet and
+> Android TV all ship from the **same** package (`com.stormacq.android.maxi80`)
+> and the **same AAB**. The manifest already declares TV (leanback launcher,
+> touchscreen not required, banner). There is no macOS/ChromeOS entry to create.
+> First release only: opt into TV via Play Console → **Advanced settings → Form
+> factors → Android TV → Add** (a declaration + TV-screenshot review, not a new app).
+
 Then, in the **Play Console**:
 1. Testing → Internal testing → install on a device, confirm it works.
 2. First release only: Store presence → App content → set the **privacy policy
@@ -238,12 +257,29 @@ Then, in the **Play Console**:
 
 ### B. iOS + Apple TV (App Store)
 
+> **One record, three platforms — but `deliver` uploads ONE at a time.** App
+> Store Connect keeps separate iOS / macOS / tvOS platform tabs on the single
+> record (App ID 335551519). `upload_to_app_store` targets exactly one, chosen
+> by the lane's `platform:` option, and classifies screenshots by resolution
+> *within* that platform. So iPhone and Apple TV screenshots live in separate
+> folder trees and upload via separate lanes:
+>
+> - iPhone shots  → `Darwin/fastlane/screenshots/ios/<locale>/`     → `platform: "ios"`
+> - Apple TV shots → `Darwin/fastlane/screenshots/appletv/<locale>/` → `platform: "appletvos"`
+>
+> Listing **text** (`Darwin/fastlane/metadata/<locale>/*.txt`) is shared — the
+> same copy is pushed to whichever platform the lane targets (Apple TV reuses
+> the iOS description).
+
 First push the listing (text + screenshots) as a draft, then the binary:
 ```bash
-make publish-metadata-ios     # uploads listing + screenshots (no binary, no review)
-make publish-ios              # tests → bump → commit → build+sign → TestFlight → tag
+make publish-metadata-ios          # iOS: uploads listing + iPhone screenshots (no binary, no review)
+cd Darwin && fastlane metadata_tvos  # Apple TV: uploads listing + Apple TV screenshots (no binary, no review)
+make publish-ios                   # tests → bump → commit → build+sign → TestFlight → tag
 ```
-`publish-ios` uploads to **TestFlight** (not the review queue).
+`publish-ios` uploads to **TestFlight** (not the review queue). The binary is a
+single multiplatform build (the "Maxi80 App" target supports iphoneos + appletvos
++ macosx); `assemble` currently builds the iOS slice only — see TODO below.
 
 Then, in **App Store Connect**:
 1. TestFlight → install via the TestFlight app, confirm it works.
@@ -251,7 +287,17 @@ Then, in **App Store Connect**:
    `Darwin/fastlane/metadata/app_privacy_details.json`), confirm privacy/support
    URLs, age rating.
 3. App Store → select the build → **Submit for Review**. (Or from the CLI:
-   `cd Darwin && fastlane release` — submits for review with metadata.)
+   `cd Darwin && fastlane release` — submits iOS for review with metadata.)
+
+> **TODO — Apple TV & macOS binaries/screenshots:**
+> - `metadata_tvos` pushes the Apple TV *listing + screenshots* today, but there
+>   is no tvOS *binary* lane yet: `assemble` builds the iOS slice (`sdk: iphoneos`)
+>   and `Darwin/Maxi80.xcconfig` restricts `SUPPORTED_PLATFORMS` to
+>   iphoneos/iphonesimulator/macosx. A tvOS TestFlight/release lane needs an
+>   `sdk: "appletvos"` build + the xcconfig extended to allow appletvos.
+> - **macOS screenshots don't exist yet** — no `screenshots/mac/<locale>/` folder
+>   and no `platform: "osx"` lane. Capture mac shots first, then add a lane
+>   mirroring `metadata_tvos`.
 
 ### C. After a release ships
 
@@ -264,8 +310,10 @@ git push && git push origin <the tag printed by the publish target>
   published Play versionCode (`2021122500`) and stay < 2,100,000,000.
 - To push Android straight to production instead of internal:
   `cd Android && fastlane release track:production release_status:draft`.
-- iOS lanes: `metadata` (listing draft), `beta` (TestFlight), `release` (submit
-  for review) — in `Darwin/fastlane/Fastfile`.
+- Apple lanes (in `Darwin/fastlane/Fastfile`): `metadata` (iOS listing draft),
+  `beta` (iOS TestFlight), `release` (iOS submit for review), `metadata_tvos`
+  (Apple TV listing draft). Each `upload_to_app_store` lane passes an explicit
+  `platform:` + `screenshots_path:`.
 
 ---
 
