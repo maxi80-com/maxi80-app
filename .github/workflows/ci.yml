@@ -1,0 +1,134 @@
+# Continuous integration for the Maxi80 Skip app.
+#
+# Goal: catch build/test/transpile errors BEFORE the manual release process
+# (see the Makefile `release`/`publish-*` targets, which are NOT run here).
+# This workflow deliberately contains NO release, fastlane, signing, upload, or
+# emulator steps — it only compiles and tests both platforms.
+#
+#   macOS job  — Apple side via `xcodebuild`, code signing disabled.
+#   Linux job  — SwiftPM + gradle path, reusing the repo's Makefile targets:
+#                `swift build`, `swift test`, and `skip android build` + gradle.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "website/**"
+      - "docs/**"
+      - "**/*.md"
+  pull_request:
+    paths-ignore:
+      - "website/**"
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Apple side: build + test the Xcode project with xcodebuild, no signature.
+  # ---------------------------------------------------------------------------
+  macos:
+    name: macOS (xcodebuild, unsigned)
+    # macos-26 ships Xcode 26, which this project assumes (Xcode 26+).
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      # SKIP_ACTION=none skips the Xcode "Run skip gradle" build phase so this
+      # job stays Apple-only and needs no Android toolchain. The skipstone
+      # plugin still transpiles Swift -> Kotlin during compilation, so genuine
+      # transpiler errors are still caught here; the Kotlin/gradle compile is
+      # exercised by the Linux job instead.
+      SKIP_ACTION: none
+    steps:
+      - uses: actions/checkout@v4
+
+      # Configuration.plist is git-ignored; seed it from the template so the
+      # build finds it. Tests use mocked networking, so placeholder values are
+      # fine (real values are only needed at runtime on a device).
+      - name: Seed Configuration.plist
+        run: cp Sources/Maxi80/Resources/Configuration.plist.template Sources/Maxi80/Resources/Configuration.plist
+
+      - name: Set up Skip toolchain
+        uses: skiptools/actions/setup-skip@v1
+        with:
+          # Gradle/Android is covered by the Linux job; no Swift-Android SDK here.
+          install-swift-android-sdk: false
+
+      - name: Versions
+        run: |
+          swift --version
+          xcodebuild -version
+          skip --version || true
+
+      - name: Build (macOS, unsigned)
+        run: |
+          xcodebuild build \
+            -project Darwin/Maxi80.xcodeproj \
+            -scheme "Maxi80 App" \
+            -destination "platform=macOS,arch=arm64" \
+            -configuration Debug \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS=""
+
+      # The Xcode "Maxi80 App" scheme has an empty test action (the test suites
+      # live in the SwiftPM package, not the .xcodeproj), so `xcodebuild test`
+      # against it would run ZERO tests. This project's blessed test gate is
+      # `swift test` (the Makefile `test` target), which runs natively on macOS
+      # — so we reuse it here to actually exercise the suite on Apple.
+      - name: Test (macOS)
+        run: make test
+
+  # ---------------------------------------------------------------------------
+  # Linux side: swift build, swift test, and the Android gradle build.
+  # Reuses the repo's Makefile targets so CI matches the local dev flow exactly.
+  # ---------------------------------------------------------------------------
+  linux:
+    name: Linux (swift + gradle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # Android SDK 36 (and the Robolectric sandbox) require Java 21; the
+      # ubuntu-24.04 runner defaults to Java 17. JAVA_HOME_21_X64 is a runner
+      # environment variable, so it must be resolved in a step (not the job-
+      # level env: context, which is evaluated before the runner shell exists).
+      - name: Select Java 21
+        run: echo "JAVA_HOME=${JAVA_HOME_21_X64}" >> "$GITHUB_ENV"
+
+      - name: Seed Configuration.plist
+        run: cp Sources/Maxi80/Resources/Configuration.plist.template Sources/Maxi80/Resources/Configuration.plist
+
+      - name: Set up Skip toolchain
+        uses: skiptools/actions/setup-skip@v1
+        with:
+          # Native Fuse modules must cross-compile to Android for the gradle
+          # build, so the Swift-Android SDK is required here.
+          install-swift-android-sdk: true
+
+      - name: Versions
+        run: |
+          swift --version
+          skip checkup || true
+
+      # `make build-ios` is just `swift build` (native compile check); the
+      # target name is historical. `make test` runs the real Swift-Testing
+      # suite with the documented flags. `make build-android` runs
+      # `skip android build` (Swift -> Kotlin transpile) then the gradle build.
+      - name: Swift build
+        run: make build-ios
+
+      - name: Swift test
+        run: make test
+
+      - name: Android gradle build
+        run: make build-android
