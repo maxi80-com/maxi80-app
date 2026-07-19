@@ -101,12 +101,15 @@ public final class RadioPlayerCoordinator {
     setupReconnection()
 
     #if !SKIP
-      // Prefer the modern NowPlaying framework when available (iOS 26+); nil elsewhere, so the
+      // Prefer the modern NowPlaying framework when available (iOS 27+); nil elsewhere, so the
       // bridged MediaPlayer `nowPlaying` remains the fallback.
       modernNowPlaying = makeModernNowPlaying(
         onPlay: { [weak self] in self?.handleRemoteCommand("play") },
         onPause: { [weak self] in self?.handleRemoteCommand("pause") }
       )
+      let nowPlayingPath =
+        modernNowPlaying == nil ? "FALLBACK (MPNowPlayingInfoCenter)" : "MODERN (NowPlaying framework)"
+      logger.info("NowPlaying path: \(nowPlayingPath)")
     #endif
 
     // Seed the volume from the system's current level and start tracking hardware-button changes.
