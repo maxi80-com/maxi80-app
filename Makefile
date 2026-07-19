@@ -59,8 +59,9 @@ AAB_PATH     := .build/Android/app/outputs/bundle/release/app-release.aab
         clean build-ios build-android build-all \
         package-ios package-tvos package-macos package-android package-all \
         publish-metadata-ios publish-metadata-tvos publish-metadata-mac publish-metadata-all \
-        publish-ios publish-ios-open publish-tvos publish-tvos-open publish-macos \
-        publish-android publish-android-open publish-all publish-all-open \
+        publish-ios publish-ios-open publish-tvos publish-tvos-open \
+        publish-macos publish-android publish-android-open \
+        publish-all publish-all-open \
         promote-ios promote-android promote-all bump release screenshots
 
 # ------------------------------------------------------------------------------
@@ -86,9 +87,9 @@ help: ## Show this help (default target)
 	@echo "  Package (signed artifacts, no upload)"
 	@echo "    package-ios       Signed iOS IPA (incl. CarPlay)"
 	@echo "    package-tvos      Signed Apple TV IPA"
+	@echo "    package-macos     Signed macOS .pkg (Mac App Store)"
 	@echo "    package-android   Release AAB (upload-signed)"
-	@echo "    package-macos     Signed macOS build (DEFERRED: needs installer cert + sandbox)"
-	@echo "    package-all       iOS + tvOS + Android (macOS binary deferred)"
+	@echo "    package-all       iOS + tvOS + macOS + Android"
 	@echo ""
 	@echo "  Release (one version across all platforms)"
 	@echo "    release              Bump -> build+sign ALL -> test -> commit+tag (no upload)"
@@ -97,15 +98,16 @@ help: ## Show this help (default target)
 	@echo "  Publish metadata (listing text + screenshots, draft; no binary/review)"
 	@echo "    publish-metadata-ios / -tvos / -mac / -all"
 	@echo ""
-	@echo "  Publish binaries to TEST tracks — INTERNAL (private, no review, fast)"
-	@echo "    publish-ios / publish-tvos    TestFlight internal"
-	@echo "    publish-android               Play internal (draft)"
-	@echo "    publish-all                   metadata + all internal binaries"
+	@echo "  Publish binaries — INTERNAL (private/fast; macOS→App Store, no TestFlight)"
+	@echo "    publish-ios / publish-tvos   TestFlight internal"
+	@echo "    publish-macos                App Store Connect (pkg)"
+	@echo "    publish-android              Play internal (draft)"
+	@echo "    publish-all                  metadata + all internal binaries"
 	@echo ""
-	@echo "  Publish binaries to TEST tracks — OPEN (public, store review)"
-	@echo "    publish-ios-open / publish-tvos-open   TestFlight external 'Public Beta'"
+	@echo "  Publish binaries — OPEN (public, store review)"
+	@echo "    publish-ios-open / publish-tvos-open   TestFlight 'Public Beta'"
 	@echo "    publish-android-open                   Play open (beta) track"
-	@echo "    publish-all-open                       metadata + all open binaries"
+	@echo "    publish-all-open                       metadata + open binaries (macOS→App Store)"
 	@echo ""
 	@echo "  Promote to production (opt-in, AFTER testing the staged build)"
 	@echo "    promote-ios      Submit iOS build for App Store review (needs GM Xcode)"
@@ -267,14 +269,13 @@ package-tvos: check-config ## Produce a signed Apple TV IPA (App Store)
 	cd Darwin && fastlane assemble platform:tvos
 	@echo "==> tvOS IPA in $(TVOS_DIR)"
 
-package-macos: check-config ## Produce a signed macOS build (App Store) — DEFERRED, see note
-	# DEFERRED: Mac App Store distribution needs a "Mac Installer" cert (not yet
-	# created) and the App Sandbox entitlement (com.apple.security.app-sandbox, not
-	# yet added — mandatory for MAS and needs testing for a networking/audio app).
-	# This target will fail until those are in place. macOS ships METADATA ONLY for
-	# now (publish-metadata-mac); the binary is a separate follow-up task.
+package-macos: check-config ## Produce a signed macOS .pkg (Mac App Store)
+	# gym archives, then an explicit xcodebuild -exportArchive with MANUAL signing
+	# (Apple Distribution + "3rd Party Mac Developer Installer" installer cert + the
+	# downloaded Mac App Store profile) produces a signed .pkg. Requires: App Sandbox
+	# entitlement (Entitlements-macOS.plist) + the installer cert in the Keychain.
 	cd Darwin && fastlane assemble platform:macos
-	@echo "==> macOS artifact in $(MACOS_DIR)"
+	@echo "==> macOS pkg in $(MACOS_DIR)"
 
 package-android: check-config ## Produce a release AAB (gradle bundleRelease)
 	# The Android `assemble` lane runs `gradle bundleRelease` -> $(AAB_PATH).
@@ -287,7 +288,7 @@ package-android: check-config ## Produce a release AAB (gradle bundleRelease)
 	cd Android && fastlane assemble
 	@echo "==> AAB at $(AAB_PATH)"
 
-package-all: package-ios package-tvos package-android ## Build+sign every SHIPPING binary (macOS binary deferred)
+package-all: package-ios package-tvos package-macos package-android ## Build+sign every binary (iOS, tvOS, macOS, Android)
 
 # ------------------------------------------------------------------------------
 # Release
@@ -332,10 +333,10 @@ release: ## Prepare a signed, versioned release of ALL platforms (no upload)
 	# 3.81 ignores .ONESHELL, so each step is its own line.
 	@$(MAKE) --no-print-directory check-clean-tree
 	@$(MAKE) --no-print-directory bump
-	@echo "==> Building + signing iOS(+CarPlay), tvOS and Android at the new version"
-	@echo "    (macOS binary deferred — needs Mac Installer cert + App Sandbox; ships metadata only)"
+	@echo "==> Building + signing iOS(+CarPlay), tvOS, macOS and Android at the new version"
 	@$(MAKE) --no-print-directory package-ios
 	@$(MAKE) --no-print-directory package-tvos
+	@$(MAKE) --no-print-directory package-macos
 	@$(MAKE) --no-print-directory package-android
 	@echo "==> Running tests"
 	@$(MAKE) --no-print-directory test
@@ -385,7 +386,9 @@ publish-tvos-open: ## tvOS → TestFlight OPEN/external "Public Beta" (public, B
 	@ls $(TVOS_DIR)/*.ipa >/dev/null 2>&1 || { echo "no tvOS IPA in $(TVOS_DIR) — run 'make package-tvos' (or release) first"; exit 1; }
 	cd Darwin && fastlane upload platform:tvos open:true
 
-publish-macos: ## macOS → TestFlight internal (DEFERRED — see package-macos)
+publish-macos: ## macOS → App Store Connect (pkg; no TestFlight — submit via promote-ios)
+	# macOS pkg isn't TestFlight-eligible here, so it uploads straight to App Store
+	# Connect. There's no -open variant (no macOS TestFlight); review it in the Console.
 	@ls $(MACOS_DIR)/*.pkg >/dev/null 2>&1 || { echo "no macOS pkg in $(MACOS_DIR) — run 'make package-macos' (or release) first"; exit 1; }
 	cd Darwin && fastlane upload platform:macos
 
@@ -397,10 +400,11 @@ publish-android-open: ## Android → Play OPEN (beta) track (public, Play review
 	@test -f "$(AAB_PATH)" || { echo "no AAB at $(AAB_PATH) — run 'make package-android' (or release) first"; exit 1; }
 	cd Android && fastlane upload track:beta release_status:completed
 
-# Metadata (all Apple listings) + binaries to the private test tracks.
-# macOS binary deferred (publish-macos exists but is excluded — see package-macos).
-publish-all: publish-metadata-all publish-ios publish-tvos publish-android ## Metadata + binaries → private test tracks
-publish-all-open: publish-metadata-all publish-ios-open publish-tvos-open publish-android-open ## Metadata + binaries → OPEN/public test tracks
+# Metadata (all Apple listings) + every binary to the test tracks.
+publish-all: publish-metadata-all publish-ios publish-tvos publish-macos publish-android ## Metadata + binaries → private test tracks
+# publish-all-open: OPEN tiers where they exist (iOS/tvOS TestFlight external,
+# Play beta). macOS has no TestFlight tier — it uploads to App Store via publish-macos.
+publish-all-open: publish-metadata-all publish-ios-open publish-tvos-open publish-macos publish-android-open ## Metadata + binaries → OPEN/public test tracks (+ macOS→App Store)
 
 # --- PROMOTE TO PRODUCTION (opt-in, after you've tested the staged build) ------
 # Run these only after verifying the build on TestFlight / Play internal.

@@ -29,13 +29,21 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 
 iOS: push store listing (text + iPhone screenshots) as a DRAFT — no binary, no review
 
+### privacy_details
+
+```sh
+[bundle exec] fastlane privacy_details
+```
+
+Publish the App Privacy declaration (Data Not Collected) — app-level, once
+
 ### upload
 
 ```sh
 [bundle exec] fastlane upload
 ```
 
-Upload the EXISTING built binary to TestFlight (no rebuild). options[:platform]=ios|tvos|macos
+Upload the EXISTING built binary to TestFlight (no rebuild).
 
 ### release
 
@@ -43,7 +51,7 @@ Upload the EXISTING built binary to TestFlight (no rebuild). options[:platform]=
 [bundle exec] fastlane release
 ```
 
-iOS: full App Store submission — submits the current build FOR REVIEW (promote step)
+iOS: submit the LATEST uploaded build FOR REVIEW (attach build + metadata + submit)
 
 ### metadata_tvos
 

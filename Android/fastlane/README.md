@@ -53,6 +53,14 @@ Upload the EXISTING signed AAB to Google Play (no rebuild)
 
 Build + upload to Google Play (rebuilds, then uploads) — standalone convenience
 
+### promote_production
+
+```sh
+[bundle exec] fastlane promote_production
+```
+
+Promote the version already on the INTERNAL track to PRODUCTION (no upload, no rebuild)
+
 ----
 
 This README.md is auto-generated and will be re-generated every time [_fastlane_](https://fastlane.tools) is run.

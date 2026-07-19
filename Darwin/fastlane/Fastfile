@@ -48,26 +48,118 @@ lane :assemble do |options|
   UI.user_error!("unknown platform '#{platform}' (use ios|tvos|macos)") unless dest
 
   ENV["SKIP_ZERO"] = "true"
-  # Fetch/create the App Store provisioning profile FOR THIS PLATFORM. Without the
-  # platform arg, sigh only fetches an iOS profile, so a tvOS/macOS archive falls
-  # back to a Development profile and `export_method: app-store` then fails.
-  # sigh platform values: ios | tvos | catalyst | macos.
-  get_provisioning_profile(
-    api_key_path: "fastlane/apikey.json",
-    platform: platform
-  )
+  require "json"
+  require "tmpdir"
+  require "fileutils"
 
-  build_app(
-    scheme: "Maxi80 App",
-    destination: dest,
-    export_method: "app-store",
-    xcconfig: "fastlane/AppStore.xcconfig",
-    xcargs: "-skipPackagePluginValidation -skipMacroValidation",
-    derived_data_path: "../.build/Darwin/DerivedData-#{platform}",
-    output_directory: "../.build/fastlane/Darwin/#{platform}",
-    skip_archive: ENV["FASTLANE_SKIP_ARCHIVE"] == "YES",
-    skip_codesigning: ENV["FASTLANE_SKIP_CODESIGNING"] == "YES"
-  )
+  # Fetch/create the App Store provisioning profile FOR THIS PLATFORM (installs it
+  # locally). Without the platform arg, sigh only fetches an iOS profile, so a
+  # tvOS/macOS archive falls back to a Development profile. sigh platforms:
+  # ios | tvos | catalyst | macos.
+  get_provisioning_profile(api_key_path: "fastlane/apikey.json", platform: platform)
+  profile_name = lane_context[SharedValues::SIGH_NAME]
+
+  api = JSON.parse(File.read(File.join(__dir__, "apikey.json")))
+  p8  = File.join(__dir__, "AuthKey_#{api['key_id']}.p8")
+  out_dir = File.expand_path(File.join(__dir__, "..", "..", ".build/fastlane/Darwin/#{platform}"))
+
+  if platform == "macos"
+    # macOS is UNSUPPORTED by Skip (iOS+Android only) — Mac App Store packaging is
+    # hand-rolled. gym's export leaves the app in a state MAS rejects; we re-sign
+    # inside-out. Signing rules, each proven against `altool --validate-app`:
+    #
+    #   - gym signs the nested frameworks (SkipFuse, SwiftJNI, SkipAndroidBridge, …)
+    #     with the "Apple Development" cert, not Distribution → errors 90284 (wrong
+    #     cert) + 91130. We re-sign EVERY *.framework AND *.bundle with the
+    #     Distribution cert, inside-out (frameworks/bundles first, main app last),
+    #     so the app's outer signature seals over correct inner signatures.
+    #
+    #   - We sign the nested code CLEAN (no entitlements) and embed NO provisioning
+    #     profile. This is NOT because of Skip's executableless resource bundles (an
+    #     old, WRONG theory — disproved by real altool trials, see below); it's the
+    #     only combination that validates for THIS app's legacy App ID.
+    #
+    #   - Why no profile: macOS App Store validation hard-requires the signature's
+    #     `application-identifier` to (a) match the embedded profile AND (b) start
+    #     with the Team ID 56U756R2L2 (error 90286). But App ID
+    #     com.stormacq.sebastien.iphone.maxi80 (Apple ID 335551519, ~2009) has an
+    #     IMMUTABLE legacy seed prefix JPLCX562X7 (!= Team ID; confirmed via the ASC
+    #     API). Every profile Apple issues for this bundle ID carries JPLCX562X7.…,
+    #     so embedding it + sealing with JPLCX562X7.… → 90286 + a 91130 cascade over
+    #     every nested component (INCLUDING the SkipFuse/SwiftJNI frameworks that DO
+    #     have Mach-O executables — which is what kills the "executableless bundle"
+    #     theory). Sealing with 56U756R2L2.… instead → 90288 (signature != profile).
+    #     iOS/tvOS accept the legacy prefix, which is why iOS TestFlight works.
+    #
+    #   - Net: WITHOUT the profile the pkg validates with 0 errors and uploads
+    #     straight to the Mac App Store. The only cost is macOS TestFlight (warning
+    #     90889 "main bundle missing provisioning profile") — unavailable for this
+    #     app until the App ID's seed prefix is migrated to the Team ID (Apple Dev
+    #     Support) or a new Team-ID-prefixed bundle ID is used. See docs/publish.md.
+    #
+    #   - Main app: sandbox entitlements only (Entitlements-macOS.plist), no app-id.
+    #   - productbuild the installer .pkg with the installer cert.
+    app_cert     = "Apple Distribution: Sebastien Stormacq (56U756R2L2)"
+    inst_cert    = "3rd Party Mac Developer Installer: Sebastien Stormacq (56U756R2L2)"
+    entitlements = File.join(__dir__, "..", "Entitlements-macOS.plist")
+    archive = File.expand_path(File.join(__dir__, "..", "..", ".build/Darwin/macos.xcarchive"))
+    FileUtils.rm_rf(archive)
+
+    build_app(
+      scheme: "Maxi80 App", destination: dest, export_method: "app-store",
+      xcconfig: "fastlane/AppStore.xcconfig",
+      xcargs: "-skipPackagePluginValidation -skipMacroValidation",
+      skip_package_ipa: true, skip_archive: false, archive_path: archive,
+      skip_codesigning: ENV["FASTLANE_SKIP_CODESIGNING"] == "YES"
+    )
+
+    app = Dir["#{archive}/Products/Applications/*.app"].first
+    UI.user_error!("no .app in archive #{archive}") unless app
+    # 1. re-sign nested frameworks clean, with the Distribution cert (fixes 90284)
+    Dir["#{app}/Contents/Frameworks/*.framework"].each do |f|
+      sh("codesign --force --timestamp=none --options runtime --sign '#{app_cert}' '#{f}'")
+    end
+    # 2. re-sign resource bundles clean (no entitlements → no app-identifier)
+    Dir["#{app}/Contents/Resources/*.bundle"].each do |b|
+      sh("codesign --force --timestamp=none --sign '#{app_cert}' '#{b}'")
+    end
+    # 3. seal the main app (sandbox entitlements only, NO embedded profile)
+    sh("codesign --force --timestamp=none --options runtime " \
+       "--entitlements '#{entitlements}' --sign '#{app_cert}' '#{app}'")
+    # 4. productbuild the installer pkg
+    FileUtils.mkdir_p(out_dir)
+    pkg = File.join(out_dir, "Maxi80.pkg")
+    FileUtils.rm_f(pkg)
+    sh("productbuild --component '#{app}' /Applications --sign '#{inst_cert}' '#{pkg}'")
+    UI.user_error!("macOS productbuild produced no .pkg") unless File.exist?(pkg)
+    UI.success("macOS pkg: #{pkg}")
+  else
+    # iOS/tvOS: cloud signing works — export fetches the profile via the API key.
+    # Pass the ASC API key through the export_options PLIST (authenticationKeyPath
+    # as a fully-resolved absolute path) rather than hand-writing
+    # -authenticationKeyPath into export_xcargs. Xcode 26's xcodebuild rejects a
+    # RELATIVE -authenticationKeyPath ("must be an absolute path to an existing
+    # file"); gym's xcbuild-safe.sh cd's into Darwin/ and had relativized the
+    # xcargs path, which Xcode 27 beta tolerated but 26 does not. A plist value is
+    # not subject to that rewriting, so the absolute path survives. File.realpath
+    # resolves the secrets/ symlink to a concrete existing file.
+    build_app(
+      scheme: "Maxi80 App", destination: dest, export_method: "app-store",
+      xcconfig: "fastlane/AppStore.xcconfig",
+      xcargs: "-skipPackagePluginValidation -skipMacroValidation",
+      export_xcargs: "-allowProvisioningUpdates",
+      export_options: {
+        method: "app-store",
+        authenticationKeyPath: File.realpath(p8),
+        authenticationKeyID: api["key_id"],
+        authenticationKeyIssuerID: api["issuer_id"],
+      },
+      derived_data_path: "../.build/Darwin/DerivedData-#{platform}",
+      output_directory: "../.build/fastlane/Darwin/#{platform}",
+      skip_archive: ENV["FASTLANE_SKIP_ARCHIVE"] == "YES",
+      skip_codesigning: ENV["FASTLANE_SKIP_CODESIGNING"] == "YES"
+    )
+  end
 end
 
 # === iOS (iPhone) =========================================================
@@ -78,13 +170,23 @@ lane :metadata do |options|
   # App Store Connect listing without touching the binary and WITHOUT
   # submitting for review. Safe to run anytime; the listing sits as an
   # editable draft until you submit.
+  # sync_screenshots (checksum diff) instead of overwrite_screenshots: deliver's
+  # overwrite path verifies uploads before ASC finishes async processing, falsely
+  # thinks they're missing, and re-uploads → DUPLICATES. sync compares checksums
+  # and only uploads what's missing / deletes extras — idempotent + race-free.
+  ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
   upload_to_app_store(
     platform: "ios",
-    screenshots_path: "screenshots/ios",
+    # ABSOLUTE path. Lanes run with CWD = Darwin/ (fastlane auto-detects the
+    # ./fastlane metadata folder), so a RELATIVE "screenshots/ios" resolves to
+    # Darwin/screenshots/ (empty) instead of Darwin/fastlane/screenshots/ where
+    # the assets actually live and are git-tracked. That made the loader find 0
+    # screenshots and upload nothing. __dir__ is Darwin/fastlane.
+    screenshots_path: File.expand_path("screenshots/ios", __dir__),
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",
     skip_binary_upload: true,
-    overwrite_screenshots: true,
+    sync_screenshots: true,
     submit_for_review: false,
     automatic_release: false,
     force: true,                          # skip the HTML preview confirmation
@@ -121,14 +223,27 @@ lane :upload do |options|
   repo_root = File.expand_path("../..", __dir__)   # __dir__ = Darwin/fastlane
   dir = File.join(repo_root, ".build/fastlane/Darwin/#{platform}")
 
-  artifact_key = platform == "macos" ? :pkg : :ipa
   ext = platform == "macos" ? "pkg" : "ipa"
   artifact = Dir["#{dir}/*.#{ext}"].max_by { |f| File.mtime(f) }
   UI.user_error!("No #{ext.upcase} in #{dir} — run `make package-#{platform}` first") unless artifact
 
+  if platform == "macos"
+    # macOS pkg is NOT TestFlight-eligible here (the app's legacy App-ID seed prefix
+    # JPLCX562X7 != Team ID 56U756R2L2, and macOS validation requires the Team-ID
+    # prefix — embedding the profile triggers 90286 + a 91130 cascade; see `assemble`).
+    # So it uploads straight to App Store Connect via deliver; submit for review in
+    # the Console / promote-ios.
+    upload_to_app_store(
+      platform: "osx", pkg: artifact, api_key_path: "fastlane/apikey.json",
+      skip_screenshots: true, skip_metadata: true,
+      submit_for_review: false, run_precheck_before_submit: false
+    )
+    next
+  end
+
   args = {
     :api_key_path => "fastlane/apikey.json",
-    artifact_key  => artifact,
+    :ipa => artifact,
   }
   if is_open
     # OPEN/EXTERNAL: distribute to the external group. Must wait for processing
@@ -161,14 +276,16 @@ desc "iOS: submit the LATEST uploaded build FOR REVIEW (attach build + metadata 
 lane :release do |options|
   # Publish the App Privacy declaration first (required before review).
   privacy_details
+  # sync_screenshots (not overwrite) — avoids the duplicate-upload race (see metadata lane).
+  ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
   # No rebuild / no re-upload of the binary — submit the build that's already up.
   upload_to_app_store(
     platform: "ios",
-    screenshots_path: "screenshots/ios",
+    screenshots_path: File.expand_path("screenshots/ios", __dir__),
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",
     skip_binary_upload: true,          # binary already uploaded via `make publish-ios`
-    overwrite_screenshots: true,
+    sync_screenshots: true,
     release_notes: { default: "Fixes and improvements." }
     # submit_for_review + compliance answers come from the Deliverfile
   )
@@ -180,13 +297,21 @@ desc "tvOS: push store listing (text + Apple TV screenshots) as a DRAFT — no b
 lane :metadata_tvos do |options|
   # Same shared metadata text as iOS, but uploaded to the Apple TV platform
   # record with the Apple TV (1920x1080) screenshots. No binary, no review.
+  # sync_screenshots (checksum diff) instead of overwrite_screenshots — see the
+  # note in the `metadata` lane. Without it deliver's upload→verify→retry races on
+  # App Store Connect eventual-consistency and DUPLICATES every set (Apple TV showed
+  # 5–6 uploaded per 3-image set). Requires the beta feature flag set below.
+  ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
   upload_to_app_store(
     platform: "appletvos",
-    screenshots_path: "screenshots/appletv",
+    # ABSOLUTE — see the note in the `metadata` lane. A relative path resolves
+    # against CWD=Darwin/, i.e. the empty Darwin/screenshots/appletv, so deliver
+    # loaded 0 tvOS screenshots and silently uploaded none.
+    screenshots_path: File.expand_path("screenshots/appletv", __dir__),
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",
     skip_binary_upload: true,
-    overwrite_screenshots: true,
+    sync_screenshots: true,
     submit_for_review: false,
     automatic_release: false,
     force: true,                          # skip the HTML preview confirmation
@@ -208,13 +333,21 @@ desc "macOS: push store listing (text + Mac screenshots) as a DRAFT — no binar
 lane :metadata_mac do |options|
   # Same shared metadata text as iOS/tvOS, uploaded to the macOS platform record
   # with the Mac screenshots (2560x1600). No binary, no review.
+  # sync_screenshots (checksum diff) instead of overwrite_screenshots — see the
+  # note in the `metadata` lane. Without it deliver's upload→verify→retry races on
+  # App Store Connect eventual-consistency and DUPLICATES every set (Mac showed 4
+  # uploaded per 2-image set). Requires the beta feature flag set below.
+  ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
   upload_to_app_store(
     platform: "osx",
-    screenshots_path: "screenshots/mac",
+    # ABSOLUTE — see the note in the `metadata` lane. A relative path resolves
+    # against CWD=Darwin/, i.e. the empty Darwin/screenshots/mac, so deliver
+    # loaded 0 Mac screenshots and silently uploaded none.
+    screenshots_path: File.expand_path("screenshots/mac", __dir__),
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",
     skip_binary_upload: true,
-    overwrite_screenshots: true,
+    sync_screenshots: true,
     submit_for_review: false,
     automatic_release: false,
     force: true,                          # skip the HTML preview confirmation
@@ -226,3 +359,4 @@ end
 # Like tvOS, `assemble` builds sdk: iphoneos only. For a Mac binary, parametrize
 # assemble with an sdk: "macosx" build (the "Maxi80 App" target already supports
 # macosx) and add a release_mac lane. Listing+screenshots work via metadata_mac.
+

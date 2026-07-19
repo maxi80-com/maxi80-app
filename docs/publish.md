@@ -117,11 +117,40 @@ make promote-android     # promote the Play internal build to production (100%)
 - **One app per store, not per platform.** Play: phone + Android TV ship from the
   same package/AAB (manifest declares TV). App Store: one record with iOS/tvOS/macOS
   tabs; `deliver` uploads one platform per run (handled by the per-platform lanes).
-- **macOS binary is DEFERRED** — ships metadata only. Needs a Mac Installer
-  certificate + the App Sandbox entitlement (`com.apple.security.app-sandbox`) +
-  testing. `package-macos` / `publish-macos` exist but are intentionally excluded
-  from `release` / `publish-all`.
+- **macOS is UNSUPPORTED by Skip** (Skip targets iOS + Android only). The Mac App
+  Store build is hand-rolled and may break on Skip upgrades. What makes it work:
+  - **App Sandbox** entitlement (`Entitlements-macOS.plist`) + a **"3rd Party Mac
+    Developer Installer"** cert in the Keychain (create via Xcode → Settings →
+    Accounts → Manage Certificates → +) — both one-time, already done.
+  - `package-macos` archives, then re-signs the app **inside-out** because gym's
+    export signs the nested frameworks (SkipFuse, SwiftJNI, SkipAndroidBridge, …)
+    with an *Apple Development* cert (→ App Store errors 90284/91130). It re-signs
+    every `*.framework` and Skip SPM `*.bundle` with the **Distribution** cert
+    (clean, no entitlements), seals the main app with sandbox entitlements, and
+    `productbuild`s the `.pkg`. Result: **`altool --validate-app` passes with 0
+    errors.**
+  - **No macOS TestFlight — caused by a legacy App-ID prefix, NOT by Skip.**
+    TestFlight needs an embedded provisioning profile. macOS App Store validation
+    hard-requires the signature's `application-identifier` to (a) match the
+    profile's and (b) start with the **Team ID** (`56U756R2L2`) — error **90286**
+    says so verbatim. But this app's App ID `com.stormacq.sebastien.iphone.maxi80`
+    (Apple ID 335551519, registered ~2009) has an immutable legacy **seed prefix
+    `JPLCX562X7`** (≠ Team ID; confirmed via the App Store Connect API). Every
+    profile Apple issues for this bundle ID therefore carries `JPLCX562X7.…`, so:
+    embed it and seal with `JPLCX562X7.…` → 90286 + a cascade of **91130** across
+    every nested component (including the SkipFuse/SwiftJNI frameworks that *have*
+    executables — which is why the old "executableless bundles" explanation was
+    wrong); seal with `56U756R2L2.…` instead → **90288** (signature ≠ profile).
+    iOS/tvOS accept the legacy prefix, which is why iOS TestFlight works. The seed
+    prefix on an existing App ID cannot be changed — only an Apple Developer
+    Support migration, or a new Team-ID-prefixed bundle ID (= new app record),
+    would unblock macOS TestFlight; neither is worth it just for beta. Shipping
+    *without* the profile validates cleanly for the App Store; the only cost is the
+    non-blocking `90889` "missing provisioning profile" warning (the ITMS-90889
+    email Apple sends). `publish-macos` therefore uploads the pkg straight to
+    **App Store Connect**; review it in the Console (or via `make promote-ios`).
+    There is no `publish-macos-open`.
 - **Secrets** (`secrets/`, `*/apikey.json`, `*.p8`, `keystore.properties`,
-  `*.mobileprovision`) are git-ignored — never commit them.
+  `*.mobileprovision`, `*.provisionprofile`) are git-ignored — never commit them.
 - Build-number scheme `yyyyMMddNN`: must exceed the last published Play
   versionCode `2021122500` and stay under Android's ceiling 2,100,000,000.

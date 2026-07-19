@@ -2,5 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Mac App Store REQUIRES the App Sandbox. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Outgoing connections only: audio stream (audio1.maxi80.com) + station/artwork API. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 </dict>
 </plist>

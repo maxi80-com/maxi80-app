@@ -57,3 +57,5 @@ worktrees
 # fastlane sigh-downloaded provisioning profiles
 *.mobileprovision
 **/*.mobileprovision
+*.provisionprofile
+**/*.provisionprofile

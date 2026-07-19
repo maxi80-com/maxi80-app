@@ -2,8 +2,9 @@
 #
 # Goal: catch build/test/transpile errors BEFORE the manual release process
 # (see the Makefile `release`/`publish-*` targets, which are NOT run here).
-# This workflow deliberately contains NO release, fastlane, signing, upload, or
-# emulator steps — it only compiles and tests the app.
+# This workflow deliberately contains NO fastlane, signing, upload, or emulator
+# steps — it only compiles and tests the app. It DOES build the minified
+# `release` variant (to exercise R8), but signs nothing and uploads nothing.
 #
 # Everything runs on macOS runners, where the full toolchain (Xcode, the Swift
 # toolchain, and `xcrun` used by Skip's gradle prebuild) is native:
@@ -11,6 +12,7 @@
 #   - xcodebuild build (unsigned)  — the Apple app compiles.
 #   - swift test                   — the native Swift test suite passes.
 #   - skip android build + gradle  — the Android transpile + Kotlin build works.
+#   - gradle assembleRelease (R8)  — minification keeps the JNI-bridged classes.
 name: CI
 
 on:
@@ -117,3 +119,32 @@ jobs:
       # so CI matches the local dev flow exactly.
       - name: Build Android (transpile + gradle)
         run: make build-android
+
+      # The DEBUG build above does NOT run R8, so it can't catch minification
+      # bugs. This step builds the minified `release` variant (isMinifyEnabled +
+      # isShrinkResources) to run R8, then asserts the JNI-bridged classes
+      # survived it. Those classes are reached only via `Class.forName` from the
+      # native Swift bridge, a reference R8 can't see — so without a keep rule it
+      # strips/renames them and the app dies on launch with ClassNotFoundException
+      # (a `try!` in the bridge traps -> SIGABRT). This ONLY reproduces in a
+      # minified build; debug builds hid the bug until it shipped to Play beta.
+      # No keystore in CI -> release falls back to the debug signing key, which is
+      # fine here (we never upload). Assertion reads R8's own mapping.txt, so it
+      # needs no extra tooling and is deterministic (no emulator).
+      - name: Build Android release (R8) + verify bridged classes survive
+        run: |
+          cd Android && gradle --warning-mode none -x lint assembleRelease
+          cd ..
+          MAPPING=.build/Android/app/outputs/mapping/release/mapping.txt
+          if [ ! -f "$MAPPING" ]; then
+            echo "::error::R8 mapping not found at $MAPPING — did assembleRelease run with minification?"
+            exit 1
+          fi
+          # A kept class maps to ITSELF ("orig -> orig:"). If R8 renamed or removed
+          # it, the arrow points at an obfuscated name (or the entry is absent).
+          if ! grep -qE '^maxi80\.services\.PlatformEnvironment -> maxi80\.services\.PlatformEnvironment:' "$MAPPING"; then
+            echo "::error::maxi80.services.PlatformEnvironment was stripped/renamed by R8 — add a keep rule to Android/app/proguard-rules.pro"
+            grep -E '^maxi80\.services\.' "$MAPPING" || echo "(no maxi80.services.* classes in mapping)"
+            exit 1
+          fi
+          echo "OK: maxi80.services.PlatformEnvironment survived R8 unrenamed."
