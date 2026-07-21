@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.MaterialTheme
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 internal val logger: SkipLogger = SkipLogger(subsystem = "maxi80.module", category = "Maxi80")
 
@@ -70,16 +71,21 @@ open class MainActivity: AppCompatActivity {
 
         AppDelegate.shared.onLaunch()
 
-        // Example of requesting permissions on startup.
-        // These must match the permissions in the AndroidManifest.xml file.
-        //let permissions = listOf(
-        //    Manifest.permission.ACCESS_COARSE_LOCATION,
-        //    Manifest.permission.ACCESS_FINE_LOCATION
-        //    Manifest.permission.CAMERA,
-        //    Manifest.permission.WRITE_EXTERNAL_STORAGE,
-        //)
-        //let requestTag = 1
-        //ActivityCompat.requestPermissions(self, permissions.toTypedArray(), requestTag)
+        // Request POST_NOTIFICATIONS permission on Android 13+ (API 33) so the media
+        // notification appears in the notification drawer and on the lock screen. Only prompt
+        // when it isn't already granted, so re-created activities don't re-trigger the flow.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                // Fully-qualified: `import skip.lib.*` shadows the bare `arrayOf` with
+                // `skip.lib.arrayOf`, which yields a `skip.lib.Array`; requestPermissions needs a
+                // `kotlin.Array<String>`.
+                kotlin.arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                1
+            )
+        }
     }
 
     override fun onStart() {

@@ -12,6 +12,10 @@
     <!-- permissions needed for foreground media playback service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Required on Android 13+ (API 33) for the media notification to appear in the
+         notification drawer and lock screen. Without this, the foreground service still runs
+         but the notification is suppressed from user-visible surfaces. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- TV support: leanback UI available but not required; no touchscreen required, so the one
          app installs on both phones and TVs. -->
