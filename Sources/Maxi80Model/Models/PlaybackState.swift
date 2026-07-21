@@ -1,6 +1,6 @@
 import Foundation
 
-public enum PlaybackState: Sendable {
+public enum PlaybackState: Sendable, Equatable {
   case idle
   case loading
   case playing
