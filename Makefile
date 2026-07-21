@@ -72,6 +72,16 @@ help: ## Show this help (default target)
 	@echo ""
 	@echo "Usage: make <target>"
 	@echo ""
+	@echo "  Common scenarios"
+	@echo "    New test build (no listing change):"
+	@echo "      make clean && make release && make publish-all"
+	@echo "    Listing text/screenshots changed too:"
+	@echo "      make clean && make release && make publish-all && make publish-metadata-all"
+	@echo "    Ship a tested build to production:"
+	@echo "      make promote-all      # after verifying on TestFlight / Play internal"
+	@echo "    Just check state / environment:"
+	@echo "      make version   |   make doctor"
+	@echo ""
 	@echo "  Info"
 	@echo "    help              Show this help (default)"
 	@echo "    version           Print marketing version + current build number"
@@ -102,19 +112,20 @@ help: ## Show this help (default target)
 	@echo "    publish-ios / publish-tvos   TestFlight internal"
 	@echo "    publish-macos                App Store Connect (pkg)"
 	@echo "    publish-android              Play internal (draft)"
-	@echo "    publish-all                  metadata + all internal binaries"
+	@echo "    publish-all                  all internal binaries (NO metadata)"
 	@echo ""
 	@echo "  Publish binaries — OPEN (public, store review)"
 	@echo "    publish-ios-open / publish-tvos-open   TestFlight 'Public Beta'"
 	@echo "    publish-android-open                   Play open (beta) track"
-	@echo "    publish-all-open                       metadata + open binaries (macOS→App Store)"
+	@echo "    publish-all-open                       all open binaries (NO metadata; macOS→App Store)"
 	@echo ""
 	@echo "  Promote to production (opt-in, AFTER testing the staged build)"
 	@echo "    promote-ios      Submit iOS build for App Store review (needs GM Xcode)"
 	@echo "    promote-android  Promote Play internal build to production"
 	@echo "    promote-all      Both"
 	@echo ""
-	@echo "  Typical:  make release && make publish-all   (test, then make promote-all)"
+	@echo "  Typical:  make clean && make release && make publish-all   (then make promote-all)"
+	@echo "            add 'make publish-metadata-all' only when the store listing changed"
 	@echo ""
 	@echo "  Misc"
 	@echo "    screenshots       Helper wrapping fastlane/capture_screenshots.sh"
@@ -340,13 +351,18 @@ bump: ## Rewrite CURRENT_PROJECT_VERSION in Skip.env to a fresh build number
 #                  or test failure aborts with a clean git tree (fix and rerun).
 #
 #   make publish-android | publish-ios | publish-all
-#                  Upload the ALREADY-BUILT signed binary from `make release` to its
+#                  Upload the ALREADY-BUILT signed BINARY from `make release` to its
 #                  TEST track (Play internal draft / TestFlight). No bump, no build,
-#                  no tag. Uploading is NOT a production release — you promote to
-#                  production manually in each Console.
+#                  no tag, and NO store-listing metadata. Uploading is NOT a production
+#                  release — you promote to production manually in each Console.
 #
-#   Typical flow:  make release   &&   make publish-all
+#   make publish-metadata-all
+#                  Separate, opt-in: push the store LISTING (text + screenshots) as a
+#                  draft. Run only when the listing changed — it's independent of the build.
+#
+#   Typical flow:  make clean  &&  make release  &&  make publish-all
 #                  (then test on device, then promote to prod in the Consoles)
+#                  add `make publish-metadata-all` when the listing changed.
 
 release: ## Prepare a signed, versioned release of ALL platforms (no upload)
 	# One codebase -> one build number -> one commit+tag -> all binaries.
@@ -369,7 +385,7 @@ release: ## Prepare a signed, versioned release of ALL platforms (no upload)
 	git commit -m "chore(release): $(MARKETING_VERSION) build $$BUILD"; \
 	git tag -a "$$TAG" -m "Maxi 80 $(MARKETING_VERSION) (build $$BUILD)"; \
 	echo "==> Release $$TAG prepared (iOS+tvOS IPAs, Android AAB), committed + tagged (not pushed)."; \
-	echo "    Next: make publish-all    (metadata + binaries to all test tracks)"; \
+	echo "    Next: make publish-all    (binaries to all test tracks; add publish-metadata-all if the listing changed)"; \
 	echo "    Then: git push && git push origin $$TAG"
 
 # --- Metadata uploads (listing text + screenshots as draft; no binary, no review) ---
@@ -422,11 +438,16 @@ publish-android-open: ## Android → Play OPEN (beta) track (public, Play review
 	@test -f "$(AAB_PATH)" || { echo "no AAB at $(AAB_PATH) — run 'make package-android' (or release) first"; exit 1; }
 	cd Android && fastlane upload track:beta release_status:completed
 
-# Metadata (all Apple listings) + every binary to the test tracks.
-publish-all: publish-metadata-all publish-ios publish-tvos publish-macos publish-android ## Metadata + binaries → private test tracks
+# BINARIES ONLY — publish-all uploads just the built binaries to the private test
+# tracks; it deliberately does NOT push store-listing metadata. Metadata is a
+# separate, opt-in step (`make publish-metadata-all`) since it changes far less
+# often than the build. The common flow is: make clean && make release && make publish-all.
+# When the listing text/screenshots DID change, run `make publish-metadata-all` too.
+publish-all: publish-ios publish-tvos publish-macos publish-android ## Binaries → private test tracks (no metadata)
 # publish-all-open: OPEN tiers where they exist (iOS/tvOS TestFlight external,
 # Play beta). macOS has no TestFlight tier — it uploads to App Store via publish-macos.
-publish-all-open: publish-metadata-all publish-ios-open publish-tvos-open publish-macos publish-android-open ## Metadata + binaries → OPEN/public test tracks (+ macOS→App Store)
+# Binaries only, same as publish-all — pair with publish-metadata-all if the listing changed.
+publish-all-open: publish-ios-open publish-tvos-open publish-macos publish-android-open ## Binaries → OPEN/public test tracks (no metadata; +macOS→App Store)
 
 # --- PROMOTE TO PRODUCTION (opt-in, after you've tested the staged build) ------
 # Run these only after verifying the build on TestFlight / Play internal.

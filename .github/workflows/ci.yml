@@ -36,9 +36,10 @@ on:
       - "**/*.md"
   workflow_dispatch:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+# No `concurrency` group: every push/PR run proceeds independently and in parallel.
+# Previously `cancel-in-progress: true` cancelled the prior run on the same ref on a
+# new push — convenient for saving minutes, but it meant a quick follow-up push killed
+# the in-flight run you were waiting on. We'd rather let all runs finish.
 
 jobs:
   # ---------------------------------------------------------------------------
