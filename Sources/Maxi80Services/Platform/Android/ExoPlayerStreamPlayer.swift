@@ -98,25 +98,25 @@ import Foundation
         let exoPlayer = SharedAudioPlayer.shared(context: ctx)
         self._exoPlayer = exoPlayer
 
-        // Configure ExoPlayer to manage audio focus internally. This is idempotent — calling it
-        // again on the same player instance with the same attributes is a no-op. ExoPlayer will
-        // request focus on play(), duck/pause on transient loss, and resume on regain. This
-        // replaces the previous manual AudioFocusRequest management which could leave orphaned
-        // focus requests that cause the system to immediately fire AUDIOFOCUS_LOSS back, wedging
-        // the player permanently.
-        if !_audioAttributesConfigured {
-          let audioAttributes = AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-            .build()
-          exoPlayer.setAudioAttributes(audioAttributes, /* handleAudioFocusInternally: */ true)
-          _audioAttributesConfigured = true
-        }
+        // Configure ExoPlayer to manage audio focus internally. Called unconditionally on every
+        // play: setAudioAttributes with unchanged attributes is idempotent, and doing it here
+        // guarantees focus handling is (re)wired against whatever ExoPlayer instance is current —
+        // even one rebuilt after SharedAudioPlayer.releaseShared(). A per-AudioStreamPlayer
+        // "already configured" flag could go stale against a fresh player and silently skip this,
+        // bringing back the permanent-wedge bug. ExoPlayer then requests focus on play(), ducks/
+        // pauses on transient loss, and resumes on regain — replacing the manual AudioFocusRequest
+        // management that could leave orphaned requests, making the system immediately fire
+        // AUDIOFOCUS_LOSS back and wedge the player permanently.
+        let audioAttributes = AudioAttributes.Builder()
+          .setUsage(C.USAGE_MEDIA)
+          .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+          .build()
+        exoPlayer.setAudioAttributes(audioAttributes, /* handleAudioFocusInternally: */ true)
 
-        // Re-attach the metadata listener if it isn't currently on this player instance. The
-        // listener reference is cleared on stop, and the shared player can be rebuilt after a full
-        // teardown, so guarding on nil alone would leave a rebuilt player with no listener — which
-        // stalls the coordinator in `.loading` (spinner never clears because no metadata arrives).
+        // Attach the metadata listener once. The shared player can be rebuilt after a full teardown
+        // (SharedAudioPlayer.releaseShared()), so we guard on nil rather than assuming it's always
+        // present: a rebuilt player with no listener would stall the coordinator in `.loading` (the
+        // spinner never clears because no ICY metadata arrives).
         if _metadataListener == nil {
           let listener = MetadataPlayerListener(player: self)
           self._metadataListener = listener
@@ -177,7 +177,6 @@ import Foundation
 
       var _exoPlayer: ExoPlayer? = nil
       var _metadataListener: MetadataPlayerListener? = nil
-      var _audioAttributesConfigured: Bool = false
     }
 
   #else
