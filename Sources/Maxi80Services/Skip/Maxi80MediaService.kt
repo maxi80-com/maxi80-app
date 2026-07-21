@@ -2,7 +2,9 @@ package maxi80.services
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.os.Build
+import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -30,7 +32,13 @@ class Maxi80MediaService : MediaLibraryService() {
     private var session: MediaLibrarySession? = null
 
     companion object {
-        private const val CHANNEL_ID = "maxi80_media_playback"
+        // Versioned channel ID. Android freezes a channel's importance at creation time: once a
+        // channel exists, later createNotificationChannel() calls with a lower/higher importance are
+        // ignored. The v1 channel shipped at IMPORTANCE_LOW (beta 5.0.0.2026071902), which suppresses
+        // lock-screen visibility on many OEMs. Bumping the suffix creates a fresh channel at the new
+        // IMPORTANCE_DEFAULT for upgraders; the stale v1 channel is deleted in onCreate().
+        private const val CHANNEL_ID = "maxi80_media_playback_v2"
+        private const val LEGACY_CHANNEL_ID = "maxi80_media_playback"
         private const val NOTIFICATION_ID = 1001
 
         // Stream URL for the Maxi 80 live audio feed.
@@ -158,7 +166,7 @@ class Maxi80MediaService : MediaLibraryService() {
     // Service lifecycle
     // ---------------------------------------------------------------------------
 
-    @UnstableApi
+    @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
 
@@ -167,6 +175,10 @@ class Maxi80MediaService : MediaLibraryService() {
         // was previously used but suppresses lock-screen visibility on many OEMs.
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Drop the stale IMPORTANCE_LOW v1 channel from beta installs. Its importance is frozen
+            // and cannot be raised in place, so we migrate to a fresh CHANNEL_ID (see companion).
+            manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Maxi 80 Playback",
@@ -182,7 +194,20 @@ class Maxi80MediaService : MediaLibraryService() {
         }
 
         val player = SharedAudioPlayer.shared(applicationContext)
-        session = MediaLibrarySession.Builder(this, player, libraryCallback).build()
+        session = MediaLibrarySession.Builder(this, player, libraryCallback)
+            .apply {
+                // Tapping the notification / lock-screen card returns the user to the app — this was
+                // the core usability complaint (issue #3). Resolve the launcher activity for our own
+                // package so the intent survives the transpiled/native split without a hardcoded class.
+                packageManager.getLaunchIntentForPackage(packageName)?.let { launchIntent ->
+                    val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                        (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+                    setSessionActivity(
+                        PendingIntent.getActivity(this@Maxi80MediaService, 0, launchIntent, flags)
+                    )
+                }
+            }
+            .build()
 
         // Point Media3's automatic notification provider at OUR channel (IMPORTANCE_DEFAULT,
         // created above) instead of its own default channel, which it creates at IMPORTANCE_LOW.

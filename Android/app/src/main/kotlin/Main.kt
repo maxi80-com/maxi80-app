@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.MaterialTheme
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 internal val logger: SkipLogger = SkipLogger(subsystem = "maxi80.module", category = "Maxi80")
 
@@ -71,8 +72,11 @@ open class MainActivity: AppCompatActivity {
         AppDelegate.shared.onLaunch()
 
         // Request POST_NOTIFICATIONS permission on Android 13+ (API 33) so the media
-        // notification appears in the notification drawer and on the lock screen.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        // notification appears in the notification drawer and on the lock screen. Only prompt
+        // when it isn't already granted, so re-created activities don't re-trigger the flow.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(
                 this,
                 arrayOf(Manifest.permission.POST_NOTIFICATIONS),
