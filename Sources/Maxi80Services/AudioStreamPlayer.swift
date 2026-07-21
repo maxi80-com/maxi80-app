@@ -77,8 +77,9 @@ import Foundation
     }
 
     /// The current output volume as the system reports it (0.0 to 1.0). On Android this reads the
-    /// `STREAM_MUSIC` level; on Apple platforms the slider is driven by `MPVolumeView`, so this
-    /// simply returns the last-set app value. Used to seed the UI on launch.
+    /// `STREAM_MUSIC` level. On iOS/tvOS the slider is driven by `MPVolumeView` and macOS uses an
+    /// in-app `Slider` bound to the app-relative volume, so on Apple platforms this simply returns
+    /// the last-set app value. Used to seed the UI on launch.
     public func currentVolume() -> Double {
       #if SKIP
         return androidCurrentVolume()

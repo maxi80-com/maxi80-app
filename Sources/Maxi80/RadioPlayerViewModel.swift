@@ -27,8 +27,9 @@ public final class RadioPlayerViewModel {
   // passthrough to the coordinator so Observation re-renders the view when coordinator state changes.
 
   /// Output volume (0.0–1.0). Reads through to the coordinator so the slider tracks system-volume
-  /// changes from the hardware buttons (Android); writing drives `setVolume`. On Apple platforms
-  /// the volume UI is MPVolumeView and this passthrough is unused.
+  /// changes from the hardware buttons (Android); writing drives `setVolume`. On iOS/tvOS the volume
+  /// UI is `MPVolumeView`, so this passthrough is unused there; macOS binds its in-app `Slider` to
+  /// this property (see `VolumeSliderView`).
   public var volume: Double {
     get { coordinator.volume }
     set { setVolume(newValue) }

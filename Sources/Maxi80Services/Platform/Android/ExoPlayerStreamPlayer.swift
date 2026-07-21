@@ -195,10 +195,14 @@ import Foundation
       // always agree. ExoPlayer's own `volume` stays at 1.0 and is used only for transient ducking.
 
       func androidSetVolume(_ newVolume: Double) {
-        volume = newVolume
+        // Clamp to the valid 0.0–1.0 range (and treat NaN as 0) so the stream-step conversion below
+        // can never produce a negative, out-of-range, or NaN index — Int(NaN) traps, and an
+        // out-of-range step makes setStreamVolume clamp unpredictably.
+        let clamped = newVolume.isNaN ? 0.0 : min(max(newVolume, 0.0), 1.0)
+        volume = clamped
         let am = audioManager
         let maxVolume = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        let target = Int((newVolume * Double(maxVolume)).rounded())
+        let target = Int((clamped * Double(maxVolume)).rounded())
         // No FLAG_SHOW_UI: the app has its own on-screen bar, so suppress the system volume panel
         // to avoid showing two indicators at once when the user drags the in-app slider.
         am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
@@ -216,6 +220,10 @@ import Foundation
       /// system panel, etc.). Reads the fresh level and forwards it to the UI via onVolumeChanged.
       func handleSystemVolumeChanged() {
         let newVolume = androidCurrentVolume()
+        // The observer is registered on Settings.System.CONTENT_URI, which fires for ANY system
+        // setting (brightness, rotation, …), not just STREAM_MUSIC. Skip the callback when the media
+        // volume hasn't actually moved to avoid needless Observation invalidations and UI re-renders.
+        guard newVolume != volume else { return }
         volume = newVolume
         onVolumeChanged?(newVolume)
       }

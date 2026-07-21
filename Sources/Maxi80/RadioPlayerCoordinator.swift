@@ -40,8 +40,9 @@ public final class RadioPlayerCoordinator {
   public var errorMessage: String?
 
   /// The current output volume (0.0–1.0). On Android this tracks the system STREAM_MUSIC level and
-  /// updates live when the hardware volume buttons are pressed; on Apple platforms the volume UI is
-  /// driven by MPVolumeView, so this stays at its default and is unused by the view.
+  /// updates live when the hardware volume buttons are pressed. On iOS/tvOS the volume UI is driven
+  /// by MPVolumeView, so this stays at its default and is unused by the view; macOS binds its in-app
+  /// `Slider` to this value (through `viewModel.volume`).
   public var volume: Double = 1.0
 
   /// The generic cover shown before any song has played. Chosen once per launch.
@@ -109,9 +110,10 @@ public final class RadioPlayerCoordinator {
     #endif
 
     // Seed the volume from the system's current level and start tracking hardware-button changes.
-    // No-op on Apple platforms (the volume UI there is driven by MPVolumeView). The observer lives
-    // for the coordinator's lifetime, which is the app process lifetime (it's the composition root),
-    // so there is no teardown path — the OS reclaims it on process death.
+    // `startObservingVolume()` is a no-op on Apple platforms (iOS/tvOS track hardware volume through
+    // MPVolumeView; macOS uses an in-app Slider). The observer lives for the coordinator's lifetime,
+    // which is the app process lifetime (it's the composition root), so there is no teardown path —
+    // the OS reclaims it on process death.
     volume = player.currentVolume()
     player.startObservingVolume()
   }
