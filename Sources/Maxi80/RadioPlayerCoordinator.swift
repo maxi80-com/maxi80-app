@@ -170,6 +170,26 @@ public final class RadioPlayerCoordinator {
     publishPlaybackState(isPlaying: false)
   }
 
+  /// Reconcile the observable `playbackState` with the player's real state.
+  ///
+  /// Called on foreground (background→foreground resume recreates the Android activity but the
+  /// coordinator is a process-wide singleton). The foreground-service stream keeps playing across
+  /// the transition, so no fresh ICY metadata arrives to promote a stale `.loading` — this reads
+  /// the player's ground truth instead. Conservative by design: it only *promotes* a
+  /// `.loading`/`.reconnecting` state to `.playing` when the player is really playing, and never
+  /// overrides a user-driven `.paused` or an in-flight reconnection/error cycle.
+  public func reconcileWithPlayer() {
+    guard player.isPlaying else { return }
+    switch playbackState {
+    case .loading, .reconnecting:
+      playbackState = .playing
+      publishPlaybackState(isPlaying: true)
+    default:
+      break
+    }
+    republishNowPlaying()
+  }
+
   /// Set the audio output volume (0.0 to 1.0).
   public func setVolume(_ volume: Double) {
     // Optimistically reflect the new level so the slider tracks the drag instantly; the system
@@ -264,6 +284,16 @@ public final class RadioPlayerCoordinator {
     player.onInterruption = { [weak self] began in
       Task { @MainActor [weak self] in
         self?.handleInterruption(began: began)
+      }
+    }
+
+    // The platform players report their real playing state (ExoPlayer STATE_READY / isPlaying,
+    // AVPlayer rate). Previously this signal was never wired, so the only path out of `.loading`
+    // was an ICY metadata event — which does not re-arrive on a background→foreground resume
+    // (the foreground-service stream is already playing), leaving the UI stuck on the spinner.
+    player.onPlaybackStateChanged = { [weak self] isPlaying in
+      Task { @MainActor [weak self] in
+        self?.handlePlaybackStateChanged(isPlaying: isPlaying)
       }
     }
 
@@ -550,6 +580,23 @@ public final class RadioPlayerCoordinator {
     } else {
       // Interruption ended with resume option — resume playback
       play()
+    }
+  }
+
+  // MARK: - Playback State Handling
+
+  /// React to the player reporting its real playing state. Mirrors `reconcileWithPlayer`'s
+  /// conservative policy: only promote a pending `.loading`/`.reconnecting` to `.playing` when the
+  /// player starts playing. A `false` report is left to the interruption/reconnection paths, which
+  /// own the stop/pause semantics — treating every `false` as `.paused` here would regress those.
+  private func handlePlaybackStateChanged(isPlaying: Bool) {
+    guard isPlaying else { return }
+    switch playbackState {
+    case .loading, .reconnecting:
+      playbackState = .playing
+      publishPlaybackState(isPlaying: true)
+    default:
+      break
     }
   }
 

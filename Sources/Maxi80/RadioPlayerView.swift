@@ -14,6 +14,7 @@ public struct RadioPlayerView: View {
   @Environment(\.horizontalSizeClass) var horizontalSizeClass
   @Environment(\.verticalSizeClass) var verticalSizeClass
   @Environment(\.colorScheme) var colorScheme
+  @Environment(\.scenePhase) var scenePhase
 
   public init(viewModel: RadioPlayerViewModel) {
     self.viewModel = viewModel
@@ -35,6 +36,12 @@ public struct RadioPlayerView: View {
       // A rotation recreates the CoverFlowView; open a short window where its selection write-back
       // is dropped so the browsed cover survives the recreation.
       .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
+      // Returning to the foreground recreates the view tree (esp. the Android activity) the same
+      // way; reconcile playback + guard the carousel. The Android activity's onResume also drives
+      // this via the app delegate, so both entry paths (icon and notification) are covered. #9
+      .onChange(of: scenePhase) { _, newPhase in
+        if newPhase == .active { SharedPlayer.handleForeground() }
+      }
     }
     .overlay(alignment: .top) {
       if let errorMessage = viewModel.errorMessage {

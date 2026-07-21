@@ -65,7 +65,17 @@ import SwiftUI
 
   /* SKIP @bridge */public func onInit() {}
   /* SKIP @bridge */public func onLaunch() {}
-  /* SKIP @bridge */public func onResume() {}
+
+  /// Called from `MainActivity.onResume` (Android). A background→foreground resume destroys and
+  /// recreates the activity while the coordinator/view-model singletons survive with stale state,
+  /// so reconcile playback with the real player and open the carousel-recreation guard window to
+  /// keep the freshly-laid-out carousel from clobbering the browsed/live cover. See issue #9.
+  /* SKIP @bridge */public func onResume() {
+    Task { @MainActor in
+      SharedPlayer.handleForeground()
+    }
+  }
+
   /* SKIP @bridge */public func onPause() {}
   /* SKIP @bridge */public func onStop() {}
   /* SKIP @bridge */public func onDestroy() {}
