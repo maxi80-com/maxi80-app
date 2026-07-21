@@ -1,15 +1,17 @@
 package maxi80.services
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.pm.ServiceInfo
 import android.os.Build
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaStyleNotificationHelper
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -156,51 +158,65 @@ class Maxi80MediaService : MediaLibraryService() {
     // Service lifecycle
     // ---------------------------------------------------------------------------
 
+    @UnstableApi
     override fun onCreate() {
         super.onCreate()
 
-        // Create notification channel (required API 26+).
+        // Create notification channel (required API 26+). Use IMPORTANCE_DEFAULT so the
+        // notification appears on the lock screen and in the notification drawer. IMPORTANCE_LOW
+        // was previously used but suppresses lock-screen visibility on many OEMs.
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Maxi 80 Playback",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Media playback controls"
                 setShowBadge(false)
+                // Suppress sound/vibration — this is a media channel, not an alert.
+                setSound(null, null)
+                enableVibration(false)
             }
             manager.createNotificationChannel(channel)
         }
 
-        // Post an initial foreground notification immediately (within the 5-second ANR window).
-        // Media3 DefaultMediaNotificationProvider replaces this with the rich media card once
-        // the session is active and playing.
-        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("Maxi 80")
-                .setContentText("Starting playback…")
-                .setSmallIcon(android.R.drawable.ic_media_play)
-                .setOngoing(true)
+        val player = SharedAudioPlayer.shared(applicationContext)
+        session = MediaLibrarySession.Builder(this, player, libraryCallback).build()
+
+        // Point Media3's automatic notification provider at OUR channel (IMPORTANCE_DEFAULT,
+        // created above) instead of its own default channel, which it creates at IMPORTANCE_LOW.
+        // This provider is what actually renders the rich lock-screen card — artwork, title/artist,
+        // and the play/pause control — populated live from the MediaSession's current MediaItem
+        // metadata (set via NowPlayingController.platformUpdateNowPlaying) and player commands.
+        // Without pinning the channel, the visible media notification would inherit LOW importance
+        // and be suppressed from the lock screen on many OEMs.
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this)
+                .setNotificationId(NOTIFICATION_ID)
+                .setChannelId(CHANNEL_ID)
                 .build()
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-                .setContentTitle("Maxi 80")
-                .setContentText("Starting playback…")
-                .setSmallIcon(android.R.drawable.ic_media_play)
-                .setOngoing(true)
-                .build()
-        }
+        )
+
+        // Post a MediaStyle foreground notification immediately (within the 5-second ANR window).
+        // Attaching the session token marks this as a media notification, which the system shows
+        // on the lock screen with playback controls. Media3's DefaultMediaNotificationProvider
+        // replaces this with the full rich card once playback metadata arrives.
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Maxi 80")
+            .setContentText("Starting playback…")
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setOngoing(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setStyle(MediaStyleNotificationHelper.MediaStyle(session!!))
+            .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            startForeground(NOTIFICATION_ID, notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-
-        val player = SharedAudioPlayer.shared(applicationContext)
-        session = MediaLibrarySession.Builder(this, player, libraryCallback).build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {

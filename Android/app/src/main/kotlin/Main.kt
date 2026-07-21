@@ -70,16 +70,15 @@ open class MainActivity: AppCompatActivity {
 
         AppDelegate.shared.onLaunch()
 
-        // Example of requesting permissions on startup.
-        // These must match the permissions in the AndroidManifest.xml file.
-        //let permissions = listOf(
-        //    Manifest.permission.ACCESS_COARSE_LOCATION,
-        //    Manifest.permission.ACCESS_FINE_LOCATION
-        //    Manifest.permission.CAMERA,
-        //    Manifest.permission.WRITE_EXTERNAL_STORAGE,
-        //)
-        //let requestTag = 1
-        //ActivityCompat.requestPermissions(self, permissions.toTypedArray(), requestTag)
+        // Request POST_NOTIFICATIONS permission on Android 13+ (API 33) so the media
+        // notification appears in the notification drawer and on the lock screen.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                1
+            )
+        }
     }
 
     override fun onStart() {
