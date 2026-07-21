@@ -6,13 +6,20 @@
 # steps — it only compiles and tests the app. It DOES build the minified
 # `release` variant (to exercise R8), but signs nothing and uploads nothing.
 #
-# Everything runs on macOS runners, where the full toolchain (Xcode, the Swift
-# toolchain, and `xcrun` used by Skip's gradle prebuild) is native:
+# The work is split into THREE jobs that run IN PARALLEL (they share no state),
+# so the wall-clock time is the slowest single job rather than the sum:
 #
-#   - xcodebuild build (unsigned)  — the Apple app compiles.
-#   - swift test                   — the native Swift test suite passes.
-#   - skip android build + gradle  — the Android transpile + Kotlin build works.
-#   - gradle assembleRelease (R8)  — minification keeps the JNI-bridged classes.
+#   - apple           — xcodebuild (unsigned) + `swift test` (native macOS).
+#   - android-debug   — skip transpile + gradle assembleDebug.
+#   - android-release — skip transpile + gradle assembleRelease (R8), then
+#                       asserts the JNI-bridged classes survived minification.
+#
+# Everything runs on macOS runners, where the full toolchain (Xcode, the Swift
+# toolchain, and `xcrun` used by Skip's gradle prebuild) is native. The two
+# Android jobs each run `skip android build` themselves: assembleRelease needs
+# the transpiled Kotlin AND the cross-compiled JNI `.so` libs present, so the
+# release job cannot rely on the debug job (they run concurrently, not in
+# sequence). The duplicated transpile is the cost of the parallelism.
 name: CI
 
 on:
@@ -34,30 +41,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: macOS build + test (unsigned)
+  # ---------------------------------------------------------------------------
+  # Apple: compile the Apple app (unsigned) and run the native Swift test suite.
+  # Needs Xcode + the Swift toolchain, but NOT the Swift-for-Android SDK, so it
+  # skips that (large) download entirely.
+  # ---------------------------------------------------------------------------
+  apple:
+    name: Apple build + test (unsigned)
     # macos-26 ships Xcode 26, which this project assumes (Xcode 26+).
     runs-on: macos-26
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      # --- Caches -------------------------------------------------------------
-      # The first Android build downloads ~1GB of Gradle + Compose/media3/AGP
-      # artifacts; SwiftPM resolves and caches the Skip package graph. Caching
-      # both cuts several minutes off subsequent runs. Keys hash the files that
-      # determine each cache's contents, with a looser restore-key fallback so a
-      # near-miss still seeds from the newest prior cache.
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('Android/gradle/wrapper/gradle-wrapper.properties', 'Android/**/*.gradle.kts', 'Android/**/*.toml', 'Skip.env') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
-
+      # SwiftPM resolves and caches the Skip package graph. Key hashes the files
+      # that determine the cache's contents, with a looser restore-key fallback.
       - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
@@ -75,18 +73,18 @@ jobs:
       - name: Set up Skip toolchain
         uses: skiptools/actions/setup-skip@v1
         with:
-          # Needed for `skip android build` (Swift-for-Android cross-compile).
-          install-swift-android-sdk: true
+          # This job only builds the Apple app + runs `swift test`; it never
+          # cross-compiles for Android, so skip the Swift-for-Android SDK.
+          install-swift-android-sdk: false
 
       - name: Versions
         run: |
           swift --version
           xcodebuild -version
-          skip checkup || true
 
       # SKIP_ACTION=none disables the Xcode "Run skip gradle" build phase so this
       # step builds only the Apple app (the Android build is exercised in its own
-      # step below). It MUST be a command-line build setting, not a process env
+      # jobs below). It MUST be a command-line build setting, not a process env
       # var: Darwin/Maxi80.xcconfig sets SKIP_ACTION=build, and the xcconfig
       # value is injected into the script phase's environment where it would
       # otherwise win. A command-line build setting outranks the xcconfig.
@@ -113,26 +111,106 @@ jobs:
       - name: Test
         run: make test
 
-      # `make build-android` runs `skip android build` (Swift -> Kotlin
-      # transpile + Swift-for-Android cross-compile) then `gradle assembleDebug`
-      # (compiles the generated Kotlin/Android project). Reused from the Makefile
-      # so CI matches the local dev flow exactly.
+  # ---------------------------------------------------------------------------
+  # Android (debug): `make build-android` runs `skip android build` (Swift ->
+  # Kotlin transpile + Swift-for-Android cross-compile) then `gradle
+  # assembleDebug` (compiles the generated Kotlin/Android project). Reused from
+  # the Makefile so CI matches the local dev flow exactly.
+  # ---------------------------------------------------------------------------
+  android-debug:
+    name: Android debug (transpile + gradle)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The first Android build downloads ~1GB of Gradle + Compose/media3/AGP
+      # artifacts; caching cuts several minutes off subsequent runs. Both Android
+      # jobs share this key — whichever finishes first populates it.
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('Android/gradle/wrapper/gradle-wrapper.properties', 'Android/**/*.gradle.kts', 'Android/**/*.toml', 'Skip.env') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
+      - name: Seed Configuration.plist
+        run: cp Sources/Maxi80/Resources/Configuration.plist.template Sources/Maxi80/Resources/Configuration.plist
+
+      - name: Set up Skip toolchain
+        uses: skiptools/actions/setup-skip@v1
+        with:
+          # Needed for `skip android build` (Swift-for-Android cross-compile).
+          install-swift-android-sdk: true
+
       - name: Build Android (transpile + gradle)
         run: make build-android
 
-      # The DEBUG build above does NOT run R8, so it can't catch minification
-      # bugs. This step builds the minified `release` variant (isMinifyEnabled +
-      # isShrinkResources) to run R8, then asserts the JNI-bridged classes
-      # survived it. Those classes are reached only via `Class.forName` from the
-      # native Swift bridge, a reference R8 can't see — so without a keep rule it
-      # strips/renames them and the app dies on launch with ClassNotFoundException
-      # (a `try!` in the bridge traps -> SIGABRT). This ONLY reproduces in a
-      # minified build; debug builds hid the bug until it shipped to Play beta.
-      # No keystore in CI -> release falls back to the debug signing key, which is
-      # fine here (we never upload). Assertion reads R8's own mapping.txt, so it
-      # needs no extra tooling and is deterministic (no emulator).
+  # ---------------------------------------------------------------------------
+  # Android (release/R8): the DEBUG build does NOT run R8, so it can't catch
+  # minification bugs. This job builds the minified `release` variant
+  # (isMinifyEnabled + isShrinkResources) to run R8, then asserts the
+  # JNI-bridged classes survived it. Those classes are reached only via
+  # `Class.forName` from the native Swift bridge, a reference R8 can't see — so
+  # without a keep rule it strips/renames them and the app dies on launch with
+  # ClassNotFoundException (a `try!` in the bridge traps -> SIGABRT). This ONLY
+  # reproduces in a minified build; debug builds hid the bug until it shipped to
+  # Play beta. No keystore in CI -> release falls back to the debug signing key,
+  # which is fine here (we never upload). The assertion reads R8's own
+  # mapping.txt, so it needs no extra tooling and is deterministic (no emulator).
+  #
+  # `skip android build` runs first because assembleRelease needs the transpiled
+  # Kotlin AND the cross-compiled JNI `.so` libs; this job runs concurrently with
+  # android-debug and cannot borrow that work from it.
+  # ---------------------------------------------------------------------------
+  android-release:
+    name: Android release (R8) + verify bridged classes survive
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('Android/gradle/wrapper/gradle-wrapper.properties', 'Android/**/*.gradle.kts', 'Android/**/*.toml', 'Skip.env') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-
+
+      - name: Seed Configuration.plist
+        run: cp Sources/Maxi80/Resources/Configuration.plist.template Sources/Maxi80/Resources/Configuration.plist
+
+      - name: Set up Skip toolchain
+        uses: skiptools/actions/setup-skip@v1
+        with:
+          # Needed for `skip android build` (Swift-for-Android cross-compile).
+          install-swift-android-sdk: true
+
       - name: Build Android release (R8) + verify bridged classes survive
         run: |
+          skip android build
           cd Android && gradle --warning-mode none -x lint assembleRelease
           cd ..
           MAPPING=.build/Android/app/outputs/mapping/release/mapping.txt
