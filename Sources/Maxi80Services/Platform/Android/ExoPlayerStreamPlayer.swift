@@ -4,6 +4,11 @@ import Foundation
 
   #if SKIP
     import android.content.Context
+    import android.database.ContentObserver
+    import android.media.AudioManager
+    import android.os.Handler
+    import android.os.Looper
+    import android.provider.Settings
     import androidx.media3.common.AudioAttributes
     import androidx.media3.common.C
     import androidx.media3.common.Metadata
@@ -80,6 +85,25 @@ import Foundation
       }
     }
 
+    // MARK: - Named ContentObserver for System Volume Changes
+
+    /// Observes changes to the system audio settings and reports the current STREAM_MUSIC level
+    /// back to the player. This is what lets the in-app volume bar track the hardware volume
+    /// buttons (and any other source that changes the media volume, e.g. the system volume panel):
+    /// the buttons adjust STREAM_MUSIC, this observer fires, and the player forwards the new level.
+    class VolumeContentObserver: ContentObserver {
+      private let player: AudioStreamPlayer
+
+      init(player: AudioStreamPlayer, handler: Handler) {
+        self.player = player
+        super.init(handler)
+      }
+
+      override func onChange(selfChange: Bool) {
+        player.handleSystemVolumeChanged()
+      }
+    }
+
     // MARK: - ExoPlayerStreamPlayer (Android Implementation)
 
     extension AudioStreamPlayer {
@@ -89,6 +113,10 @@ import Foundation
 
       private var context: Context {
         ProcessInfo.processInfo.androidContext
+      }
+
+      private var audioManager: AudioManager {
+        context.getSystemService(Context.AUDIO_SERVICE) as! AudioManager
       }
 
       // MARK: - Playback Control
@@ -159,9 +187,52 @@ import Foundation
         onPlaybackStateChanged?(false)
       }
 
+      // MARK: - System Volume (STREAM_MUSIC)
+      //
+      // The in-app slider controls the system media volume (STREAM_MUSIC), NOT ExoPlayer's private
+      // volume attenuation. This mirrors iOS's MPVolumeView (which drives the system output level)
+      // and means the hardware volume buttons and the in-app bar are the SAME volume — so they
+      // always agree. ExoPlayer's own `volume` stays at 1.0 and is used only for transient ducking.
+
       func androidSetVolume(_ newVolume: Double) {
         volume = newVolume
-        _exoPlayer?.volume = Float(newVolume)
+        let am = audioManager
+        let maxVolume = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        let target = Int((newVolume * Double(maxVolume)).rounded())
+        // No FLAG_SHOW_UI: the app has its own on-screen bar, so suppress the system volume panel
+        // to avoid showing two indicators at once when the user drags the in-app slider.
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
+      }
+
+      /// The current STREAM_MUSIC level as a 0.0–1.0 fraction of its maximum.
+      func androidCurrentVolume() -> Double {
+        let am = audioManager
+        let maxVolume = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        guard maxVolume > 0 else { return 0 }
+        return Double(am.getStreamVolume(AudioManager.STREAM_MUSIC)) / Double(maxVolume)
+      }
+
+      /// Called by the ContentObserver when the system media volume changes (hardware buttons,
+      /// system panel, etc.). Reads the fresh level and forwards it to the UI via onVolumeChanged.
+      func handleSystemVolumeChanged() {
+        let newVolume = androidCurrentVolume()
+        volume = newVolume
+        onVolumeChanged?(newVolume)
+      }
+
+      func androidStartObservingVolume() {
+        guard _volumeObserver == nil else { return }
+        let handler = Handler(Looper.getMainLooper())
+        let observer = VolumeContentObserver(player: self, handler: handler)
+        self._volumeObserver = observer
+        context.getContentResolver().registerContentObserver(
+          Settings.System.CONTENT_URI, true, observer)
+      }
+
+      func androidStopObservingVolume() {
+        guard let observer = _volumeObserver else { return }
+        context.getContentResolver().unregisterContentObserver(observer)
+        _volumeObserver = nil
       }
 
       // MARK: - Metadata Handling
@@ -177,6 +248,7 @@ import Foundation
 
       var _exoPlayer: ExoPlayer? = nil
       var _metadataListener: MetadataPlayerListener? = nil
+      var _volumeObserver: VolumeContentObserver? = nil
     }
 
   #else

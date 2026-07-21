@@ -68,8 +68,8 @@ import SwiftUI
         ]
       }
 
+      coordinator.volume = 0.75
       let vm = RadioPlayerViewModel(coordinator: coordinator)
-      vm.volume = 0.75
       return vm
     }
   }

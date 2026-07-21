@@ -39,6 +39,11 @@ public final class RadioPlayerCoordinator {
   public var station: Station?
   public var errorMessage: String?
 
+  /// The current output volume (0.0–1.0). On Android this tracks the system STREAM_MUSIC level and
+  /// updates live when the hardware volume buttons are pressed; on Apple platforms the volume UI is
+  /// driven by MPVolumeView, so this stays at its default and is unused by the view.
+  public var volume: Double = 1.0
+
   /// The generic cover shown before any song has played. Chosen once per launch.
   @ObservationIgnored
   let placeholderCover: PlaceholderCover = .random()
@@ -102,6 +107,13 @@ public final class RadioPlayerCoordinator {
         onPause: { [weak self] in self?.handleRemoteCommand("pause") }
       )
     #endif
+
+    // Seed the volume from the system's current level and start tracking hardware-button changes.
+    // No-op on Apple platforms (the volume UI there is driven by MPVolumeView). The observer lives
+    // for the coordinator's lifetime, which is the app process lifetime (it's the composition root),
+    // so there is no teardown path — the OS reclaims it on process death.
+    volume = player.currentVolume()
+    player.startObservingVolume()
   }
 
   // MARK: - Public API
@@ -155,6 +167,9 @@ public final class RadioPlayerCoordinator {
 
   /// Set the audio output volume (0.0 to 1.0).
   public func setVolume(_ volume: Double) {
+    // Optimistically reflect the new level so the slider tracks the drag instantly; the system
+    // volume observer will also fire and confirm it (idempotent).
+    self.volume = volume
     player.updateVolume(volume)
   }
 
@@ -244,6 +259,15 @@ public final class RadioPlayerCoordinator {
     player.onInterruption = { [weak self] began in
       Task { @MainActor [weak self] in
         self?.handleInterruption(began: began)
+      }
+    }
+
+    // System volume changed (Android hardware buttons / volume panel). Mirror it into observable
+    // state so the in-app volume bar tracks it. The observer fires on the main looper, but hop to
+    // @MainActor explicitly so the write is isolated correctly.
+    player.onVolumeChanged = { [weak self] newVolume in
+      Task { @MainActor [weak self] in
+        self?.volume = newVolume
       }
     }
 

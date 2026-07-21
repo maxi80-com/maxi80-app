@@ -75,5 +75,33 @@ import Foundation
         macSetVolume(newVolume)
       #endif
     }
+
+    /// The current output volume as the system reports it (0.0 to 1.0). On Android this reads the
+    /// `STREAM_MUSIC` level; on Apple platforms the slider is driven by `MPVolumeView`, so this
+    /// simply returns the last-set app value. Used to seed the UI on launch.
+    public func currentVolume() -> Double {
+      #if SKIP
+        return androidCurrentVolume()
+      #else
+        return volume
+      #endif
+    }
+
+    /// Begin observing system output-volume changes (e.g. from the hardware buttons) so the UI
+    /// slider can track them. Fires `onVolumeChanged` with the new 0.0–1.0 level on each change.
+    /// Apple platforms observe hardware volume through `MPVolumeView` in the UI layer, so this is
+    /// an Android-only hook and a no-op elsewhere.
+    public func startObservingVolume() {
+      #if SKIP
+        androidStartObservingVolume()
+      #endif
+    }
+
+    /// Stop observing system output-volume changes and release the observer.
+    public func stopObservingVolume() {
+      #if SKIP
+        androidStopObservingVolume()
+      #endif
+    }
   }
 #endif
