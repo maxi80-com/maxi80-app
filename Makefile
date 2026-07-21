@@ -229,6 +229,28 @@ test: ## Run the real Swift/Swift-Testing suite (used as the publish gate)
 # ------------------------------------------------------------------------------
 clean: ## Remove build artifacts (safe: never touches sources/secrets/config)
 	# All of these are git-ignored, generated outputs — verified not tracked.
+	#
+	# TWO things defeat a naive `rm -rf .build` and leave it half-deleted (which
+	# then causes baffling "Unresolved reference" / "No variants exist" errors on
+	# the NEXT build against the stale remnants):
+	#   1. A live Gradle/Kotlin daemon holds open handles under .build AND may be
+	#      REUSED by the next build with a stale, wrongly-ordered task graph — the
+	#      symptom is a build that runs ~185 tasks (not ~489), schedules
+	#      `:app:compileDebugKotlin` BEFORE `:skipstone:Maxi80:buildAndroidSwift...`,
+	#      and fails with "Unresolved reference 'Maxi80RootView' / 'SkipLogger' /
+	#      'ProcessInfo' …" plus "multiple Kotlin daemon sessions" warnings. So we
+	#      must fully DRAIN daemons: `gradle --stop` (graceful, current version),
+	#      then SIGKILL any stragglers, then a short settle so handles release and
+	#      no half-dead daemon is reused. Best-effort (|| true): a clean on a
+	#      machine with no daemon running must still succeed.
+	#   2. skipstone marks transpiled Kotlin (*.kt) READ-ONLY (mode 0444), so
+	#      `rm -rf` reports "Directory not empty" and stops. `chmod -R u+w` first.
+	# GNU Make 3.81 (macOS) runs each recipe LINE in its own shell under `-eu -o
+	# pipefail`, so guard best-effort steps with `|| true` and existence checks.
+	-cd Android && gradle --stop >/dev/null 2>&1 || true
+	-pkill -9 -f 'GradleDaemon|KotlinCompileDaemon' >/dev/null 2>&1 || true
+	sleep 2
+	[ -d .build ] && chmod -R u+w .build || true
 	rm -rf .build
 	rm -rf Android/.build Android/.gradle Android/.kotlin Android/build Android/app/build
 	rm -rf .skip build
