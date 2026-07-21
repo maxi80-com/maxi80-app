@@ -79,7 +79,10 @@ open class MainActivity: AppCompatActivity {
                 != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(
                 this,
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                // Fully-qualified: `import skip.lib.*` shadows the bare `arrayOf` with
+                // `skip.lib.arrayOf`, which yields a `skip.lib.Array`; requestPermissions needs a
+                // `kotlin.Array<String>`.
+                kotlin.arrayOf(Manifest.permission.POST_NOTIFICATIONS),
                 1
             )
         }
