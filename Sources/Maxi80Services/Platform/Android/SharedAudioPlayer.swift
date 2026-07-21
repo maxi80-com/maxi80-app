@@ -30,6 +30,7 @@ import Foundation
           .setDataSourceFactory(httpDataSourceFactory)
         let created = ExoPlayer.Builder(context)
           .setMediaSourceFactory(mediaSourceFactory)
+          .setHandleAudioBecomingNoisy(true)
           .build()
         player = created
         return created

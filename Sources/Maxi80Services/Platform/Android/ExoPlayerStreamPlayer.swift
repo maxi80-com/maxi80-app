@@ -3,13 +3,9 @@ import Foundation
 #if !SKIP_BRIDGE
 
   #if SKIP
-    import android.content.BroadcastReceiver
     import android.content.Context
-    import android.content.Intent
-    import android.content.IntentFilter
-    import android.media.AudioAttributes
-    import android.media.AudioFocusRequest
-    import android.media.AudioManager
+    import androidx.media3.common.AudioAttributes
+    import androidx.media3.common.C
     import androidx.media3.common.Metadata
     import androidx.media3.common.MediaItem
     import androidx.media3.common.Player
@@ -60,21 +56,26 @@ import Foundation
         player.isPlaying = isCurrentlyPlaying
         player.onPlaybackStateChanged?(isCurrentlyPlaying)
       }
-    }
 
-    // MARK: - Named BroadcastReceiver for Audio Becoming Noisy
-
-    class BecomingNoisyReceiver: BroadcastReceiver {
-      private let player: AudioStreamPlayer
-
-      init(player: AudioStreamPlayer) {
-        self.player = player
+      override func onPlayWhenReadyChanged(playWhenReady: Bool, reason: Int) {
+        if !playWhenReady && (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+          || reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
+        {
+          player.isPlaying = false
+          player.onPlaybackStateChanged?(false)
+          player.onInterruption?(true)
+        }
       }
 
-      override func onReceive(context: Context?, intent: Intent?) {
-        guard let action = intent?.action else { return }
-        if action == AudioManager.ACTION_AUDIO_BECOMING_NOISY {
-          player.handleBecomingNoisy()
+      override func onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+        if playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS {
+          player.isPlaying = false
+          player.onPlaybackStateChanged?(false)
+          player.onInterruption?(true)
+        } else if playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE && player._exoPlayer?.playWhenReady == true {
+          player.isPlaying = true
+          player.onPlaybackStateChanged?(true)
+          player.onInterruption?(false)
         }
       }
     }
@@ -90,10 +91,6 @@ import Foundation
         ProcessInfo.processInfo.androidContext
       }
 
-      private var audioManager: AudioManager {
-        context.getSystemService(Context.AUDIO_SERVICE) as! AudioManager
-      }
-
       // MARK: - Playback Control
 
       func androidPlay(url streamUrl: String) {
@@ -101,29 +98,49 @@ import Foundation
         let exoPlayer = SharedAudioPlayer.shared(context: ctx)
         self._exoPlayer = exoPlayer
 
-        // Re-attach the metadata listener if it isn't currently on this player instance. The
-        // listener reference is cleared on stop, and the shared player can be rebuilt after a full
-        // teardown, so guarding on nil alone would leave a rebuilt player with no listener — which
-        // stalls the coordinator in `.loading` (spinner never clears because no metadata arrives).
+        // Configure ExoPlayer to manage audio focus internally. Called unconditionally on every
+        // play: setAudioAttributes with unchanged attributes is idempotent, and doing it here
+        // guarantees focus handling is (re)wired against whatever ExoPlayer instance is current —
+        // even one rebuilt after SharedAudioPlayer.releaseShared(). A per-AudioStreamPlayer
+        // "already configured" flag could go stale against a fresh player and silently skip this,
+        // bringing back the permanent-wedge bug. ExoPlayer then requests focus on play(), ducks/
+        // pauses on transient loss, and resumes on regain — replacing the manual AudioFocusRequest
+        // management that could leave orphaned requests, making the system immediately fire
+        // AUDIOFOCUS_LOSS back and wedge the player permanently.
+        let audioAttributes = AudioAttributes.Builder()
+          .setUsage(C.USAGE_MEDIA)
+          .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+          .build()
+        exoPlayer.setAudioAttributes(audioAttributes, /* handleAudioFocusInternally: */ true)
+
+        // Attach the metadata listener once. The shared player can be rebuilt after a full teardown
+        // (SharedAudioPlayer.releaseShared()), so we guard on nil rather than assuming it's always
+        // present: a rebuilt player with no listener would stall the coordinator in `.loading` (the
+        // spinner never clears because no ICY metadata arrives).
         if _metadataListener == nil {
           let listener = MetadataPlayerListener(player: self)
           self._metadataListener = listener
           exoPlayer.addListener(listener)
         }
 
-        // Long-lived single player: (re)load the live item and prepare/play. Because the same
-        // instance is reused, this restarts the ONE stream rather than spawning a second player.
-        let mediaItem = MediaItem.fromUri(streamUrl)
-        exoPlayer.setMediaItem(mediaItem)
-
-        if requestAudioFocus() {
+        // If the player was merely paused (transient focus loss, user pause, becoming-noisy),
+        // it still holds the live stream item in STATE_READY. Just flip playWhenReady back on —
+        // ExoPlayer re-requests audio focus internally and resumes instantly. Reloading the media
+        // item would reset the player to STATE_IDLE and force a full reconnect to the stream server.
+        let currentState = exoPlayer.getPlaybackState()
+        if currentState == Player.STATE_READY || currentState == Player.STATE_BUFFERING {
+          exoPlayer.playWhenReady = true
+          isPlaying = true
+          onPlaybackStateChanged?(true)
+        } else {
+          // Cold start or player was in STATE_IDLE/STATE_ENDED: load the stream from scratch.
+          let mediaItem = MediaItem.fromUri(streamUrl)
+          exoPlayer.setMediaItem(mediaItem)
           exoPlayer.prepare()
-          exoPlayer.play()
+          exoPlayer.playWhenReady = true
           isPlaying = true
           onPlaybackStateChanged?(true)
         }
-
-        registerNoisyReceiver()
 
         // Start the foreground MediaSessionService so the media notification appears and
         // playback survives Activity destruction (background / lock-screen). startForegroundService
@@ -134,17 +151,10 @@ import Foundation
       }
 
       func androidStop() {
-        unregisterNoisyReceiver()
-        abandonAudioFocus()
-
         // Pause, do NOT tear down. The player and the foreground service are long-lived (the
         // media3-canonical topology): a live-radio "pause" just halts output on the single shared
-        // player. Previously this called stop()+clearMediaItems()+stopService(), which released
-        // the player asynchronously in the service's onDestroy — racing the next play() and
-        // producing a SECOND player (two overlapping streams) plus a stuck spinner. Keeping the
-        // player alive makes replay instant and single. The player is released only when the
-        // system genuinely destroys the service (Maxi80MediaService.onDestroy).
-        _exoPlayer?.pause()
+        // player. ExoPlayer internally abandons audio focus when playWhenReady becomes false.
+        _exoPlayer?.playWhenReady = false
         isPlaying = false
         onPlaybackStateChanged?(false)
       }
@@ -163,102 +173,10 @@ import Foundation
         }
       }
 
-      // MARK: - Audio Becoming Noisy
-
-      func handleBecomingNoisy() {
-        // Headphones disconnected — pause playback
-        _exoPlayer?.pause()
-        isPlaying = false
-        onPlaybackStateChanged?(false)
-        onInterruption?(true)
-      }
-
-      // MARK: - Audio Focus
-
-      private func requestAudioFocus() -> Bool {
-        let audioAttributes = AudioAttributes.Builder()
-          .setUsage(AudioAttributes.USAGE_MEDIA)
-          .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-          .build()
-
-        let focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-          .setAudioAttributes(audioAttributes)
-          .setOnAudioFocusChangeListener { focusChange in
-            self.handleAudioFocusChange(focusChange)
-          }
-          .build()
-
-        self._audioFocusRequest = focusRequest
-
-        let result = audioManager.requestAudioFocus(focusRequest)
-        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-      }
-
-      private func abandonAudioFocus() {
-        guard let focusRequest = _audioFocusRequest else { return }
-        audioManager.abandonAudioFocusRequest(focusRequest)
-        _audioFocusRequest = nil
-      }
-
-      private func handleAudioFocusChange(_ focusChange: Int) {
-        switch focusChange {
-        case AudioManager.AUDIOFOCUS_LOSS:
-          // Permanent loss — stop playback
-          _exoPlayer?.pause()
-          isPlaying = false
-          onPlaybackStateChanged?(false)
-          onInterruption?(true)
-
-        case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
-          // Transient loss — pause, expect to resume
-          _exoPlayer?.pause()
-          isPlaying = false
-          onPlaybackStateChanged?(false)
-          onInterruption?(true)
-
-        case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
-          // Duck volume temporarily
-          _exoPlayer?.volume = Float(0.2)
-
-        case AudioManager.AUDIOFOCUS_GAIN:
-          // Regained focus — resume playback
-          _exoPlayer?.volume = Float(volume)
-          _exoPlayer?.play()
-          isPlaying = true
-          onPlaybackStateChanged?(true)
-          onInterruption?(false)
-
-        default:
-          break
-        }
-      }
-
-      // MARK: - Becoming Noisy Receiver
-
-      private func registerNoisyReceiver() {
-        let receiver = BecomingNoisyReceiver(player: self)
-        self._noisyReceiver = receiver
-
-        let filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
-        context.registerReceiver(receiver, filter)
-      }
-
-      private func unregisterNoisyReceiver() {
-        guard let receiver = _noisyReceiver else { return }
-        do {
-          context.unregisterReceiver(receiver)
-        } catch {
-          // Receiver may not have been registered
-        }
-        _noisyReceiver = nil
-      }
-
       // MARK: - Private Storage
 
       var _exoPlayer: ExoPlayer? = nil
       var _metadataListener: MetadataPlayerListener? = nil
-      var _audioFocusRequest: AudioFocusRequest? = nil
-      var _noisyReceiver: BecomingNoisyReceiver? = nil
     }
 
   #else
