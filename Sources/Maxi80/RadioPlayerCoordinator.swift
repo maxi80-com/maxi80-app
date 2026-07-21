@@ -287,16 +287,6 @@ public final class RadioPlayerCoordinator {
       }
     }
 
-    // The platform players report their real playing state (ExoPlayer STATE_READY / isPlaying,
-    // AVPlayer rate). Previously this signal was never wired, so the only path out of `.loading`
-    // was an ICY metadata event — which does not re-arrive on a background→foreground resume
-    // (the foreground-service stream is already playing), leaving the UI stuck on the spinner.
-    player.onPlaybackStateChanged = { [weak self] isPlaying in
-      Task { @MainActor [weak self] in
-        self?.handlePlaybackStateChanged(isPlaying: isPlaying)
-      }
-    }
-
     // System volume changed (Android hardware buttons / volume panel). Mirror it into observable
     // state so the in-app volume bar tracks it. The observer fires on the main looper, but hop to
     // @MainActor explicitly so the write is isolated correctly.
@@ -580,23 +570,6 @@ public final class RadioPlayerCoordinator {
     } else {
       // Interruption ended with resume option — resume playback
       play()
-    }
-  }
-
-  // MARK: - Playback State Handling
-
-  /// React to the player reporting its real playing state. Mirrors `reconcileWithPlayer`'s
-  /// conservative policy: only promote a pending `.loading`/`.reconnecting` to `.playing` when the
-  /// player starts playing. A `false` report is left to the interruption/reconnection paths, which
-  /// own the stop/pause semantics — treating every `false` as `.paused` here would regress those.
-  private func handlePlaybackStateChanged(isPlaying: Bool) {
-    guard isPlaying else { return }
-    switch playbackState {
-    case .loading, .reconnecting:
-      playbackState = .playing
-      publishPlaybackState(isPlaying: true)
-    default:
-      break
     }
   }
 

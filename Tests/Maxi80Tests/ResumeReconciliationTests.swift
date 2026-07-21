@@ -76,20 +76,19 @@ struct ResumeReconciliationTests {
     #expect(coordinator.playbackState == .paused)
   }
 
-  @Test("The player's onPlaybackStateChanged callback promotes a loading state to playing")
+  @Test("Reconciling only promotes a pending loading state, not an idle one")
   @MainActor
-  func playbackStateCallbackPromotesLoading() async {
+  func reconcileDoesNotPromoteIdle() {
     let (coordinator, player) = makeCoordinator()
 
-    coordinator.play()
-    #expect(coordinator.playbackState == .loading)
+    // Idle (never played) with the player somehow reporting playing must not fabricate .playing —
+    // reconcile only clears a *pending* loading/reconnecting spinner, it doesn't start playback.
+    #expect(coordinator.playbackState == .idle)
+    player.isPlaying = true
 
-    // The Android/iOS listener reports STATE_READY / isPlaying via this callback. It was
-    // previously never wired into the coordinator, so the signal was dropped.
-    player.onPlaybackStateChanged?(true)
-    await Task.yield()
+    coordinator.reconcileWithPlayer()
 
-    #expect(coordinator.playbackState == .playing)
+    #expect(coordinator.playbackState == .idle)
   }
 
   // MARK: - Axis A: carousel selection guard across recreation
