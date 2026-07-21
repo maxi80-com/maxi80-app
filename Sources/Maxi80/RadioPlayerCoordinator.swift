@@ -170,6 +170,26 @@ public final class RadioPlayerCoordinator {
     publishPlaybackState(isPlaying: false)
   }
 
+  /// Reconcile the observable `playbackState` with the player's real state.
+  ///
+  /// Called on foreground (background→foreground resume recreates the Android activity but the
+  /// coordinator is a process-wide singleton). The foreground-service stream keeps playing across
+  /// the transition, so no fresh ICY metadata arrives to promote a stale `.loading` — this reads
+  /// the player's ground truth instead. Conservative by design: it only *promotes* a
+  /// `.loading`/`.reconnecting` state to `.playing` when the player is really playing, and never
+  /// overrides a user-driven `.paused` or an in-flight reconnection/error cycle.
+  public func reconcileWithPlayer() {
+    guard player.isPlaying else { return }
+    switch playbackState {
+    case .loading, .reconnecting:
+      playbackState = .playing
+      publishPlaybackState(isPlaying: true)
+    default:
+      break
+    }
+    republishNowPlaying()
+  }
+
   /// Set the audio output volume (0.0 to 1.0).
   public func setVolume(_ volume: Double) {
     // Optimistically reflect the new level so the slider tracks the drag instantly; the system

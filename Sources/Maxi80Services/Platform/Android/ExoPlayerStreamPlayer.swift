@@ -151,24 +151,19 @@ import Foundation
           exoPlayer.addListener(listener)
         }
 
-        // If the player was merely paused (transient focus loss, user pause, becoming-noisy),
-        // it still holds the live stream item in STATE_READY. Just flip playWhenReady back on —
-        // ExoPlayer re-requests audio focus internally and resumes instantly. Reloading the media
-        // item would reset the player to STATE_IDLE and force a full reconnect to the stream server.
-        let currentState = exoPlayer.getPlaybackState()
-        if currentState == Player.STATE_READY || currentState == Player.STATE_BUFFERING {
-          exoPlayer.playWhenReady = true
-          isPlaying = true
-          onPlaybackStateChanged?(true)
-        } else {
-          // Cold start or player was in STATE_IDLE/STATE_ENDED: load the stream from scratch.
-          let mediaItem = MediaItem.fromUri(streamUrl)
-          exoPlayer.setMediaItem(mediaItem)
-          exoPlayer.prepare()
-          exoPlayer.playWhenReady = true
-          isPlaying = true
-          onPlaybackStateChanged?(true)
-        }
+        // Live radio: ALWAYS (re)load the stream so play reconnects to the LIVE edge. We must not
+        // reuse a buffered STATE_READY player — for a live stream its retained buffer is whatever
+        // was playing when the user stopped, so resuming it plays a stale track (e.g. Android kept
+        // playing an old song while the live stream had moved on). `androidStop()` clears the media
+        // item and drops the player to STATE_IDLE precisely so this path always does a fresh
+        // setMediaItem + prepare, matching the Apple side (which replaces the AVPlayerItem on play).
+        // ExoPlayer re-requests audio focus internally on prepare/play.
+        let mediaItem = MediaItem.fromUri(streamUrl)
+        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
+        isPlaying = true
+        onPlaybackStateChanged?(true)
 
         // Start the foreground MediaSessionService so the media notification appears and
         // playback survives Activity destruction (background / lock-screen). startForegroundService
@@ -179,10 +174,14 @@ import Foundation
       }
 
       func androidStop() {
-        // Pause, do NOT tear down. The player and the foreground service are long-lived (the
-        // media3-canonical topology): a live-radio "pause" just halts output on the single shared
-        // player. ExoPlayer internally abandons audio focus when playWhenReady becomes false.
-        _exoPlayer?.playWhenReady = false
+        // Live radio: a "stop" must truly STOP, not pause. `stop()` halts loading and releases the
+        // buffer; `clearMediaItems()` drops the player to STATE_IDLE so there is no retained stream
+        // to resume. The next `androidPlay()` therefore always reloads and reconnects to the live
+        // edge instead of resuming a now-stale buffer. ExoPlayer internally abandons audio focus
+        // when playback stops. The shared player instance and the foreground service stay alive
+        // (media3-canonical topology) — only the media item/buffer is cleared.
+        _exoPlayer?.stop()
+        _exoPlayer?.clearMediaItems()
         isPlaying = false
         onPlaybackStateChanged?(false)
       }

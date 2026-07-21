@@ -186,29 +186,44 @@ public final class RadioPlayerViewModel {
     returnToLiveNonce += 1
   }
 
-  /// True for a short window around an orientation change. The carousel is recreated on rotation
-  /// (portrait and landscape host it in different structural slots), and its fresh layout reports
-  /// the leftmost cover. This lock lives in the view model — which survives that recreation — so the
-  /// carousel's selection write-back can be dropped while set, preserving the browsed cover.
-  public private(set) var isReorienting = false
+  /// True for a short window while the carousel is being recreated and its fresh layout would
+  /// otherwise report the leftmost (oldest) cover. Two events recreate the carousel:
+  ///   - an orientation change (portrait and landscape host it in different structural slots), and
+  ///   - a background→foreground resume on Android (the activity is destroyed and recreated).
+  /// This lock lives in the view model — which survives both recreations, being a process-wide
+  /// singleton — so the carousel's transient selection write-back can be dropped while set,
+  /// preserving the browsed/live cover.
+  public private(set) var isCarouselRecreating = false
 
   @ObservationIgnored
-  private var reorientClearTask: Task<Void, Never>?
+  private var carouselRecreateClearTask: Task<Void, Never>?
 
-  /// Begin the reorientation lock, auto-clearing once the recreated carousel has settled.
+  /// Begin the recreation lock for an orientation change, auto-clearing once the recreated
+  /// carousel has settled.
   func beginReorientation() {
-    isReorienting = true
-    reorientClearTask?.cancel()
-    reorientClearTask = Task { @MainActor [weak self] in
+    beginCarouselRecreationWindow()
+  }
+
+  /// Begin the recreation lock for a background→foreground transition. The recreated carousel's
+  /// leftmost-cover write-back is dropped for the window, so the persisted selection survives the
+  /// resume — the same protection rotation already had, now covering the resume path too.
+  func beginForegroundTransition() {
+    beginCarouselRecreationWindow()
+  }
+
+  private func beginCarouselRecreationWindow() {
+    isCarouselRecreating = true
+    carouselRecreateClearTask?.cancel()
+    carouselRecreateClearTask = Task { @MainActor [weak self] in
       try? await Task.sleep(nanoseconds: 700_000_000)
-      self?.isReorienting = false
+      self?.isCarouselRecreating = false
     }
   }
 
-  /// Set the selection unless a reorientation is in flight, so transient relayout centering during
-  /// a rotation can't clobber the browsed cover.
+  /// Set the selection unless a carousel recreation is in flight, so transient relayout centering
+  /// during a rotation or a resume can't clobber the browsed/live cover.
   func setSelectionFromCarousel(_ newValue: AnyHashable?) {
-    guard !isReorienting else { return }
+    guard !isCarouselRecreating else { return }
     selectedCoverID = newValue
   }
 
