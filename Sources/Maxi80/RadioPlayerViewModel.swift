@@ -22,12 +22,18 @@ public final class RadioPlayerViewModel {
 
   // MARK: - UI-Local State
   //
-  // These are genuine view state, not derived from the coordinator: `volume` mirrors the
-  // slider's input and `selectedCoverID` is the Cover Flow carousel's focused item (bound via
+  // `selectedCoverID` is the Cover Flow carousel's focused item (bound via
   // `$viewModel.selectedCoverID` through `scrollPosition(id:)`). Everything else is a computed
   // passthrough to the coordinator so Observation re-renders the view when coordinator state changes.
 
-  public var volume: Double = 1.0
+  /// Output volume (0.0–1.0). Reads through to the coordinator so the slider tracks system-volume
+  /// changes from the hardware buttons (Android); writing drives `setVolume`. On iOS/tvOS the volume
+  /// UI is `MPVolumeView`, so this passthrough is unused there; macOS binds its in-app `Slider` to
+  /// this property (see `VolumeSliderView`).
+  public var volume: Double {
+    get { coordinator.volume }
+    set { setVolume(newValue) }
+  }
   /// The Cover Flow carousel's focused item id. Typed `AnyHashable?` to match
   /// `scrollPosition(id:)`'s binding on the transpiled Android path.
   public var selectedCoverID: AnyHashable?
@@ -284,8 +290,9 @@ public final class RadioPlayerViewModel {
   }
 
   public func setVolume(_ volume: Double) {
+    // Writes to the system STREAM_MUSIC level (Android); the coordinator's observable `volume`
+    // is then updated by the system-volume observer, which re-renders the slider.
     coordinator.setVolume(volume)
-    self.volume = volume
   }
 
   public func retry() {
