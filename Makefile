@@ -54,6 +54,12 @@ IOS_DIR      := .build/fastlane/Darwin/ios
 TVOS_DIR     := .build/fastlane/Darwin/tvos
 MACOS_DIR    := .build/fastlane/Darwin/macos
 AAB_PATH     := .build/Android/app/outputs/bundle/release/app-release.aab
+APK_OUT_DIR  := .build/Android/app/outputs/apk/release
+APK_PATH     := $(APK_OUT_DIR)/app-release-universal.apk
+# Version-stamped copy dropped on the Desktop by `release-apk` for easy sideloading.
+APK_DESKTOP_COPY := $(HOME)/Desktop/maxi80-$(MARKETING_VERSION)-$(BUILD_NUMBER).apk
+# Signing config for the extracted APK (same UPLOAD key the AAB is signed with).
+KEYSTORE_PROPS := Android/app/keystore.properties
 
 .PHONY: help version doctor verify check-config check-clean-tree test \
         clean build-ios build-android build-all \
@@ -62,7 +68,7 @@ AAB_PATH     := .build/Android/app/outputs/bundle/release/app-release.aab
         publish-ios publish-ios-open publish-tvos publish-tvos-open \
         publish-macos publish-android publish-android-open \
         publish-all publish-all-open \
-        promote-ios promote-android promote-all bump release screenshots
+        promote-ios promote-android promote-all bump release release-apk screenshots
 
 # ------------------------------------------------------------------------------
 # Help / info
@@ -100,6 +106,7 @@ help: ## Show this help (default target)
 	@echo "    package-macos     Signed macOS .pkg (Mac App Store)"
 	@echo "    package-android   Release AAB (upload-signed)"
 	@echo "    package-all       iOS + tvOS + macOS + Android"
+	@echo "    release-apk       Signed installable APK from the last release AAB (no rebuild)"
 	@echo ""
 	@echo "  Release (one version across all platforms)"
 	@echo "    release              Bump -> build+sign ALL -> test -> commit+tag (no upload)"
@@ -320,6 +327,39 @@ package-android: check-config ## Produce a release AAB (gradle bundleRelease)
 	# upload ("signed with the wrong key"). See `doctor`.
 	cd Android && fastlane assemble
 	@echo "==> AAB at $(AAB_PATH)"
+
+release-apk: ## Extract a signed, installable universal APK from the LAST release AAB (no rebuild)
+	# Google Play needs the AAB ($(AAB_PATH), from `make release`/`package-android`),
+	# but for sideloading/testing you want a single installable APK. bundletool
+	# generates a UNIVERSAL apk (all ABIs + densities in one) from that exact bundle —
+	# NO rebuild, so the APK matches the shipped AAB. bundletool does NOT sign the
+	# generated APK, so we sign it with the SAME upload key the AAB uses (read from
+	# $(KEYSTORE_PROPS)); the result verifies and installs on a device. GNU Make 3.81
+	# runs each recipe LINE in its own shell, so this is one `;\` block to keep the
+	# keystore values in scope. Requires bundletool (brew install bundletool) + a JDK.
+	@command -v bundletool >/dev/null 2>&1 || { echo "ERROR: bundletool not found — brew install bundletool"; exit 1; }
+	@test -f "$(AAB_PATH)" || { echo "ERROR: no AAB at $(AAB_PATH) — run 'make release' (or 'make package-android') first"; exit 1; }
+	@test -f "$(KEYSTORE_PROPS)" || { echo "ERROR: $(KEYSTORE_PROPS) missing — needed to sign the APK (see doctor)"; exit 1; }
+	@set -e; \
+	KALIAS="$$(grep '^keyAlias=' $(KEYSTORE_PROPS) | cut -d= -f2-)"; \
+	KSPASS="$$(grep '^storePassword=' $(KEYSTORE_PROPS) | cut -d= -f2-)"; \
+	KPASS="$$(grep '^keyPassword=' $(KEYSTORE_PROPS) | cut -d= -f2-)"; \
+	STORE_REL="$$(grep '^storeFile=' $(KEYSTORE_PROPS) | cut -d= -f2-)"; \
+	KS="$$(cd Android/app && cd "$$(dirname "$$STORE_REL")" && pwd)/$$(basename "$$STORE_REL")"; \
+	test -f "$$KS" || { echo "ERROR: keystore not found at $$KS (storeFile in $(KEYSTORE_PROPS))"; exit 1; }; \
+	mkdir -p "$(APK_OUT_DIR)"; \
+	rm -f "$(APK_OUT_DIR)/app-release.apks" "$(APK_PATH)"; \
+	bundletool build-apks --bundle="$(AAB_PATH)" --output="$(APK_OUT_DIR)/app-release.apks" \
+	  --mode=universal --overwrite \
+	  --ks="$$KS" --ks-key-alias="$$KALIAS" --ks-pass="pass:$$KSPASS" --key-pass="pass:$$KPASS"; \
+	unzip -o "$(APK_OUT_DIR)/app-release.apks" universal.apk -d "$(APK_OUT_DIR)" >/dev/null; \
+	mv "$(APK_OUT_DIR)/universal.apk" "$(APK_PATH)"; \
+	rm -f "$(APK_OUT_DIR)/app-release.apks"
+	# Drop a version-stamped copy on the Desktop for easy sideloading/sharing. Name
+	# scheme: maxi80-<marketing>-<build>.apk (e.g. maxi80-5.0.1-2026072100.apk).
+	@cp "$(APK_PATH)" "$(APK_DESKTOP_COPY)"
+	@echo "==> signed universal APK at $(APK_PATH)"
+	@echo "==> copied to $(APK_DESKTOP_COPY)"
 
 package-all: package-ios package-tvos package-macos package-android ## Build+sign every binary (iOS, tvOS, macOS, Android)
 
