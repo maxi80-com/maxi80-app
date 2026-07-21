@@ -209,6 +209,25 @@ jobs:
           # Needed for `skip android build` (Swift-for-Android cross-compile).
           install-swift-android-sdk: true
 
+      # `assembleRelease`'s `release` signing config falls back to the DEBUG keystore
+      # when Android/app/keystore.properties is absent (it's git-ignored — no upload key
+      # in CI, and we never upload here). The debug keystore is normally auto-created by
+      # the first DEBUG build, but that now runs in the separate `android-debug` job on a
+      # different runner, so this runner has no ~/.android/debug.keystore and
+      # `validateSigningRelease` fails. Create it up front with Android's well-known debug
+      # parameters (idempotent — skipped if it already exists). This only signs the CI R8
+      # build; nothing is uploaded.
+      - name: Ensure debug keystore exists (release build signs with the debug fallback)
+        run: |
+          KS="$HOME/.android/debug.keystore"
+          if [ ! -f "$KS" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair -v -keystore "$KS" \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: Build Android release (R8) + verify bridged classes survive
         run: |
           skip android build
