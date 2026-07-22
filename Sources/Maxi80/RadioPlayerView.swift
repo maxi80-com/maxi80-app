@@ -42,6 +42,7 @@ public struct RadioPlayerView: View {
       .onChange(of: scenePhase) { _, newPhase in
         if newPhase == .active { SharedPlayer.handleForeground() }
       }
+      .overlay(alignment: .bottom) { versionFooter }
     }
     .overlay(alignment: .top) {
       if let errorMessage = viewModel.errorMessage {
@@ -291,6 +292,20 @@ public struct RadioPlayerView: View {
       VolumeSliderView(viewModel: viewModel)
         .padding(.horizontal)
     #endif
+  }
+
+  // MARK: - Version Footer
+
+  /// A tiny, discreet build stamp pinned to the very bottom edge (phone screens only — the TV,
+  /// CarPlay, and Android Auto UIs are separate entry points and never render this view). The
+  /// string is extracted per-platform by `AppVersion`; the styling here is identical on both.
+  @ViewBuilder
+  private var versionFooter: some View {
+    Text(verbatim: AppVersion.displayString)
+      .font(.system(size: 10))
+      .foregroundStyle(subtitleColor.opacity(0.6))
+      .padding(.bottom, 4)
+      .accessibilityHidden(true)
   }
 
   // MARK: - Error Banner
