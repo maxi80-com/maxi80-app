@@ -29,6 +29,8 @@ public final class RadioPlayerCoordinator {
   private let apiClient: any APIClientProtocol
   @ObservationIgnored
   private let artworkService: ArtworkService
+  @ObservationIgnored
+  private let shareService: ShareService
 
   // MARK: - Observable State
 
@@ -90,12 +92,14 @@ public final class RadioPlayerCoordinator {
     player: AudioStreamPlayer,
     nowPlaying: NowPlayingController,
     apiClient: any APIClientProtocol,
-    artworkService: ArtworkService
+    artworkService: ArtworkService,
+    shareService: ShareService = ShareService()
   ) {
     self.player = player
     self.nowPlaying = nowPlaying
     self.apiClient = apiClient
     self.artworkService = artworkService
+    self.shareService = shareService
 
     setupCallbacks()
     setupReconnection()
@@ -108,7 +112,8 @@ public final class RadioPlayerCoordinator {
         onPause: { [weak self] in self?.handleRemoteCommand("pause") }
       )
       let nowPlayingPath =
-        modernNowPlaying == nil ? "FALLBACK (MPNowPlayingInfoCenter)" : "MODERN (NowPlaying framework)"
+        modernNowPlaying == nil
+        ? "FALLBACK (MPNowPlayingInfoCenter)" : "MODERN (NowPlaying framework)"
       logger.info("NowPlaying path: \(nowPlayingPath)")
     #endif
 
@@ -264,6 +269,21 @@ public final class RadioPlayerCoordinator {
 
     // Populate the history carousel at launch without blocking station display.
     refreshHistory()
+  }
+
+  // MARK: - Sharing
+
+  /// Present the native share chooser for the current track with the given pre-formatted text,
+  /// attaching the current cover as an image when one is available. The artwork bytes aren't
+  /// retained after color sampling, so re-download them from the current artwork URL first; a miss
+  /// (no artwork, or download failure) shares text only. Used by the Android share path — Apple
+  /// platforms present `UIActivityViewController` via the SwiftUI `ShareSheet` instead.
+  public func shareCurrentTrack(text: String) async {
+    var imageData: Data?
+    if let artwork = currentArtwork, !artwork.isDefault, let url = artwork.url {
+      imageData = await artworkService.fetchImageData(urlString: url)
+    }
+    shareService.share(text: text, imageData: imageData)
   }
 
   // MARK: - Callback Setup

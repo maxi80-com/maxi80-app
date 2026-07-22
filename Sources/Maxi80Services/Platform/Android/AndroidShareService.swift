@@ -1,0 +1,72 @@
+import Foundation
+
+#if !SKIP_BRIDGE
+
+  #if SKIP
+    import android.content.Context
+    import android.content.Intent
+    import androidx.core.content.FileProvider
+    import skip.foundation.ProcessInfo
+
+    // MARK: - AndroidShareService (Android Implementation)
+
+    extension ShareService {
+
+      private var context: Context {
+        ProcessInfo.processInfo.androidContext
+      }
+
+      /// Present the system share chooser via `Intent.ACTION_SEND`. When artwork bytes are supplied
+      /// they're written to a private cache file and exposed through the app's FileProvider as a
+      /// `content://` URI (a raw `file://` URI would throw `FileUriExposedException` on API 24+); the
+      /// intent then shares `image/*` with the text as `EXTRA_TEXT`. Without bytes it shares
+      /// `text/plain` only. Any failure writing the image degrades to a text-only share rather than
+      /// dropping the share entirely.
+      func androidShare(text: String, imageData: Data?) {
+        let ctx = context
+        let intent = Intent(Intent.ACTION_SEND)
+        intent.putExtra(Intent.EXTRA_TEXT, text)
+
+        if let imageData, let uri = writeSharedImage(imageData, context: ctx) {
+          intent.setType("image/*")
+          intent.putExtra(Intent.EXTRA_STREAM, uri)
+          // Grant the receiving app one-shot read access to the content URI.
+          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } else {
+          intent.setType("text/plain")
+        }
+
+        let chooser = Intent.createChooser(intent, nil)
+        // startActivity from a non-Activity context (we only hold the application context) requires
+        // NEW_TASK. The chooser also needs read-grant flags to hand the URI permission to the target.
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        ctx.startActivity(chooser)
+      }
+
+      /// Write `imageData` to a stable file under the app's cache and return a FileProvider
+      /// `content://` URI for it, or nil on failure. The filename is fixed so repeated shares reuse
+      /// one slot instead of accumulating temp files. The `shared_images` subdirectory and the
+      /// authority must match `res/xml/file_paths.xml` and the `<provider>` in AndroidManifest.xml.
+      private func writeSharedImage(_ imageData: Data, context: Context) -> android.net.Uri? {
+        let dir = java.io.File(context.cacheDir, "shared_images")
+        dir.mkdirs()
+        let file = java.io.File(dir, "current_track.jpg")
+        do {
+          let stream = java.io.FileOutputStream(file)
+          stream.write(imageData.platformValue)
+          stream.close()
+        } catch {
+          return nil
+        }
+        let authority = context.packageName + ".fileprovider"
+        return FileProvider.getUriForFile(context, authority, file)
+      }
+    }
+
+  #else
+    // Apple platforms present UIActivityViewController via the SwiftUI ShareSheet; no platform
+    // implementation is needed here.
+  #endif
+
+#endif  // !SKIP_BRIDGE

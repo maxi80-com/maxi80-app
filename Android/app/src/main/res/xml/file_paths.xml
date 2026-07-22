@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider paths for the native share chooser. The `shared_images` subdirectory of the app's
+     cache holds the current track's artwork, written by AndroidShareService before ACTION_SEND. -->
+<paths>
+    <cache-path name="shared_images" path="shared_images/" />
+</paths>

@@ -63,6 +63,19 @@
             </intent-filter>
         </service>
 
+        <!-- FileProvider exposing cached track artwork as a content:// URI for the native share
+             chooser (Intent.ACTION_SEND). A raw file:// URI would throw FileUriExposedException on
+             API 24+. Authority and paths must match AndroidShareService. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Android Auto support -->
         <meta-data
             android:name="com.google.android.gms.car.application"

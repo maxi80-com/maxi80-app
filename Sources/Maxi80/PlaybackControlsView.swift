@@ -45,9 +45,15 @@ struct PlaybackControlsView: View {
   @ViewBuilder
   private var controls: some View {
     HStack(spacing: 36) {
-      // Share button — presents platform share sheet
+      // Share button. On Apple platforms this flips `showShareSheet` to present
+      // UIActivityViewController via `.shareSheet` below. On Android there is no usable SwiftUI
+      // share sheet, so fire the native system share chooser (Intent.ACTION_SEND) directly.
       Button {
-        showShareSheet = true
+        #if os(Android)
+          viewModel.shareCurrentTrackNatively()
+        #else
+          showShareSheet = true
+        #endif
       } label: {
         secondaryIcon(
           "square.and.arrow.up", android: .share,

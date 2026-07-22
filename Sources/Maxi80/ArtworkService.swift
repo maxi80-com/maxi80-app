@@ -60,6 +60,22 @@ public final class ArtworkService {
     }
   }
 
+  /// Download the raw bytes for an already-resolved artwork URL, or nil on any failure. Used by the
+  /// Android native share to attach the current cover as an image; the coordinator holds the URL
+  /// (`ArtworkResult.url`) but not the bytes, which aren't retained after color sampling.
+  public func fetchImageData(urlString: String) async -> Data? {
+    guard let url = URL(string: urlString) else { return nil }
+    do {
+      let (data, response) = try await URLSession.shared.data(from: url)
+      guard let http = response as? HTTPURLResponse, http.statusCode == 200, !data.isEmpty else {
+        return nil
+      }
+      return data
+    } catch {
+      return nil
+    }
+  }
+
   /// Resolves a song's presigned artwork URL from the `/artwork` endpoint.
   /// The endpoint returns `{"url": "..."}` on success, or an empty body when no artwork
   /// exists — both handled here. Returns `nil` when unavailable.

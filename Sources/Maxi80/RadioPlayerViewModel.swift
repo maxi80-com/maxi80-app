@@ -315,11 +315,23 @@ public final class RadioPlayerViewModel {
   }
 
   public func shareCurrentTrack() -> ShareContent {
+    return ShareContent(text: shareText, image: currentArtwork)
+  }
+
+  /// The localized "I'm listening to …" share message for the current track.
+  private var shareText: String {
     let artist = displayedArtist
     let title = displayedTitle
     let format = Bundle.module.localizedString(
       forKey: "I'm listening to %@ by %@ on Maxi 80. Listen at %@", value: nil, table: nil)
-    let text = String(format: format, title, artist, BrandConstants.websiteURL)
-    return ShareContent(text: text, image: currentArtwork)
+    return String(format: format, title, artist, BrandConstants.websiteURL)
+  }
+
+  /// Fire the platform-native share flow (Android system chooser). The coordinator re-downloads the
+  /// current cover so the share can include the artwork image; a miss falls back to text only. Apple
+  /// platforms present `UIActivityViewController` via the SwiftUI `ShareSheet` instead.
+  public func shareCurrentTrackNatively() {
+    let text = shareText
+    Task { await coordinator.shareCurrentTrack(text: text) }
   }
 }
