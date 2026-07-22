@@ -124,6 +124,17 @@ import Foundation
       func androidPlay(url streamUrl: String) {
         let ctx = context
         let exoPlayer = SharedAudioPlayer.shared(context: ctx)
+
+        // If the shared player was torn down (SharedAudioPlayer.releaseShared(), e.g. from the
+        // service's onTaskRemoved) the process can survive with our cached _exoPlayer/_metadataListener
+        // pointing at the RELEASED instance, while shared() above just rebuilt a fresh one. Detect that
+        // by IDENTITY (not nil — current is non-nil again after the rebuild): if our cache isn't the
+        // live player, our listener was attached to the old player, so drop it. Otherwise the
+        // `_metadataListener == nil` guard below stays false and we never re-attach to the new player,
+        // stalling the coordinator in `.loading`.
+        if _exoPlayer !== exoPlayer {
+          _metadataListener = nil
+        }
         self._exoPlayer = exoPlayer
 
         // Configure ExoPlayer to manage audio focus internally. Called unconditionally on every
@@ -180,8 +191,21 @@ import Foundation
         // edge instead of resuming a now-stale buffer. ExoPlayer internally abandons audio focus
         // when playback stops. The shared player instance and the foreground service stay alive
         // (media3-canonical topology) — only the media item/buffer is cleared.
-        _exoPlayer?.stop()
-        _exoPlayer?.clearMediaItems()
+        //
+        // But if the shared player was fully torn down (releaseShared() from the service's
+        // onTaskRemoved), our cached _exoPlayer may reference a RELEASED instance — either the static
+        // player is now nil, or it has already been rebuilt to a DIFFERENT instance by a later
+        // shared() call. Calling stop() on the released one throws "sending message to a Handler on a
+        // dead thread". Operate ONLY when our cache is still the live shared player (identity match);
+        // otherwise there is nothing of ours left to stop — just drop the stale references and
+        // reconcile local state.
+        if let cached = _exoPlayer, cached === SharedAudioPlayer.current {
+          cached.stop()
+          cached.clearMediaItems()
+        } else {
+          _exoPlayer = nil
+          _metadataListener = nil
+        }
         isPlaying = false
         onPlaybackStateChanged?(false)
       }

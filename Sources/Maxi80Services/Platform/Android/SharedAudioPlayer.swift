@@ -36,6 +36,11 @@ import Foundation
         return created
       }
 
+      /// The current shared player WITHOUT creating one — `nil` after `releaseShared()` until the
+      /// next `shared()` rebuild. Lets callers detect a torn-down or rebuilt player and drop stale
+      /// references to a released instance (see `AudioStreamPlayer.androidPlay`/`androidStop`).
+      static var current: ExoPlayer? { player }
+
       /// Release and drop the shared player (service destroy / full teardown).
       static func releaseShared() {
         player?.release()
