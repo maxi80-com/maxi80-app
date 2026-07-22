@@ -250,18 +250,22 @@ class Maxi80MediaService : MediaLibraryService() {
     }
 
     /**
-     * The user swiped the app away (task removed). Fully tear down playback: stop and release the
-     * shared ExoPlayer, then stopSelf() — which routes through onDestroy to release the session and
-     * drop the media notification.
+     * The user swiped the app away (task removed). Fully tear down playback and drop the media
+     * notification.
+     *
+     * Order matters: release the session FIRST, then the shared ExoPlayer. The session wraps the
+     * player, so if we released the player first the session would briefly reference a released
+     * ExoPlayer — and stopSelf()'s onDestroy runs asynchronously, so that window is real. Any
+     * controller/system access to the session during it would forward to a released player and
+     * crash. Releasing the session here also makes onDestroy's session?.release() a safe no-op.
      *
      * Releasing the shared player here is safe precisely because this fires ONLY on genuine task
      * removal — unlike onDestroy, which media3 also invokes on every pause (see onDestroy below,
      * which deliberately does NOT release the player). This path does not affect pause/resume.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        val player = SharedAudioPlayer.shared(applicationContext)
-        player.stop()
-        player.clearMediaItems()
+        session?.release()
+        session = null
         SharedAudioPlayer.releaseShared()
         stopSelf()
         super.onTaskRemoved(rootIntent)

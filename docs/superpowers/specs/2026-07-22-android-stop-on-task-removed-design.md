@@ -1,7 +1,7 @@
 # Android: stop playback when the app is swiped away
 
 **Date:** 2026-07-22
-**Status:** Approved, pending implementation
+**Status:** Implemented (PR #14)
 **Platform:** Android only
 
 ## Problem
