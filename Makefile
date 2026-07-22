@@ -3,6 +3,23 @@
 # ------------------------------------------------------------------------------
 # Build/package/publish automation for the iOS (Darwin) and Android halves.
 #
+# ------------------------------------------------------------------------------
+# HOW TO SHIP A RELEASE  (read this first — one command)
+# ------------------------------------------------------------------------------
+#     make clean && make ship
+#
+#   `ship` runs the whole sequence in order so you never have to remember it:
+#     1. release       bump build number + build+sign ALL platforms + test
+#                       + commit + local tag v<MARKETING_VERSION>-<BUILD>
+#     2. publish-all    upload every binary to its private test track
+#     3. push-release   push the commit + tag to origin, then cut the GitHub release
+#
+#   Store listing text/screenshots changed?   make clean && make ship-with-metadata
+#   After testing on TestFlight / Play internal, ship to prod:   make promote-all
+#
+#   (Each step is also runnable standalone — see the `ship` / `release` /
+#    `publish-all` / `push-release` targets below.)
+#
 # BUILD NUMBER SCHEME
 #   Format:   yyyyMMddNN   (yyyyMMdd + 2-digit daily counter), via `date +%Y%m%d`.
 #   Example:  2026-07-18 (1st build)  ->  2026071800
@@ -33,7 +50,8 @@
 #   upload fails, you keep a committed bump with no shipped release. That is
 #   acceptable (the next publish simply bumps again) and avoids uploading a
 #   build whose number was never recorded. Nothing is pushed automatically —
-#   the push command is printed for you to run.
+#   run `make push-release` (pushes commit + tag, then cuts the GitHub release)
+#   when you're ready.
 # ==============================================================================
 
 # Fail fast: one shell per recipe, abort on first error / unset var / pipe fail.
@@ -68,7 +86,8 @@ KEYSTORE_PROPS := Android/app/keystore.properties
         publish-ios publish-ios-open publish-tvos publish-tvos-open \
         publish-macos publish-android publish-android-open \
         publish-all publish-all-open \
-        promote-ios promote-android promote-all bump release release-apk screenshots
+        promote-ios promote-android promote-all bump release push-release \
+        ship ship-with-metadata release-apk screenshots
 
 # ------------------------------------------------------------------------------
 # Help / info
@@ -78,15 +97,19 @@ help: ## Show this help (default target)
 	@echo ""
 	@echo "Usage: make <target>"
 	@echo ""
-	@echo "  Common scenarios"
-	@echo "    New test build (no listing change):"
-	@echo "      make clean && make release && make publish-all"
-	@echo "    Listing text/screenshots changed too:"
-	@echo "      make clean && make release && make publish-all && make publish-metadata-all"
-	@echo "    Ship a tested build to production:"
-	@echo "      make promote-all      # after verifying on TestFlight / Play internal"
-	@echo "    Just check state / environment:"
-	@echo "      make version   |   make doctor"
+	@echo "  ┌─────────────────────────────────────────────────────────────────────┐"
+	@echo "  │  TO RELEASE, RUN ONE COMMAND:   make clean && make ship               │"
+	@echo "  │                                                                       │"
+	@echo "  │  'ship' does, in order:                                               │"
+	@echo "  │     1. release       bump + build+sign ALL + test + commit + tag      │"
+	@echo "  │     2. publish-all   upload every binary to its private test track    │"
+	@echo "  │     3. push-release  push commit+tag to origin + cut GitHub release   │"
+	@echo "  │                                                                       │"
+	@echo "  │  Listing text/screenshots changed?   make clean && make ship-with-metadata"
+	@echo "  │  Then, after testing on TestFlight / Play internal:   make promote-all"
+	@echo "  └─────────────────────────────────────────────────────────────────────┘"
+	@echo ""
+	@echo "    Just check state / environment:  make version  |  make doctor"
 	@echo ""
 	@echo "  Info"
 	@echo "    help              Show this help (default)"
@@ -109,7 +132,10 @@ help: ## Show this help (default target)
 	@echo "    release-apk       Signed installable APK from the last release AAB (no rebuild)"
 	@echo ""
 	@echo "  Release (one version across all platforms)"
-	@echo "    release              Bump -> build+sign ALL -> test -> commit+tag (no upload)"
+	@echo "    ship                 ★ THE release command: release -> publish-all -> push-release"
+	@echo "    ship-with-metadata   Same as ship, plus uploads changed store listing/screenshots"
+	@echo "    release              Step 1 only: bump -> build+sign ALL -> test -> commit+tag (no upload)"
+	@echo "    push-release         Step 3 only: push commit + tag, then create the GitHub release"
 	@echo "    bump                 Rewrite build number in Skip.env (yyyyMMddNN, low-level)"
 	@echo ""
 	@echo "  Publish metadata (listing text + screenshots, draft; no binary/review)"
@@ -131,8 +157,8 @@ help: ## Show this help (default target)
 	@echo "    promote-android  Promote Play internal build to production"
 	@echo "    promote-all      Both"
 	@echo ""
-	@echo "  Typical:  make clean && make release && make publish-all   (then make promote-all)"
-	@echo "            add 'make publish-metadata-all' only when the store listing changed"
+	@echo "  Typical:  make clean && make ship        (then make promote-all after testing)"
+	@echo "            use 'make ship-with-metadata' when the store listing changed"
 	@echo ""
 	@echo "  Misc"
 	@echo "    screenshots       Helper wrapping fastlane/capture_screenshots.sh"
@@ -426,7 +452,57 @@ release: ## Prepare a signed, versioned release of ALL platforms (no upload)
 	git tag -a "$$TAG" -m "Maxi 80 $(MARKETING_VERSION) (build $$BUILD)"; \
 	echo "==> Release $$TAG prepared (iOS+tvOS IPAs, Android AAB), committed + tagged (not pushed)."; \
 	echo "    Next: make publish-all    (binaries to all test tracks; add publish-metadata-all if the listing changed)"; \
-	echo "    Then: git push && git push origin $$TAG"
+	echo "    Then: make push-release   (pushes the release commit + tag to origin)"
+
+push-release: ## Push the release commit + tag to origin, then create the GitHub release
+	# Pushes the current branch and the tag for MARKETING_VERSION/build in Skip.env,
+	# then creates a GitHub release on that tag (auto-generated notes since the prior tag).
+	# Run AFTER `make release` (and typically after a successful `make publish-all`).
+	@set -e; \
+	BUILD="$$(grep '^CURRENT_PROJECT_VERSION' $(SKIP_ENV) | sed -E 's/.*=[[:space:]]*//')"; \
+	TAG="v$(MARKETING_VERSION)-$$BUILD"; \
+	if ! git rev-parse -q --verify "refs/tags/$$TAG" >/dev/null; then \
+		echo "ERROR: tag $$TAG does not exist locally — run 'make release' first." >&2; exit 1; \
+	fi; \
+	echo "==> Pushing branch + tag $$TAG to origin"; \
+	git push; \
+	git push origin "$$TAG"; \
+	echo "==> Pushed $$TAG."; \
+	if ! command -v gh >/dev/null 2>&1; then \
+		echo "WARN gh CLI not found — skipping GitHub release. Install it, then: gh release create $$TAG --generate-notes"; \
+	elif gh release view "$$TAG" >/dev/null 2>&1; then \
+		echo "==> GitHub release $$TAG already exists — skipping."; \
+	else \
+		echo "==> Creating GitHub release $$TAG"; \
+		gh release create "$$TAG" --title "Maxi 80 $(MARKETING_VERSION) (build $$BUILD)" --generate-notes --verify-tag; \
+	fi
+
+# ==============================================================================
+# SHIP — the one command to remember. Full release, start to finish.
+# ==============================================================================
+#   Runs, IN ORDER, the four steps you'd otherwise have to chain by hand:
+#     1. release       bump + build+sign ALL platforms + test + commit + local tag
+#     2. publish-all   upload every binary to its private test track
+#     3. push-release  push commit + tag to origin, cut the GitHub release
+#   `make ship` does NOT clean first (run `make clean` yourself for a cold build)
+#   and does NOT promote to production (that's the separate, opt-in `promote-all`).
+#   If the store LISTING TEXT/SCREENSHOTS changed, use `make ship-with-metadata`.
+ship: ## ★ Full release: bump→build→test→tag→upload→push→GitHub release
+	# Sequential recipe (not prerequisites) so order holds even under `make -j`.
+	@$(MAKE) --no-print-directory release
+	@$(MAKE) --no-print-directory publish-all
+	@$(MAKE) --no-print-directory push-release
+	@echo ""
+	@echo "==> SHIPPED. Binaries are on the private test tracks; commit/tag/GitHub release are pushed."
+	@echo "    Verify on TestFlight / Play internal, then: make promote-all"
+
+ship-with-metadata: ## Like 'ship', but also uploads changed store listing text/screenshots
+	@$(MAKE) --no-print-directory release
+	@$(MAKE) --no-print-directory publish-all
+	@$(MAKE) --no-print-directory publish-metadata-all
+	@$(MAKE) --no-print-directory push-release
+	@echo ""
+	@echo "==> SHIPPED (with metadata). Verify on TestFlight / Play internal, then: make promote-all"
 
 # --- Metadata uploads (listing text + screenshots as draft; no binary, no review) ---
 publish-metadata-ios: ## App Store iOS listing (text + iPhone screenshots) as draft
