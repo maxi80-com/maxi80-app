@@ -327,11 +327,21 @@ public final class RadioPlayerViewModel {
     return String(format: format, title, artist, BrandConstants.websiteURL)
   }
 
-  /// Fire the platform-native share flow (Android system chooser). The coordinator re-downloads the
-  /// current cover so the share can include the artwork image; a miss falls back to text only. Apple
-  /// platforms present `UIActivityViewController` via the SwiftUI `ShareSheet` instead.
+  /// The artwork URL for the song the share text describes — the focused history entry's cover
+  /// while browsing, else the live song's cover. Kept in lockstep with `shareText` (which uses the
+  /// same history-aware `displayed*` fields) so the shared image and text always describe the same
+  /// song. `nil` when the displayed song has no real artwork, in which case the share is text-only.
+  private var shareArtworkURL: String? {
+    if let entry = focusedHistoryEntry { return entry.artworkURL }
+    return coordinator.currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
+  }
+
+  /// Fire the platform-native share flow (Android system chooser). The coordinator downloads the
+  /// displayed cover so the share can include the artwork image; a miss falls back to text only.
+  /// Apple platforms present `UIActivityViewController` via the SwiftUI `ShareSheet` instead.
   public func shareCurrentTrackNatively() {
     let text = shareText
-    Task { await coordinator.shareCurrentTrack(text: text) }
+    let artworkURL = shareArtworkURL
+    Task { await coordinator.shareCurrentTrack(text: text, artworkURL: artworkURL) }
   }
 }

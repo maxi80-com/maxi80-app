@@ -44,23 +44,27 @@ import Foundation
         ctx.startActivity(chooser)
       }
 
-      /// Write `imageData` to a stable file under the app's cache and return a FileProvider
-      /// `content://` URI for it, or nil on failure. The filename is fixed so repeated shares reuse
-      /// one slot instead of accumulating temp files. The `shared_images` subdirectory and the
+      /// Write `imageData` to a file under the app's cache and return a FileProvider `content://` URI
+      /// for it, or nil on any failure. Each share uses a unique filename so a still-pending read of
+      /// a previous share's URI can't be clobbered by the next share writing the same slot; the OS
+      /// reclaims this cache directory under pressure. The `shared_images` subdirectory and the
       /// authority must match `res/xml/file_paths.xml` and the `<provider>` in AndroidManifest.xml.
+      /// `getUriForFile` throws (IllegalArgumentException) when the file isn't under a configured
+      /// path, so it's inside the do/catch too — a throw degrades to a text-only share, never a crash.
       private func writeSharedImage(_ imageData: Data, context: Context) -> android.net.Uri? {
         let dir = java.io.File(context.cacheDir, "shared_images")
         dir.mkdirs()
-        let file = java.io.File(dir, "current_track.jpg")
+        let file = java.io.File(dir, "share-\(java.lang.System.currentTimeMillis()).jpg")
         do {
           let stream = java.io.FileOutputStream(file)
+          // Close on every exit path (including a write throw), not just the success path.
+          defer { stream.close() }
           stream.write(imageData.platformValue)
-          stream.close()
+          let authority = context.packageName + ".fileprovider"
+          return FileProvider.getUriForFile(context, authority, file)
         } catch {
           return nil
         }
-        let authority = context.packageName + ".fileprovider"
-        return FileProvider.getUriForFile(context, authority, file)
       }
     }
 

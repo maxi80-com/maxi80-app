@@ -273,15 +273,17 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Sharing
 
-  /// Present the native share chooser for the current track with the given pre-formatted text,
-  /// attaching the current cover as an image when one is available. The artwork bytes aren't
-  /// retained after color sampling, so re-download them from the current artwork URL first; a miss
-  /// (no artwork, or download failure) shares text only. Used by the Android share path — Apple
-  /// platforms present `UIActivityViewController` via the SwiftUI `ShareSheet` instead.
-  public func shareCurrentTrack(text: String) async {
+  /// Present the native share chooser with the given pre-formatted `text`, attaching the cover at
+  /// `artworkURL` as an image when one is supplied. The caller (the view model) passes the URL for
+  /// the song the text describes — the live song, or the focused history entry while browsing — so
+  /// the shared image and text always match. The bytes aren't retained after color sampling, so
+  /// they're re-downloaded here; `nil` URL or a download failure degrades to a text-only share.
+  /// Used by the Android share path — Apple platforms present `UIActivityViewController` via the
+  /// SwiftUI `ShareSheet` instead.
+  public func shareCurrentTrack(text: String, artworkURL: String?) async {
     var imageData: Data?
-    if let artwork = currentArtwork, !artwork.isDefault, let url = artwork.url {
-      imageData = await artworkService.fetchImageData(urlString: url)
+    if let artworkURL {
+      imageData = await artworkService.fetchImageData(urlString: artworkURL)
     }
     shareService.share(text: text, imageData: imageData)
   }
