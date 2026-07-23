@@ -439,7 +439,14 @@ release: ## Prepare a signed, versioned release of ALL platforms (no upload)
 	# The version is compiled into each binary, so bump BEFORE building; commit+tag
 	# land LAST so a failed build/test leaves git clean (fix and rerun). GNU Make
 	# 3.81 ignores .ONESHELL, so each step is its own line.
-	@$(MAKE) --no-print-directory check-clean-tree
+	# Tree must be clean EXCEPT for Skip.env: bumping the marketing version there is
+	# a legitimate pre-release edit, and the release's final commit `git add`s Skip.env
+	# anyway. Reject any OTHER dirty file (pathspec excludes Skip.env from the check).
+	@if [ -n "$$(git status --porcelain -- ':!$(SKIP_ENV)')" ]; then \
+	  echo "ERROR: git working tree has uncommitted changes other than $(SKIP_ENV). Commit or stash first:"; \
+	  git status --short -- ':!$(SKIP_ENV)'; \
+	  exit 1; \
+	fi
 	@$(MAKE) --no-print-directory bump
 	@echo "==> Building + signing iOS(+CarPlay), tvOS, macOS and Android at the new version"
 	@$(MAKE) --no-print-directory package-ios
