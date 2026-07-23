@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Build
+import android.os.Process
 import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
@@ -274,10 +275,24 @@ class Maxi80MediaService : MediaLibraryService() {
         session = null
         SharedAudioPlayer.releaseShared()
         stopSelf()
+        // Called for framework-contract completeness only; the process dies on the next line, so any
+        // async teardown super schedules will not run — that is intentional.
         super.onTaskRemoved(rootIntent)
         // Terminate the cached process. This is the whole app's process (the service is not in a
         // separate process), so the UI/singletons die with it and the next icon tap cold-starts.
-        android.os.Process.killProcess(android.os.Process.myPid())
+        Process.killProcess(Process.myPid())
+    }
+
+    /**
+     * Pin non-sticky restart. This service inherits MediaSessionService's onStartCommand, which
+     * returns START_STICKY by default — after onTaskRemoved's killProcess(), a sticky service can be
+     * recreated by the system with a null intent, resurrecting playback we just tore down. Returning
+     * START_NOT_STICKY guarantees "swipe away = exit" stays a true exit. (Verified on device: no
+     * resurrection occurred even before this override, but the default should not be relied upon.)
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
