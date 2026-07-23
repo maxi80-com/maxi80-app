@@ -331,7 +331,9 @@ public final class RadioPlayerViewModel {
   /// while browsing, else the live song's cover. Kept in lockstep with `shareText` (which uses the
   /// same history-aware `displayed*` fields) so the shared image and text always describe the same
   /// song. `nil` when the displayed song has no real artwork, in which case the share is text-only.
-  private var shareArtworkURL: String? {
+  /// Internal (not private) so tests can assert this history-aware pick, as `ShareTextPropertyTests`
+  /// asserts `shareText` — the native share path itself is a fire-and-forget no-op in tests.
+  var shareArtworkURL: String? {
     if let entry = focusedHistoryEntry { return entry.artworkURL }
     return coordinator.currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
   }
@@ -342,6 +344,8 @@ public final class RadioPlayerViewModel {
   public func shareCurrentTrackNatively() {
     let text = shareText
     let artworkURL = shareArtworkURL
-    Task { await coordinator.shareCurrentTrack(text: text, artworkURL: artworkURL) }
+    Task { [weak self] in
+      await self?.coordinator.shareCurrentTrack(text: text, artworkURL: artworkURL)
+    }
   }
 }

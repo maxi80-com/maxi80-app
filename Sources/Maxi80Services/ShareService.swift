@@ -24,8 +24,6 @@ import Foundation
       #elseif os(iOS) || os(tvOS) || os(macOS)
         // Apple platforms present UIActivityViewController via the SwiftUI `ShareSheet`; nothing to
         // do here. Retained for API parity so the native call site can be platform-agnostic.
-        _ = text
-        _ = imageData
       #endif
     }
   }

@@ -49,17 +49,32 @@ import Foundation
         ctx.startActivity(chooser)
       }
 
+      /// Retain window for a previously-shared image: after this long no chooser target could still
+      /// be reading the URI, so the file is safe to prune. One hour comfortably outlasts any share flow.
+      private static let sharedImageRetentionMillis: Int64 = 60 * 60 * 1000
+
       /// Write `imageData` to a file under the app's cache and return a FileProvider `content://` URI
       /// for it, or nil on any failure. Each share uses a unique filename so a still-pending read of
-      /// a previous share's URI can't be clobbered by the next share writing the same slot; the OS
-      /// reclaims this cache directory under pressure. The `shared_images` subdirectory and the
+      /// a previous share's URI can't be clobbered by the next share writing the same slot. Before
+      /// writing, prune earlier files past the retention window so the directory stays bounded rather
+      /// than growing until the OS reclaims the cache. The `shared_images` subdirectory and the
       /// authority must match `res/xml/file_paths.xml` and the `<provider>` in AndroidManifest.xml.
       /// `getUriForFile` throws (IllegalArgumentException) when the file isn't under a configured
       /// path, so it's inside the do/catch too — a throw degrades to a text-only share, never a crash.
       private func writeSharedImage(_ imageData: Data, context: Context) -> android.net.Uri? {
+        let now = java.lang.System.currentTimeMillis()
         let dir = java.io.File(context.cacheDir, "shared_images")
         dir.mkdirs()
-        let file = java.io.File(dir, "share-\(java.lang.System.currentTimeMillis()).jpg")
+        // Delete previously-shared images old enough that no chooser target could still be reading
+        // them, so repeated shares can't grow the cache without limit. `listFiles()` is nil only if
+        // `dir` isn't a directory — it is, we just created it — so a nil result means nothing to prune.
+        let cutoff = now - Self.sharedImageRetentionMillis
+        if let existingFiles = dir.listFiles() {
+          for existing in existingFiles where existing.lastModified() < cutoff {
+            existing.delete()
+          }
+        }
+        let file = java.io.File(dir, "share-\(now).jpg")
         do {
           let stream = java.io.FileOutputStream(file)
           // Close on every exit path (including a write throw), not just the success path.
