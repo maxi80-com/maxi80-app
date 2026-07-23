@@ -3,7 +3,9 @@ package maxi80.services
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.Intent
 import android.os.Build
+import android.os.Process
 import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
@@ -246,6 +248,51 @@ class Maxi80MediaService : MediaLibraryService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
         return session
+    }
+
+    /**
+     * The user swiped the app away (task removed). Fully tear down playback, drop the media
+     * notification, and kill the process so the next launch is a guaranteed cold start.
+     *
+     * Order matters: release the session FIRST, then the shared ExoPlayer. The session wraps the
+     * player, so if we released the player first the session would briefly reference a released
+     * ExoPlayer — and stopSelf()'s onDestroy runs asynchronously, so that window is real. Any
+     * controller/system access to the session during it would forward to a released player and
+     * crash. Releasing the session here also makes onDestroy's session?.release() a safe no-op.
+     *
+     * Releasing the shared player here is safe precisely because this fires ONLY on genuine task
+     * removal — unlike onDestroy, which media3 also invokes on every pause (see onDestroy below,
+     * which deliberately does NOT release the player). This path does not affect pause/resume.
+     *
+     * Why kill the process: Android caches the app process after task removal, so the native
+     * coordinator/view-model singletons (playback state, carousel position) would survive with
+     * stale state, and a warm relaunch would show a pause button over dead audio and a carousel
+     * parked on an old cover. Killing the process makes "swipe away = exit" a true exit — the next
+     * launch always starts fresh. Everything is already torn down above, so this loses nothing.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        session?.release()
+        session = null
+        SharedAudioPlayer.releaseShared()
+        stopSelf()
+        // Called for framework-contract completeness only; the process dies on the next line, so any
+        // async teardown super schedules will not run — that is intentional.
+        super.onTaskRemoved(rootIntent)
+        // Terminate the cached process. This is the whole app's process (the service is not in a
+        // separate process), so the UI/singletons die with it and the next icon tap cold-starts.
+        Process.killProcess(Process.myPid())
+    }
+
+    /**
+     * Pin non-sticky restart. This service inherits MediaSessionService's onStartCommand, which
+     * returns START_STICKY by default — after onTaskRemoved's killProcess(), a sticky service can be
+     * recreated by the system with a null intent, resurrecting playback we just tore down. Returning
+     * START_NOT_STICKY guarantees "swipe away = exit" stays a true exit. (Verified on device: no
+     * resurrection occurred even before this override, but the default should not be relied upon.)
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {

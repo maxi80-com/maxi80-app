@@ -36,6 +36,13 @@ import Foundation
         return created
       }
 
+      /// The current shared player WITHOUT creating one — `nil` after `releaseShared()` until the
+      /// next `shared()` rebuild. Consumed only by the defensive identity guards in
+      /// `AudioStreamPlayer.androidPlay`/`androidStop`; kept coupled to them (remove together if
+      /// those guards are ever dropped). Those guards are unreachable in the current design because
+      /// the sole `releaseShared()` caller kills the process, so this is defense-in-depth.
+      static var current: ExoPlayer? { player }
+
       /// Release and drop the shared player (service destroy / full teardown).
       static func releaseShared() {
         player?.release()

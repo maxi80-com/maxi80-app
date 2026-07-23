@@ -124,6 +124,17 @@ import Foundation
       func androidPlay(url streamUrl: String) {
         let ctx = context
         let exoPlayer = SharedAudioPlayer.shared(context: ctx)
+
+        // Defensive (same reachability caveat as androidStop below): if the shared player had been
+        // torn down (releaseShared()) while the process survived, our cached _metadataListener would
+        // point at the RELEASED player while shared() above rebuilt a fresh one. Detect that by
+        // IDENTITY (not nil — current is non-nil again after the rebuild) and drop the stale listener,
+        // so the `_metadataListener == nil` guard below re-attaches it to the new player instead of
+        // leaving the coordinator stalled in `.loading`. Not reachable in the current design (the sole
+        // releaseShared() caller, onTaskRemoved, kills the process); kept as defense-in-depth.
+        if _exoPlayer !== exoPlayer {
+          _metadataListener = nil
+        }
         self._exoPlayer = exoPlayer
 
         // Configure ExoPlayer to manage audio focus internally. Called unconditionally on every
@@ -180,8 +191,24 @@ import Foundation
         // edge instead of resuming a now-stale buffer. ExoPlayer internally abandons audio focus
         // when playback stops. The shared player instance and the foreground service stay alive
         // (media3-canonical topology) — only the media item/buffer is cleared.
-        _exoPlayer?.stop()
-        _exoPlayer?.clearMediaItems()
+        //
+        // Defensive: guard against a cached _exoPlayer that references a RELEASED instance — the
+        // static player being nil, or rebuilt to a DIFFERENT instance by a later shared() call —
+        // where calling stop() would throw "sending message to a Handler on a dead thread".
+        //
+        // In the CURRENT design this is not reachable: the only caller of releaseShared() is the
+        // service's onTaskRemoved, which kills the process on the next line, so no warm process
+        // outlives a released player to reach here. This guard is kept purely as defense-in-depth —
+        // killProcess() is best-effort, and a future second caller of releaseShared() could
+        // reintroduce warm teardown. Operate ONLY when our cache is still the live shared player
+        // (identity match); otherwise drop the stale references and just reconcile local state.
+        if let cached = _exoPlayer, cached === SharedAudioPlayer.current {
+          cached.stop()
+          cached.clearMediaItems()
+        } else {
+          _exoPlayer = nil
+          _metadataListener = nil
+        }
         isPlaying = false
         onPlaybackStateChanged?(false)
       }
