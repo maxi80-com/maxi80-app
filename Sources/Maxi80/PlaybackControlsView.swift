@@ -12,7 +12,11 @@ import SwiftUI
 /// - 17.2, 17.3, 17.4: Share sheet with text + artwork
 struct PlaybackControlsView: View {
   @Bindable var viewModel: RadioPlayerViewModel
-  @State var showShareSheet = false
+  #if !os(Android)
+    // Drives the SwiftUI `.shareSheet` (UIActivityViewController) on Apple platforms. Android never
+    // uses it — the share button fires the native system chooser directly — so it's gated out there.
+    @State var showShareSheet = false
+  #endif
   @Environment(\.colorScheme) var colorScheme
 
   var body: some View {
@@ -45,9 +49,15 @@ struct PlaybackControlsView: View {
   @ViewBuilder
   private var controls: some View {
     HStack(spacing: 36) {
-      // Share button — presents platform share sheet
+      // Share button. On Apple platforms this flips `showShareSheet` to present
+      // UIActivityViewController via `.shareSheet` below. On Android there is no usable SwiftUI
+      // share sheet, so fire the native system share chooser (Intent.ACTION_SEND) directly.
       Button {
-        showShareSheet = true
+        #if os(Android)
+          viewModel.shareCurrentTrackNatively()
+        #else
+          showShareSheet = true
+        #endif
       } label: {
         secondaryIcon(
           "square.and.arrow.up", android: .share,
@@ -100,9 +110,13 @@ struct PlaybackControlsView: View {
           .accessibilityHidden(true)
       }
     }
-    .shareSheet(isPresented: $showShareSheet) {
-      viewModel.shareCurrentTrack()
-    }
+    #if !os(Android)
+      // Apple platforms present the share sheet here. On Android the button calls the native
+      // chooser directly, so this modifier (and its backing state) are gated out entirely.
+      .shareSheet(isPresented: $showShareSheet) {
+        viewModel.shareCurrentTrack()
+      }
+    #endif
   }
 
   /// A secondary control glyph normalized to a fixed size and square frame so the share and

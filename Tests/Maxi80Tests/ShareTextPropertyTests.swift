@@ -43,4 +43,56 @@ struct ShareTextPropertyTests {
         return shareContent.text == expected
       }
   }
+
+  @MainActor
+  private func makeViewModel() -> (RadioPlayerViewModel, RadioPlayerCoordinator) {
+    let apiClient = APIClient(baseURL: "https://test.com", authToken: "test-key")
+    let coordinator = RadioPlayerCoordinator(
+      player: AudioStreamPlayer(),
+      nowPlaying: NowPlayingController(),
+      apiClient: apiClient,
+      artworkService: ArtworkService(apiClient: apiClient)
+    )
+    return (RadioPlayerViewModel(coordinator: coordinator), coordinator)
+  }
+
+  /// The shared image must describe the same song as the shared text: the live cover at the now
+  /// slot, the focused entry's cover while browsing history, and nil (text-only) for the default
+  /// cover. Mirrors `shareText`'s history-awareness so the two never diverge.
+  @Test("shareArtworkURL returns the live cover at the now slot")
+  @MainActor
+  func shareArtworkURL_liveSlot_returnsCurrentCover() {
+    let (vm, coordinator) = makeViewModel()
+    coordinator.currentArtwork = ArtworkResult(
+      image: nil, dominantColor: .black, isDefault: false, url: "https://cdn/live.jpg")
+    vm.selectedCoverID = RadioPlayerViewModel.nowSlotID
+
+    #expect(vm.shareArtworkURL == "https://cdn/live.jpg")
+  }
+
+  @Test("shareArtworkURL returns the focused history entry's cover while browsing")
+  @MainActor
+  func shareArtworkURL_browsingHistory_returnsFocusedCover() {
+    let (vm, coordinator) = makeViewModel()
+    coordinator.currentArtwork = ArtworkResult(
+      image: nil, dominantColor: .black, isDefault: false, url: "https://cdn/live.jpg")
+    let past = HistoryEntry(
+      artist: "A", title: "T", timestamp: "2026-01-01T00:00:00Z", artworkURL: "https://cdn/past.jpg"
+    )
+    coordinator.history = [past]
+    vm.selectedCoverID = AnyHashable(past.id)
+
+    #expect(vm.shareArtworkURL == "https://cdn/past.jpg")
+  }
+
+  @Test("shareArtworkURL is nil for the default cover so the share is text-only")
+  @MainActor
+  func shareArtworkURL_defaultCover_isNil() {
+    let (vm, coordinator) = makeViewModel()
+    coordinator.currentArtwork = ArtworkResult(
+      image: nil, dominantColor: .black, isDefault: true, url: nil)
+    vm.selectedCoverID = RadioPlayerViewModel.nowSlotID
+
+    #expect(vm.shareArtworkURL == nil)
+  }
 }

@@ -29,6 +29,8 @@ public final class RadioPlayerCoordinator {
   private let apiClient: any APIClientProtocol
   @ObservationIgnored
   private let artworkService: ArtworkService
+  @ObservationIgnored
+  private let shareService: ShareService
 
   // MARK: - Observable State
 
@@ -90,12 +92,14 @@ public final class RadioPlayerCoordinator {
     player: AudioStreamPlayer,
     nowPlaying: NowPlayingController,
     apiClient: any APIClientProtocol,
-    artworkService: ArtworkService
+    artworkService: ArtworkService,
+    shareService: ShareService = ShareService()
   ) {
     self.player = player
     self.nowPlaying = nowPlaying
     self.apiClient = apiClient
     self.artworkService = artworkService
+    self.shareService = shareService
 
     setupCallbacks()
     setupReconnection()
@@ -108,7 +112,8 @@ public final class RadioPlayerCoordinator {
         onPause: { [weak self] in self?.handleRemoteCommand("pause") }
       )
       let nowPlayingPath =
-        modernNowPlaying == nil ? "FALLBACK (MPNowPlayingInfoCenter)" : "MODERN (NowPlaying framework)"
+        modernNowPlaying == nil
+        ? "FALLBACK (MPNowPlayingInfoCenter)" : "MODERN (NowPlaying framework)"
       logger.info("NowPlaying path: \(nowPlayingPath)")
     #endif
 
@@ -264,6 +269,23 @@ public final class RadioPlayerCoordinator {
 
     // Populate the history carousel at launch without blocking station display.
     refreshHistory()
+  }
+
+  // MARK: - Sharing
+
+  /// Present the native share chooser with the given pre-formatted `text`, attaching the cover at
+  /// `artworkURL` as an image when one is supplied. The caller (the view model) passes the URL for
+  /// the song the text describes — the live song, or the focused history entry while browsing — so
+  /// the shared image and text always match. The bytes aren't retained after color sampling, so
+  /// they're re-downloaded here; `nil` URL or a download failure degrades to a text-only share.
+  /// Used by the Android share path — Apple platforms present `UIActivityViewController` via the
+  /// SwiftUI `ShareSheet` instead.
+  public func shareCurrentTrack(text: String, artworkURL: String?) async {
+    var imageData: Data?
+    if let artworkURL {
+      imageData = await artworkService.fetchImageData(urlString: artworkURL)
+    }
+    shareService.share(text: text, imageData: imageData)
   }
 
   // MARK: - Callback Setup
