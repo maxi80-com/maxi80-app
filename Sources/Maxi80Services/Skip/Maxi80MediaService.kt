@@ -250,8 +250,8 @@ class Maxi80MediaService : MediaLibraryService() {
     }
 
     /**
-     * The user swiped the app away (task removed). Fully tear down playback and drop the media
-     * notification.
+     * The user swiped the app away (task removed). Fully tear down playback, drop the media
+     * notification, and kill the process so the next launch is a guaranteed cold start.
      *
      * Order matters: release the session FIRST, then the shared ExoPlayer. The session wraps the
      * player, so if we released the player first the session would briefly reference a released
@@ -262,6 +262,12 @@ class Maxi80MediaService : MediaLibraryService() {
      * Releasing the shared player here is safe precisely because this fires ONLY on genuine task
      * removal — unlike onDestroy, which media3 also invokes on every pause (see onDestroy below,
      * which deliberately does NOT release the player). This path does not affect pause/resume.
+     *
+     * Why kill the process: Android caches the app process after task removal, so the native
+     * coordinator/view-model singletons (playback state, carousel position) would survive with
+     * stale state, and a warm relaunch would show a pause button over dead audio and a carousel
+     * parked on an old cover. Killing the process makes "swipe away = exit" a true exit — the next
+     * launch always starts fresh. Everything is already torn down above, so this loses nothing.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         session?.release()
@@ -269,6 +275,9 @@ class Maxi80MediaService : MediaLibraryService() {
         SharedAudioPlayer.releaseShared()
         stopSelf()
         super.onTaskRemoved(rootIntent)
+        // Terminate the cached process. This is the whole app's process (the service is not in a
+        // separate process), so the UI/singletons die with it and the next icon tap cold-starts.
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     override fun onDestroy() {
