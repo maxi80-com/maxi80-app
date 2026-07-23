@@ -30,8 +30,13 @@ import Foundation
         if let imageData, let uri = writeSharedImage(imageData, context: ctx) {
           intent.setType("image/*")
           intent.putExtra(Intent.EXTRA_STREAM, uri)
-          // Grant the receiving app one-shot read access to the content URI.
           intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          // EXTRA_STREAM + the grant flag alone do NOT reach the chooser's preview renderer or
+          // targets that read from the clip — the URI must also ride as ClipData for the read grant
+          // to propagate. Without this the cover fails to load ("Invalid album art uri" / preview
+          // load failure) even though the file and content:// URI are valid.
+          intent.setClipData(
+            android.content.ClipData.newUri(ctx.getContentResolver(), "artwork", uri))
         } else {
           intent.setType("text/plain")
         }
