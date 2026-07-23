@@ -19,7 +19,10 @@ lane :build do |options|
   gradle(
     task: "build${build_config}",
     gradle_path: gradle_bin,
-    flags: "--warning-mode none -x lint"
+    # --no-daemon: daemonless so the JVM exits when the build finishes and no
+    # long-lived, per-toolchain daemon accumulates or gets reused with a stale
+    # task graph (see the Makefile `clean` target's notes on that race).
+    flags: "--no-daemon --warning-mode none -x lint"
   )
 end
 
@@ -27,7 +30,8 @@ desc "Test Skip Android App"
 lane :test do
   gradle(
     task: "test",
-    gradle_path: gradle_bin
+    gradle_path: gradle_bin,
+    flags: "--no-daemon"
   )
 end
 
@@ -35,7 +39,9 @@ desc "Assemble Skip Android App"
 lane :assemble do
   gradle(
     gradle_path: gradle_bin,
-    task: "bundleRelease"
+    task: "bundleRelease",
+    # --no-daemon: daemonless release build; JVM exits when done, no daemon lingers.
+    flags: "--no-daemon"
   )
   # sh "your_script.sh"
 end

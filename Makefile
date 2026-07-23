@@ -318,7 +318,11 @@ build-android: check-config ## Skip transpile + gradle build (both halves)
 	#      (Debug avoids requiring a release signing key for a routine dev build;
 	#       use `package-android` for the signed release AAB.)
 	skip android build
-	cd Android && gradle --warning-mode none -x lint assembleDebug
+	# --no-daemon: run gradle daemonless so the build's JVM exits when it finishes,
+	# rather than leaving a long-lived daemon that later gets REUSED with a stale,
+	# wrongly-ordered task graph (the "Unresolved reference 'Maxi80RootView'" race
+	# documented in `clean`). Also stops per-toolchain daemons accumulating over time.
+	cd Android && gradle --no-daemon --warning-mode none -x lint assembleDebug
 
 build-all: build-ios build-android ## Build both platforms
 
