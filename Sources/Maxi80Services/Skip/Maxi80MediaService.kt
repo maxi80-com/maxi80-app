@@ -229,9 +229,14 @@ class Maxi80MediaService : MediaLibraryService() {
         // Attaching the session token marks this as a media notification, which the system shows
         // on the lock screen with playback controls. Media3's DefaultMediaNotificationProvider
         // replaces this with the full rich card once playback metadata arrives.
+        //
+        // No `setContentText`: the initial MediaItem now carries real station metadata (set in
+        // ExoPlayerStreamPlayer.androidPlay), so the provider re-posts "Maxi 80 / Live" over this
+        // notification immediately. Deliberately NOT setting a placeholder line so that even inside
+        // the brief pre-metadata window the card shows the station name — never a stuck
+        // "Starting playback…" string (see issue #13).
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Maxi 80")
-            .setContentText("Starting playback…")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
