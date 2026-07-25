@@ -248,7 +248,7 @@ class Maxi80MediaService : MediaLibraryService() {
     private fun buildForegroundNotification(): android.app.Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Maxi 80")
-            .setContentText("Starting playback…")
+            .setContentText("Starting playback…") // transient placeholder; DefaultMediaNotificationProvider replaces it on first metadata (#13 is a separate bug)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -308,10 +308,16 @@ class Maxi80MediaService : MediaLibraryService() {
      * throw ForegroundServiceStartNotAllowedException on API 31+ (#18). A system-recreated null
      * intent is likewise skipped — safe, since we are START_NOT_STICKY.
      */
+    // NOTE: the sole starter is ExoPlayerStreamPlayer.androidPlay() (startForegroundService,
+    // ExoPlayerStreamPlayer.swift). Any new starter MUST also honour the ~5s foreground promise.
     @OptIn(UnstableApi::class)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        if (intent != null && session != null) {
+        // A non-null intent means this is a real start command from startForegroundService()
+        // (ExoPlayerStreamPlayer.androidPlay()), never a cold bind — so we MUST foreground within
+        // the ~5s ANR window. onCreate() always runs before onStartCommand() on this path and
+        // builds `session`, so the notification (which needs the session token) is safe to build.
+        if (intent != null) {
             val notification = buildForegroundNotification()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIFICATION_ID, notification,
