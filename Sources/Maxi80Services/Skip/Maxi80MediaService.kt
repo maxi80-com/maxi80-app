@@ -243,12 +243,17 @@ class Maxi80MediaService : MediaLibraryService() {
      * Build the MediaStyle foreground notification shown while playback is starting. media3's
      * DefaultMediaNotificationProvider replaces this with the full rich card (artwork, title/artist,
      * play/pause) once playback metadata arrives.
+     *
+     * No `setContentText`: the initial MediaItem now carries real station metadata (set in
+     * ExoPlayerStreamPlayer.androidPlay), so the provider re-posts "Maxi 80 / Live" over this
+     * notification immediately. Deliberately NOT setting a placeholder line so that even inside the
+     * brief pre-metadata window the card shows the station name — never a stuck "Starting playback…"
+     * string (see issue #13).
      */
     @OptIn(UnstableApi::class)
     private fun buildForegroundNotification(): android.app.Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Maxi 80")
-            .setContentText("Starting playback…") // transient placeholder; DefaultMediaNotificationProvider replaces it on first metadata (#13 is a separate bug)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

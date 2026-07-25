@@ -13,6 +13,7 @@ import Foundation
     import androidx.media3.common.C
     import androidx.media3.common.Metadata
     import androidx.media3.common.MediaItem
+    import androidx.media3.common.MediaMetadata
     import androidx.media3.common.Player
     import androidx.media3.exoplayer.ExoPlayer
     import androidx.media3.extractor.metadata.icy.IcyInfo
@@ -169,7 +170,28 @@ import Foundation
         // item and drops the player to STATE_IDLE precisely so this path always does a fresh
         // setMediaItem + prepare, matching the Apple side (which replaces the AVPlayerItem on play).
         // ExoPlayer re-requests audio focus internally on prepare/play.
-        let mediaItem = MediaItem.fromUri(streamUrl)
+        //
+        // Attach real station MediaMetadata (title/artist/artwork) to the initial MediaItem so
+        // `getMediaMetadata()` is non-empty from the first frame. DefaultMediaNotificationProvider
+        // reads that to render the media card, so this guarantees the notification/lock-screen show
+        // "Maxi 80 / Live" immediately — never an empty or placeholder "Starting playback…" string.
+        // The ICY writeback (platformUpdateNowPlaying → replaceMediaItem) then upgrades this to the
+        // live song title/artist as metadata arrives. This mirrors the Android Auto browse item built
+        // in Maxi80MediaService.buildStreamItem(); keep the title/artist in sync with it.
+        // Keep the title/artist/artwork in sync with Maxi80MediaService.buildStreamItem().
+        let artworkUri = android.net.Uri.parse("android.resource://\(ctx.packageName)/mipmap/ic_launcher")
+        let mediaItem = MediaItem.Builder()
+          .setUri(streamUrl)
+          .setMediaMetadata(
+            MediaMetadata.Builder()
+              .setTitle("Maxi 80")
+              .setArtist("Live")
+              .setArtworkUri(artworkUri)
+              .setIsPlayable(true)
+              .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
+              .build()
+          )
+          .build()
         exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
