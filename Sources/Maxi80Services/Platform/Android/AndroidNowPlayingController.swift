@@ -29,6 +29,13 @@ import Foundation
           .setArtist(artist)
         if let urlString = artworkURL, !urlString.isEmpty {
           _ = metadata.setArtworkUri(android.net.Uri.parse(urlString))
+        } else {
+          // No live cover: fall back to the bundled launcher icon rather than clearing artwork,
+          // so a coverless song does not flicker the card to no-art. Mirrors the initial MediaItem
+          // built in ExoPlayerStreamPlayer.androidPlay() and Maxi80MediaService.stationArtworkUri().
+          _ = metadata.setArtworkUri(
+            android.net.Uri.parse("android.resource://\(context.packageName)/mipmap/ic_launcher")
+          )
         }
         // Apply to the shared player's current item so the service's session (and notification,
         // lock screen, later the car) see live metadata automatically.

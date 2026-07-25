@@ -178,7 +178,8 @@ import Foundation
         // The ICY writeback (platformUpdateNowPlaying → replaceMediaItem) then upgrades this to the
         // live song title/artist as metadata arrives. This mirrors the Android Auto browse item built
         // in Maxi80MediaService.buildStreamItem(); keep the title/artist in sync with it.
-        let artworkUri = android.net.Uri.parse("android.resource://\(ctx.getPackageName())/mipmap/ic_launcher")
+        // Keep the title/artist/artwork in sync with Maxi80MediaService.buildStreamItem().
+        let artworkUri = android.net.Uri.parse("android.resource://\(ctx.packageName)/mipmap/ic_launcher")
         let mediaItem = MediaItem.Builder()
           .setUri(streamUrl)
           .setMediaMetadata(
@@ -186,6 +187,8 @@ import Foundation
               .setTitle("Maxi 80")
               .setArtist("Live")
               .setArtworkUri(artworkUri)
+              .setIsPlayable(true)
+              .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
               .build()
           )
           .build()
