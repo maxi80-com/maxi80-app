@@ -144,6 +144,37 @@ RESIDUAL RISK (verify in Task 3 on-device): if some OEM delayed media3's foregro
 we would ANR — not observed; mitigated by media3 foregrounding on the BUFFERING state.
 ```
 
+### DECISION SUPERSEDED (2026-07-26, on-emulator verification) — Mechanism A is WRONG
+
+Mechanism A's core premise ("media3's MediaSessionService self-foregrounds on play") is **false
+for this app**, proven on the emulator (emulator-5554, API 36, debug build, real API config):
+
+1. **Crash while playing (fatal):** a few seconds after pressing play the process dies with
+   `RemoteServiceException$ForegroundServiceDidNotStartInTimeException: Context.startForegroundService()
+   did not then call Service.startForeground()` — thrown from `AudioStreamPlayer.androidPlay` →
+   `startForegroundService()`. `ExoPlayerStreamPlayer.androidPlay()` still calls
+   `ctx.startForegroundService(Maxi80MediaService)`, which is a HARD OS contract: the service must
+   call `startForeground()` within ~5s or the OS kills the process. Mechanism A deleted the ONLY
+   `startForeground()` call, betting media3 would self-foreground. It does not (see #3), so the
+   contract is violated every play → guaranteed crash.
+2. **No notification (regression):** while briefly alive, `dumpsys activity services` shows
+   `Maxi80MediaService … startForegroundCount=0` — media3 never posted its card. Went from a
+   static-but-present card to NO card on the phone path.
+3. **Root architectural cause:** media3's `MediaSessionService`/`DefaultMediaNotificationProvider`
+   posts its card AND self-foregrounds only when a **`MediaController` connects** to the session.
+   This app drives the shared ExoPlayer DIRECTLY (`ExoPlayerStreamPlayer` → `SharedAudioPlayer.shared`),
+   and `grep` confirms NO `MediaController`/`MediaBrowser` exists anywhere in the app. So on the phone
+   path nothing connects → media3 never foregrounds → contract violated (crash) + no card. Android
+   Auto "works" precisely because Auto connects AS a controller — the one path that has one.
+
+DECISION (revised): **Connect an in-app `MediaController` to the session** (the canonical media3
+topology, what Auto already does). Drive playback via the controller instead of the raw shared
+ExoPlayer, so media3 owns foreground + notification on the phone path too, and drop the
+`startForegroundService()`-without-`startForeground()` dance entirely. Larger refactor of how
+`ExoPlayerStreamPlayer` starts playback — see Task 2 (revised) below.
+```
+```
+
 - [ ] **Step 3: Commit the plan update**
 
 ```bash
@@ -153,7 +184,60 @@ git commit -m "docs(android): record media3 foreground mechanism decision for #1
 
 ---
 
-## Task 2: Remove the static foreground notification (the fix)
+## Task 2 (REVISED 2026-07-26): Drive playback through an in-app MediaController
+
+Supersedes the "Mechanism A / B" Task 2 below. Root cause & decision: see "DECISION SUPERSEDED"
+block in Task 1. Both media3 unknowns were researched against the official docs + media3 1.9.4
+source and resolved:
+
+- **Foregrounding:** media3's `MediaNotificationManager` calls `startForeground()` + posts the
+  `DefaultMediaNotificationProvider` card based on player state (`playWhenReady && READY/BUFFERING`),
+  but ONLY when playback flows through the session via a connected `MediaController`. An in-app
+  (same-process) controller triggers this identically to Auto's external controller. Building a
+  `MediaController` binds+starts the service (no `startForegroundService()` needed). Play from a
+  foreground UI tap ⇒ `startForeground()` is allowed (no #18). No `startForegroundService()` ⇒ the
+  `ForegroundServiceDidNotStartInTimeException` timer is never armed ⇒ crash cannot occur. A cold
+  bind with no playback never foregrounds ⇒ #18 stays fixed.
+- **ICY metadata (critical):** `Player.Listener.onMetadata(Metadata)` / `IcyInfo` does NOT cross the
+  MediaController IPC boundary. BUT a `Player.Listener` attached directly to the underlying shared
+  `ExoPlayer` still receives `onMetadata`/`IcyInfo` unchanged (same process). So the existing
+  `MetadataPlayerListener` on the shared ExoPlayer and the `replaceMediaItem` writeback
+  (`AndroidNowPlayingController.platformUpdateNowPlaying`) stay AS-IS and keep working. Do NOT move
+  ICY reading to the controller.
+
+**Design:**
+- Add controller lifecycle to the raw Kotlin `Maxi80MediaService.kt` (idiomatic for `buildAsync`/
+  `ListenableFuture`/checked exceptions): a process-singleton `MediaControllerHolder` that builds a
+  `MediaController` from `SessionToken(ctx, ComponentName(ctx, Maxi80MediaService))`, and exposes
+  `play()` / `stop()` that run on the controller once connected (queue the action if the async
+  connect is still pending).
+- `ExoPlayerStreamPlayer.androidPlay()`: DELETE `startForegroundService()`. Instead of
+  `setMediaItem/prepare/playWhenReady` on the raw ExoPlayer, call the controller
+  (`setMediaItem(buildStreamItem-equivalent) → prepare → play`). Keep attaching the direct
+  `MetadataPlayerListener` to the shared ExoPlayer for ICY. The initial station `MediaMetadata`
+  seeding can move to the media item the controller sets (or reuse the service's `onAddMediaItems`
+  resolution — `STREAM_URL` there equals `BrandConstants.streamURL` = `https://audio1.maxi80.com`,
+  verified in sync). `androidStop()`: call `controller.stop()/clearMediaItems()`.
+- `Maxi80MediaService.kt`: KEEP the provider wiring, channel, session-activity, `onTaskRemoved`,
+  `START_NOT_STICKY`. `onStartCommand` stays as the no-op `START_NOT_STICKY` (never self-foregrounds
+  now — media3 does it via the controller path).
+
+**Interfaces:**
+- Consumes: revised DECISION.
+- Produces: a build where pressing play posts the live media3 card on the phone with NO crash and NO
+  `startForegroundService()`; ICY live-song updates still flow; #18 and #14 preserved.
+
+**Steps:**
+- [ ] Add `MediaController` lifecycle (holder + connect + play/stop) — raw Kotlin.
+- [ ] Rewire `ExoPlayerStreamPlayer.androidPlay`/`androidStop` to the controller; delete
+      `startForegroundService()`; keep the direct ICY listener.
+- [ ] Build (`DEVELOPER_DIR=/Applications/Xcode-26.6.app/... make build-android`), install (`adb install -r -t`), verify on emulator: play → no crash, media card visible in shade with title/art, advance a live song → card title updates. Then #18 (Auto cold-bind lists app) + #14 (swipe-away exits).
+
+> **Toolchain note:** local Android builds MUST use `DEVELOPER_DIR=/Applications/Xcode-26.6.app/Contents/Developer` — the default Xcode 27 beta 4 fails the gradle Swift pre-build with "linked as a static library / duplication of library code" (env-only; CI unaffected).
+
+---
+
+## Task 2 (ORIGINAL — superseded, kept for history): Remove the static foreground notification
 
 **Files:**
 - Modify: `Sources/Maxi80Services/Skip/Maxi80MediaService.kt`

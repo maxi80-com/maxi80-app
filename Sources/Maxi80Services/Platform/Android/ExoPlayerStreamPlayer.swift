@@ -12,8 +12,6 @@ import Foundation
     import androidx.media3.common.AudioAttributes
     import androidx.media3.common.C
     import androidx.media3.common.Metadata
-    import androidx.media3.common.MediaItem
-    import androidx.media3.common.MediaMetadata
     import androidx.media3.common.Player
     import androidx.media3.exoplayer.ExoPlayer
     import androidx.media3.extractor.metadata.icy.IcyInfo
@@ -153,81 +151,52 @@ import Foundation
           .build()
         exoPlayer.setAudioAttributes(audioAttributes, /* handleAudioFocusInternally: */ true)
 
-        // Attach the metadata listener once. The shared player can be rebuilt after a full teardown
-        // (SharedAudioPlayer.releaseShared()), so we guard on nil rather than assuming it's always
-        // present: a rebuilt player with no listener would stall the coordinator in `.loading` (the
-        // spinner never clears because no ICY metadata arrives).
+        // Attach the metadata listener DIRECTLY to the shared ExoPlayer once. This must stay on the
+        // ExoPlayer itself (not the MediaController): `onMetadata`/`IcyInfo` (the live SHOUTcast
+        // "ARTIST - TITLE") is a Player-pipeline event that is NOT forwarded across the
+        // MediaSession↔MediaController IPC boundary, but IS still delivered to listeners registered
+        // on the underlying player in this same process — so it works even though playback is now
+        // driven through the controller. The shared player can be rebuilt after a full teardown
+        // (SharedAudioPlayer.releaseShared()), so we guard on nil: a rebuilt player with no listener
+        // would stall the coordinator in `.loading` (the spinner never clears, no ICY arrives).
         if _metadataListener == nil {
           let listener = MetadataPlayerListener(player: self)
           self._metadataListener = listener
           exoPlayer.addListener(listener)
         }
 
-        // Live radio: ALWAYS (re)load the stream so play reconnects to the LIVE edge. We must not
-        // reuse a buffered STATE_READY player — for a live stream its retained buffer is whatever
-        // was playing when the user stopped, so resuming it plays a stale track (e.g. Android kept
-        // playing an old song while the live stream had moved on). `androidStop()` clears the media
-        // item and drops the player to STATE_IDLE precisely so this path always does a fresh
-        // setMediaItem + prepare, matching the Apple side (which replaces the AVPlayerItem on play).
-        // ExoPlayer re-requests audio focus internally on prepare/play.
-        //
-        // Attach real station MediaMetadata (title/artist/artwork) to the initial MediaItem so
-        // `getMediaMetadata()` is non-empty from the first frame. DefaultMediaNotificationProvider
-        // reads that to render the media card, so this guarantees the notification/lock-screen show
-        // "Maxi 80 / Live" immediately — never an empty or placeholder "Starting playback…" string.
-        // The ICY writeback (platformUpdateNowPlaying → replaceMediaItem) then upgrades this to the
-        // live song title/artist as metadata arrives. This mirrors the Android Auto browse item built
-        // in Maxi80MediaService.buildStreamItem(); keep the title/artist in sync with it.
-        // Keep the title/artist/artwork in sync with Maxi80MediaService.buildStreamItem().
-        let artworkUri = android.net.Uri.parse("android.resource://\(ctx.packageName)/mipmap/ic_launcher")
-        let mediaItem = MediaItem.Builder()
-          .setUri(streamUrl)
-          .setMediaMetadata(
-            MediaMetadata.Builder()
-              .setTitle("Maxi 80")
-              .setArtist("Live")
-              .setArtworkUri(artworkUri)
-              .setIsPlayable(true)
-              .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
-              .build()
-          )
-          .build()
-        exoPlayer.setMediaItem(mediaItem)
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
+        // Drive playback THROUGH the in-app MediaController (MediaControllerHolder), NOT the raw
+        // ExoPlayer, and do NOT call startForegroundService(). This is the fix for issue #13: media3
+        // only foregrounds the service + posts its DefaultMediaNotificationProvider card when the
+        // session's player becomes playing via a connected controller. Building the controller
+        // binds+starts Maxi80MediaService; media3 then owns startForeground() (fired now, from this
+        // foreground UI tap — so no #18 ForegroundServiceStartNotAllowedException, and no
+        // ForegroundServiceDidNotStartInTimeException because nothing arms that contract). The holder
+        // sets a station-metadata MediaItem (title/artist/artwork), reloads to the LIVE edge, and
+        // plays; the direct ICY listener above + the platformUpdateNowPlaying → replaceMediaItem
+        // writeback then upgrade the card to the live song. handleAudioFocus stays on the shared
+        // ExoPlayer (configured above); the controller forwards commands into that same player.
+        MediaControllerHolder.play(context: ctx)
         isPlaying = true
         onPlaybackStateChanged?(true)
-
-        // Start the foreground MediaSessionService so the media notification appears and
-        // playback survives Activity destruction (background / lock-screen). startForegroundService
-        // is idempotent — if the service is already running, this just delivers a start command.
-        let serviceIntent = android.content.Intent()
-        serviceIntent.setClassName(ctx, "maxi80.services.Maxi80MediaService")
-        ctx.startForegroundService(serviceIntent)
       }
 
       func androidStop() {
-        // Live radio: a "stop" must truly STOP, not pause. `stop()` halts loading and releases the
-        // buffer; `clearMediaItems()` drops the player to STATE_IDLE so there is no retained stream
-        // to resume. The next `androidPlay()` therefore always reloads and reconnects to the live
-        // edge instead of resuming a now-stale buffer. ExoPlayer internally abandons audio focus
-        // when playback stops. The shared player instance and the foreground service stay alive
-        // (media3-canonical topology) — only the media item/buffer is cleared.
-        //
-        // Defensive: guard against a cached _exoPlayer that references a RELEASED instance — the
-        // static player being nil, or rebuilt to a DIFFERENT instance by a later shared() call —
-        // where calling stop() would throw "sending message to a Handler on a dead thread".
-        //
-        // In the CURRENT design this is not reachable: the only caller of releaseShared() is the
-        // service's onTaskRemoved, which kills the process on the next line, so no warm process
-        // outlives a released player to reach here. This guard is kept purely as defense-in-depth —
-        // killProcess() is best-effort, and a future second caller of releaseShared() could
-        // reintroduce warm teardown. Operate ONLY when our cache is still the live shared player
-        // (identity match); otherwise drop the stale references and just reconcile local state.
-        if let cached = _exoPlayer, cached === SharedAudioPlayer.current {
-          cached.stop()
-          cached.clearMediaItems()
-        } else {
+        // Live radio: a "stop" must truly STOP, not pause. Route through the MediaController
+        // (MediaControllerHolder.stop) so the command flows through the session the same way play
+        // does — the holder calls stop() + clearMediaItems() on the controller, halting loading,
+        // releasing the buffer, and dropping the player to STATE_IDLE so there is no retained stream
+        // to resume. The next androidPlay() therefore reloads and reconnects to the live edge instead
+        // of resuming a now-stale buffer. media3 drops the service out of the foreground (removing the
+        // notification) when playback stops. ExoPlayer internally abandons audio focus.
+        MediaControllerHolder.stop()
+
+        // Defensive local-state reconciliation for the released-player case (static player nil, or
+        // rebuilt to a DIFFERENT instance by a later shared() call). Not reachable in the current
+        // design — the only releaseShared() caller (onTaskRemoved) kills the process on the next
+        // line — but kept as defense-in-depth: drop stale references so a rebuilt player re-attaches
+        // its listener on the next play instead of pointing at a dead one.
+        if let cached = _exoPlayer, cached !== SharedAudioPlayer.current {
           _exoPlayer = nil
           _metadataListener = nil
         }

@@ -3,6 +3,8 @@ package maxi80.services
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Process
@@ -12,11 +14,129 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaController
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionToken
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
+
+/**
+ * Process-singleton `MediaController` connected to `Maxi80MediaService`'s session, and the app's
+ * sole entry point for starting/stopping Android playback.
+ *
+ * WHY a controller and not the raw ExoPlayer (issue #13): media3 only promotes the service to the
+ * foreground and posts its `DefaultMediaNotificationProvider` card when playback flows through the
+ * session via a connected `MediaController`. Driving the shared ExoPlayer directly (the previous
+ * design) meant nothing ever connected on the phone-only path, so media3 never called
+ * `startForeground()` — which both (a) left the app crashing with
+ * `ForegroundServiceDidNotStartInTimeException` (a stray `startForegroundService()` armed the 5s
+ * contract that nothing satisfied) and (b) posted no notification. Android Auto "worked" only
+ * because Auto connects as a controller. An in-app, same-process controller triggers the exact same
+ * media3 foreground/notification path, so the phone now behaves like the Auto path.
+ *
+ * Building the controller binds+starts the service, so no `startForegroundService()` is needed
+ * (and it must NOT be re-added — that reintroduces the crash). `startForeground()` fires only when
+ * playback becomes playing, which the user triggers from the foreground, so #18
+ * (ForegroundServiceStartNotAllowedException on a background bind) does not regress.
+ *
+ * ICY live-song metadata is unaffected: `onMetadata`/`IcyInfo` does not cross the controller IPC
+ * boundary, but the `MetadataPlayerListener` attached directly to the shared ExoPlayer (same
+ * process) still receives it — see ExoPlayerStreamPlayer.
+ */
+@OptIn(UnstableApi::class)
+object MediaControllerHolder {
+    private var controller: MediaController? = null
+    private var connecting: Boolean = false
+    // A play/stop requested before the async connect finished runs here as soon as it does.
+    private var pendingAction: ((MediaController) -> Unit)? = null
+
+    private const val STREAM_URL = "https://audio1.maxi80.com"
+
+    /** The live-stream MediaItem with station metadata, matching Maxi80MediaService.buildStreamItem().
+     *  The service's onAddMediaItems re-resolves whatever we set to its own buildStreamItem(), so the
+     *  concrete URI/metadata here is the pre-connect seed the notification shows before ICY arrives. */
+    private fun streamItem(context: Context): MediaItem =
+        MediaItem.Builder()
+            .setUri(STREAM_URL)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle("Maxi 80")
+                    .setArtist("Live")
+                    .setArtworkUri(
+                        android.net.Uri.parse(
+                            "android.resource://${context.packageName}/mipmap/ic_launcher"
+                        )
+                    )
+                    .setIsPlayable(true)
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
+                    .build()
+            )
+            .build()
+
+    /** Start (or restart at the live edge) playback through the controller, connecting on first use. */
+    fun play(context: Context) {
+        val ctx = context.applicationContext
+        runWhenConnected(ctx) { c ->
+            // Live radio: always reload so play reconnects to the live edge (never resume a stale buffer).
+            c.setMediaItem(streamItem(ctx))
+            c.prepare()
+            c.play()
+        }
+    }
+
+    /** Stop playback (true stop, not pause): the next play() reconnects to the live edge. */
+    fun stop() {
+        val c = controller
+        if (c != null && c.isConnected) {
+            c.stop()
+            c.clearMediaItems()
+        } else {
+            // Not yet connected: cancel any queued play so a late connect doesn't start audio.
+            pendingAction = null
+        }
+    }
+
+    private fun runWhenConnected(context: Context, action: (MediaController) -> Unit) {
+        val existing = controller
+        if (existing != null && existing.isConnected) {
+            action(existing)
+            return
+        }
+        pendingAction = action
+        if (connecting) return
+        connecting = true
+        val token = SessionToken(context, ComponentName(context, Maxi80MediaService::class.java))
+        val future = MediaController.Builder(context, token).buildAsync()
+        future.addListener(
+            {
+                connecting = false
+                try {
+                    val c = future.get()
+                    controller = c
+                    val queued = pendingAction
+                    pendingAction = null
+                    if (queued != null) queued(c)
+                } catch (t: Throwable) {
+                    // Connect failed (service gone / interrupted). Drop the queued action; a later
+                    // play() retries the whole connect. Nothing to foreground, so nothing crashes.
+                    pendingAction = null
+                }
+            },
+            MoreExecutors.directExecutor()
+        )
+    }
+
+    /** Release the controller on full teardown (task removal). */
+    fun release() {
+        pendingAction = null
+        connecting = false
+        controller?.release()
+        controller = null
+    }
+}
 
 /**
  * Foreground MediaLibraryService hosting the app's single MediaLibrarySession on the shared
@@ -223,22 +343,18 @@ class Maxi80MediaService : MediaLibraryService() {
                 .build()
         )
 
-        // NOTE: we deliberately do NOT call startForeground() here. onCreate() also runs on a cold
-        // *bind* — e.g. when Android Auto or the system media-app scanner (which populates the phone's
-        // "Personnaliser le lanceur" list) connects to browse while the app is backgrounded and no
-        // startForegroundService() has been issued. On API 31+ (this app targets API 36) promoting a
-        // service to the foreground from the background is prohibited and throws
-        // ForegroundServiceStartNotAllowedException, which tears the service down before
-        // onGetLibraryRoot can return a browsable root — so Android Auto never lists the app (#18).
+        // NOTE: we deliberately do NOT call startForeground() here, and there is no
+        // startForegroundService() anywhere in the app anymore (see MediaControllerHolder). media3
+        // owns foreground promotion + the notification: its MediaNotificationManager calls
+        // startForeground() and posts the DefaultMediaNotificationProvider card (set above) when the
+        // session's player becomes playing, which happens because playback is driven THROUGH an
+        // in-app MediaController connected to this session (MediaControllerHolder.play).
         //
-        // Foreground promotion for the *playback* path is owned entirely by media3: its
-        // MediaSessionService self-foregrounds and posts the DefaultMediaNotificationProvider card
-        // (set above) as soon as the shared ExoPlayer starts buffering/playing — which the sole
-        // starter (ExoPlayerStreamPlayer.androidPlay) triggers with prepare()+playWhenReady=true
-        // immediately before its startForegroundService() call, so media3 foregrounds inside the
-        // ~5s ANR window. onStartCommand() deliberately does NOT call startForeground() itself: a
-        // second hand-built notification on the provider's id (1001) was clobbering media3's live
-        // card on OEM shades (issue #13). See onStartCommand below.
+        // #18: this onCreate also runs on a cold *bind* — Android Auto or the media-app scanner (the
+        // phone's "Personnaliser le lanceur" list) connecting to browse while backgrounded. That bind
+        // starts no playback, so media3 never foregrounds on it, so it cannot throw
+        // ForegroundServiceStartNotAllowedException (API 31+, this app targets API 36) and Auto still
+        // lists the app. Playback-triggered foregrounding always originates from a foreground UI tap.
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
@@ -266,6 +382,7 @@ class Maxi80MediaService : MediaLibraryService() {
      * launch always starts fresh. Everything is already torn down above, so this loses nothing.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
+        MediaControllerHolder.release()
         session?.release()
         session = null
         SharedAudioPlayer.releaseShared()
@@ -286,23 +403,24 @@ class Maxi80MediaService : MediaLibraryService() {
      * resurrecting playback we just tore down. Returning START_NOT_STICKY guarantees
      * "swipe away = exit" stays a true exit.
      *
-     * We deliberately do NOT call startForeground() here. media3's MediaSessionService promotes
-     * the service to the foreground and posts the DefaultMediaNotificationProvider card (live
-     * title/artist/artwork, set in onCreate) itself, as soon as the shared ExoPlayer starts
-     * buffering/playing — the SAME machinery that already renders the correct card when Android
-     * Auto is attached. Previously this method hand-posted a STATIC NotificationCompat card on the
-     * provider's own NOTIFICATION_ID (1001); that second writer to the same id won the slot on
-     * OEM shades that latch the first startForeground content (e.g. Samsung One UI), so the phone
-     * showed a metadata-less "Maxi 80" card while media3's live card never surfaced (issue #13).
-     * Removing it leaves media3 the sole writer of id 1001 on every path and OEM.
+     * We deliberately do NOT call startForeground() here, and the app no longer calls
+     * startForegroundService() at all (playback is driven through MediaControllerHolder, whose
+     * MediaController.Builder binds+starts this service). media3 owns foreground promotion + the
+     * DefaultMediaNotificationProvider card: it foregrounds when the session's player becomes
+     * playing via the connected controller — the SAME machinery that renders the card under Android
+     * Auto. An earlier fix hand-posted a STATIC NotificationCompat on the provider's NOTIFICATION_ID
+     * (1001), clobbering media3's live card on OEM shades that latch the first startForeground
+     * content (e.g. Samsung One UI); a later attempt deleted that but left a stray
+     * startForegroundService() with nothing calling startForeground(), which crashed with
+     * ForegroundServiceDidNotStartInTimeException. The controller topology fixes both (issue #13).
      *
-     * #18 does NOT regress: the sole starter is ExoPlayerStreamPlayer.androidPlay(), which calls
-     * prepare()+playWhenReady=true immediately before startForegroundService(), so the player is
-     * buffering by the time this runs and media3 self-foregrounds well inside the ~5s ANR window.
-     * A cold *bind* (Auto discovery / the "Personnaliser le lanceur" scanner) never starts
-     * playback, so media3 never foregrounds on a bind and cannot throw
-     * ForegroundServiceStartNotAllowedException on API 31+ (#18). A system-recreated null intent
-     * likewise starts no playback — safe, since we are START_NOT_STICKY.
+     * #18 does NOT regress: a cold *bind* (Auto discovery / the "Personnaliser le lanceur" scanner)
+     * starts no playback, so media3 never foregrounds on it and cannot throw
+     * ForegroundServiceStartNotAllowedException on API 31+; playback-triggered foregrounding always
+     * originates from a foreground UI tap. A system-recreated null intent likewise starts no
+     * playback — safe, since we are START_NOT_STICKY. (This override may not even run in the
+     * controller topology, since we no longer startService() with an intent; it is kept to pin
+     * START_NOT_STICKY so a killed+recreated service never resurrects playback after onTaskRemoved.)
      */
     @OptIn(UnstableApi::class)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
