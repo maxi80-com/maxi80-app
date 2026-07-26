@@ -7,7 +7,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Process
 import androidx.annotation.OptIn
-import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
@@ -15,7 +14,6 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaStyleNotificationHelper
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -233,32 +231,15 @@ class Maxi80MediaService : MediaLibraryService() {
         // ForegroundServiceStartNotAllowedException, which tears the service down before
         // onGetLibraryRoot can return a browsable root — so Android Auto never lists the app (#18).
         //
-        // Foreground promotion for the *playback* path is handled in onStartCommand() below (gated on
-        // a non-null intent, i.e. the startForegroundService() call from ExoPlayerStreamPlayer.
-        // androidPlay()), and media3's DefaultMediaNotificationProvider (set above) owns the rich card
-        // once playback metadata arrives.
+        // Foreground promotion for the *playback* path is owned entirely by media3: its
+        // MediaSessionService self-foregrounds and posts the DefaultMediaNotificationProvider card
+        // (set above) as soon as the shared ExoPlayer starts buffering/playing — which the sole
+        // starter (ExoPlayerStreamPlayer.androidPlay) triggers with prepare()+playWhenReady=true
+        // immediately before its startForegroundService() call, so media3 foregrounds inside the
+        // ~5s ANR window. onStartCommand() deliberately does NOT call startForeground() itself: a
+        // second hand-built notification on the provider's id (1001) was clobbering media3's live
+        // card on OEM shades (issue #13). See onStartCommand below.
     }
-
-    /**
-     * Build the MediaStyle foreground notification shown while playback is starting. media3's
-     * DefaultMediaNotificationProvider replaces this with the full rich card (artwork, title/artist,
-     * play/pause) once playback metadata arrives.
-     *
-     * No `setContentText`: the initial MediaItem now carries real station metadata (set in
-     * ExoPlayerStreamPlayer.androidPlay), so the provider re-posts "Maxi 80 / Live" over this
-     * notification immediately. Deliberately NOT setting a placeholder line so that even inside the
-     * brief pre-metadata window the card shows the station name — never a stuck "Starting playback…"
-     * string (see issue #13).
-     */
-    @OptIn(UnstableApi::class)
-    private fun buildForegroundNotification(): android.app.Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Maxi 80")
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setOngoing(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setStyle(MediaStyleNotificationHelper.MediaStyle(session!!))
-            .build()
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
         return session
@@ -298,39 +279,34 @@ class Maxi80MediaService : MediaLibraryService() {
     }
 
     /**
-     * Pin non-sticky restart AND foreground the service on the *started* (playback) path only.
+     * Pin non-sticky restart. Notification/foreground promotion is owned entirely by media3.
      *
      * media3's MediaSessionService returns START_STICKY by default — after onTaskRemoved's
      * killProcess(), a sticky service can be recreated by the system with a null intent,
      * resurrecting playback we just tore down. Returning START_NOT_STICKY guarantees
      * "swipe away = exit" stays a true exit.
      *
-     * Foreground promotion is gated on a non-null intent: this service is only ever *started*
-     * (via startForegroundService()) from ExoPlayerStreamPlayer.androidPlay(), which always
-     * delivers a real intent, so that path posts the MediaStyle notification within the 5-second
-     * ANR window. A cold *bind* (Android Auto discovery / the "Personnaliser le lanceur" scanner)
-     * does NOT deliver a start command, so it never reaches startForeground() and therefore cannot
-     * throw ForegroundServiceStartNotAllowedException on API 31+ (#18). A system-recreated null
-     * intent is likewise skipped — safe, since we are START_NOT_STICKY.
+     * We deliberately do NOT call startForeground() here. media3's MediaSessionService promotes
+     * the service to the foreground and posts the DefaultMediaNotificationProvider card (live
+     * title/artist/artwork, set in onCreate) itself, as soon as the shared ExoPlayer starts
+     * buffering/playing — the SAME machinery that already renders the correct card when Android
+     * Auto is attached. Previously this method hand-posted a STATIC NotificationCompat card on the
+     * provider's own NOTIFICATION_ID (1001); that second writer to the same id won the slot on
+     * OEM shades that latch the first startForeground content (e.g. Samsung One UI), so the phone
+     * showed a metadata-less "Maxi 80" card while media3's live card never surfaced (issue #13).
+     * Removing it leaves media3 the sole writer of id 1001 on every path and OEM.
+     *
+     * #18 does NOT regress: the sole starter is ExoPlayerStreamPlayer.androidPlay(), which calls
+     * prepare()+playWhenReady=true immediately before startForegroundService(), so the player is
+     * buffering by the time this runs and media3 self-foregrounds well inside the ~5s ANR window.
+     * A cold *bind* (Auto discovery / the "Personnaliser le lanceur" scanner) never starts
+     * playback, so media3 never foregrounds on a bind and cannot throw
+     * ForegroundServiceStartNotAllowedException on API 31+ (#18). A system-recreated null intent
+     * likewise starts no playback — safe, since we are START_NOT_STICKY.
      */
-    // NOTE: the sole starter is ExoPlayerStreamPlayer.androidPlay() (startForegroundService,
-    // ExoPlayerStreamPlayer.swift). Any new starter MUST also honour the ~5s foreground promise.
     @OptIn(UnstableApi::class)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        // A non-null intent means this is a real start command from startForegroundService()
-        // (ExoPlayerStreamPlayer.androidPlay()), never a cold bind — so we MUST foreground within
-        // the ~5s ANR window. onCreate() always runs before onStartCommand() on this path and
-        // builds `session`, so the notification (which needs the session token) is safe to build.
-        if (intent != null) {
-            val notification = buildForegroundNotification()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification,
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
-        }
         return START_NOT_STICKY
     }
 
