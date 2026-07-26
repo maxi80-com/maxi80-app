@@ -288,6 +288,14 @@ public final class RadioPlayerCoordinator {
     shareService.share(text: text, imageData: imageData)
   }
 
+  /// Download the displayed cover's raw bytes for the iOS share sheet, or nil on failure. Apple
+  /// platforms attach these bytes to `UIActivityViewController`; Android instead uses
+  /// `shareCurrentTrack(text:artworkURL:)`, which additionally fires the system chooser. The bytes
+  /// aren't retained after color sampling, so they're re-downloaded here.
+  func shareArtworkData(urlString: String) async -> Data? {
+    await artworkService.fetchImageData(urlString: urlString)
+  }
+
   // MARK: - Callback Setup
 
   private func setupCallbacks() {

@@ -318,6 +318,20 @@ public final class RadioPlayerViewModel {
     return ShareContent(text: shareText, image: currentArtwork)
   }
 
+  /// The localized "I'm listening to …" share message for the current track. Exposed for the iOS
+  /// share sheet, which needs the text synchronously while it downloads the cover asynchronously.
+  public var shareMessage: String { shareText }
+
+  /// The displayed cover's downloaded bytes for the iOS `UIActivityViewController` (which needs a
+  /// `UIImage`, not the SwiftUI `Image` the app holds, so the bytes are fetched rather than reusing
+  /// `currentArtwork`). Uses the history-aware `shareArtworkURL` so a browsed cover is shared, not
+  /// just the live song; a nil URL or download failure returns nil → text-only share. Mirrors the
+  /// Android native-share path, which already attaches the cover.
+  public func shareImageData() async -> Data? {
+    guard let url = shareArtworkURL else { return nil }
+    return await coordinator.shareArtworkData(urlString: url)
+  }
+
   /// The localized "I'm listening to …" share message for the current track.
   private var shareText: String {
     let artist = displayedArtist

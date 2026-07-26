@@ -112,10 +112,13 @@ struct PlaybackControlsView: View {
     }
     #if !os(Android)
       // Apple platforms present the share sheet here. On Android the button calls the native
-      // chooser directly, so this modifier (and its backing state) are gated out entirely.
-      .shareSheet(isPresented: $showShareSheet) {
-        viewModel.shareCurrentTrack()
-      }
+      // chooser directly, so this modifier (and its backing state) are gated out entirely. The cover
+      // image data is downloaded when the sheet opens (async), matching Android's shared artwork.
+      .shareSheet(
+        isPresented: $showShareSheet,
+        text: { viewModel.shareMessage },
+        imageData: { await viewModel.shareImageData() }
+      )
     #endif
   }
 
