@@ -65,25 +65,6 @@ struct CoverFlowView: View {
         // Snap each cover to center after a scroll. Works with macOS two-finger/trackpad
         // horizontal scrolling too (it settles the scroll, it doesn't block the gesture).
         .scrollTargetBehavior(.viewAligned)
-        // Anchor the scroll view to its trailing edge (Apple only — Android drives position via
-        // scrollPosition(id:) and doesn't flash). Covers grow oldest→newest with the live "now" slot
-        // last, so history loads *prepend* on the left. Without this, iOS keeps the leading edge
-        // pinned when the content grows: for a frame the oldest cover sits centered, then the `.task`
-        // below jumps back to the now slot — the visible flash on launch and on every history load.
-        // Trailing anchoring holds the now slot centered across the size change (the symmetric
-        // horizontal padding centers the last item at the trailing edge), so the flash never happens.
-        //
-        // Apply it ONLY when pinned to the live now slot (`pinTarget != nil`). While browsing a past
-        // cover, `pinTarget` is nil: the focused cover is a *left* item, and a trailing anchor would
-        // tug it rightward on a rotation's size change, settling it off-center (fighting the `.task`
-        // re-pin below). Passing a nil anchor there keeps the default leading behavior, so the `.task`
-        // scrollTo(selection, .center) fully owns re-centering the browsed cover across a rotation.
-        //
-        // Gate on `!os(Android)`, not `!SKIP`: the Android SDK Swift compile doesn't define SKIP, so
-        // `#if !SKIP` would still feed this iOS-only API to that compiler and fail to build.
-        #if !os(Android)
-          .defaultScrollAnchor(pinTarget != nil ? .trailing : nil)
-        #endif
         // scrollPosition(id:) only reports the focused cover; ScrollViewReader does the scrolling.
         // Re-pin on first appearance, whenever pinToken changes, and whenever the container width
         // changes: a rotation recreates this view (portrait and landscape host it in different
@@ -97,22 +78,7 @@ struct CoverFlowView: View {
           // starting then cancelling their AsyncImage loads so those covers stick on the
           // placeholder. Jumping lands directly without instantiating the cells between.
           try? await Task.sleep(nanoseconds: 60_000_000)
-          guard let target else { return }
-          #if os(Android)
-            proxy.scrollTo(target, anchor: .center)
-          #else
-            // `.leading` is deliberate, not a typo. `.viewAligned` rests items LEADING-aligned, and
-            // the symmetric horizontal padding ((width - coverSize) / 2) is exactly what makes a
-            // leading-aligned cover appear visually centered — so in this layout "centered" IS the
-            // leading-anchored offset. An anchor of `.center` subtracts a further (width-coverSize)/2
-            // and lands short by exactly the padding (measured via contentOffset on iOS 27: the
-            // visually-centered rest is 71 pt past scrollTo(.center)'s target at width 402, 43.3 pt
-            // at width 347 — the padding at each width), which left a browsed cover off-center after
-            // every rotation. `.leading` lands on the same offset the swipe snap rests at: dead
-            // center. Android keeps `.center` — its SkipUI scroll path measures differently and
-            // never had the drift.
-            proxy.scrollTo(target, anchor: .leading)
-          #endif
+          if let target { proxy.scrollTo(target, anchor: .center) }
         }
         // Reports which cover the user swiped to. Apple derives the centered id from each cell's
         // distance-to-center (CenteredCoverKey) because scrollPosition(id:) doesn't report proxy
