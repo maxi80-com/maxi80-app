@@ -15,6 +15,15 @@ pluginManagement {
     val skipPluginError = skipPluginResult.standardError.asText.get()
     print(skipPluginError)
 
+    // skip 1.9.4 (SPM binary artifact) hardcodes gradle-9.0.0 in generated sub-project wrappers,
+    // but AGP 9.2.0 requires Gradle ≥ 9.4.1. Patch all generated wrappers to match.
+    providers.exec {
+        commandLine("/bin/sh", "-c",
+            "find '${settings.rootDir.parent}/.build/plugins/outputs' -name 'gradle-wrapper.properties'" +
+            " -exec chmod u+w {} \\;" +
+            " -exec sed -i '' 's|gradle-[0-9][0-9.]*-bin\\.zip|gradle-9.4.1-bin.zip|g' {} \\;")
+    }.result.get()
+
     includeBuild(pluginPath.readText()) {
         name = "skip-plugins"
     }
