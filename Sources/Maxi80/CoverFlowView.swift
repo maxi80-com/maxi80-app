@@ -65,6 +65,25 @@ struct CoverFlowView: View {
         // Snap each cover to center after a scroll. Works with macOS two-finger/trackpad
         // horizontal scrolling too (it settles the scroll, it doesn't block the gesture).
         .scrollTargetBehavior(.viewAligned)
+        // Anchor the scroll view to its trailing edge (Apple only — Android drives position via
+        // scrollPosition(id:) and doesn't flash). Covers grow oldest→newest with the live "now" slot
+        // last, so history loads *prepend* on the left. Without this, iOS keeps the leading edge
+        // pinned when the content grows: for a frame the oldest cover sits centered, then the `.task`
+        // below jumps back to the now slot — the visible flash on launch and on every history load.
+        // Trailing anchoring holds the now slot centered across the size change (the symmetric
+        // horizontal padding centers the last item at the trailing edge), so the flash never happens.
+        //
+        // Apply it ONLY when pinned to the live now slot (`pinTarget != nil`). While browsing a past
+        // cover, `pinTarget` is nil: the focused cover is a *left* item, and a trailing anchor would
+        // tug it rightward on a rotation's size change, settling it off-center (fighting the `.task`
+        // re-pin below). Passing a nil anchor there keeps the default leading behavior, so the `.task`
+        // scrollTo(selection, .center) fully owns re-centering the browsed cover across a rotation.
+        //
+        // Gate on `!os(Android)`, not `!SKIP`: the Android SDK Swift compile doesn't define SKIP, so
+        // `#if !SKIP` would still feed this iOS-only API to that compiler and fail to build.
+        #if !os(Android)
+          .defaultScrollAnchor(pinTarget != nil ? .trailing : nil)
+        #endif
         // scrollPosition(id:) only reports the focused cover; ScrollViewReader does the scrolling.
         // Re-pin on first appearance, whenever pinToken changes, and whenever the container width
         // changes: a rotation recreates this view (portrait and landscape host it in different
