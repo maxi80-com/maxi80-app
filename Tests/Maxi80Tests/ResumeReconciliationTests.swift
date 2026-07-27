@@ -91,6 +91,70 @@ struct ResumeReconciliationTests {
     #expect(coordinator.playbackState == .idle)
   }
 
+  // MARK: - Axis C: external playback state sync (GitHub issue #29, symptom 2)
+
+  @Test("An external pause (notification) demotes .playing to .paused")
+  @MainActor
+  func externalPauseDemotesPlayingToPaused() async {
+    let (coordinator, _) = makeCoordinator()
+
+    coordinator.play()
+    await coordinator.handleMetadataChanged("Artist - Song")
+    #expect(coordinator.playbackState == .playing)
+
+    // media3 pauses the ExoPlayer from the notification → onIsPlayingChanged(false).
+    coordinator.handlePlaybackStateChanged(isPlaying: false)
+
+    #expect(coordinator.playbackState == .paused)
+  }
+
+  @Test("An external play signal does not fabricate playback from idle")
+  @MainActor
+  func externalPlayDoesNotPromoteIdle() {
+    let (coordinator, _) = makeCoordinator()
+
+    #expect(coordinator.playbackState == .idle)
+
+    // A stray media3 "ready/playing" transition must not start playback the user didn't ask for.
+    coordinator.handlePlaybackStateChanged(isPlaying: true)
+
+    #expect(coordinator.playbackState == .idle)
+  }
+
+  @Test("External state changes do not override an in-flight reconnection")
+  @MainActor
+  func externalStateDoesNotOverrideReconnecting() {
+    let (coordinator, _) = makeCoordinator()
+
+    // ReconnectionManager owns the .reconnecting state and emits isPlaying=false transients
+    // while it stops/replays the stream. The external handler must leave it alone.
+    coordinator.playbackState = .reconnecting(1)
+    coordinator.handlePlaybackStateChanged(isPlaying: false)
+    #expect(coordinator.playbackState == .reconnecting(1))
+
+    coordinator.playbackState = .error("stream dropped")
+    coordinator.handlePlaybackStateChanged(isPlaying: false)
+    #expect(coordinator.playbackState == .error("stream dropped"))
+
+    // Even an isPlaying=true during error must not silently flip to .playing.
+    coordinator.playbackState = .error("stream dropped")
+    coordinator.handlePlaybackStateChanged(isPlaying: true)
+    #expect(coordinator.playbackState == .error("stream dropped"))
+  }
+
+  @Test("An external play signal clears a pending loading spinner")
+  @MainActor
+  func externalPlayClearsLoadingSpinner() {
+    let (coordinator, _) = makeCoordinator()
+
+    coordinator.play()
+    #expect(coordinator.playbackState == .loading)
+
+    coordinator.handlePlaybackStateChanged(isPlaying: true)
+
+    #expect(coordinator.playbackState == .playing)
+  }
+
   // MARK: - Axis A: carousel selection guard across recreation
 
   @Test("A foreground transition drops the recreated carousel's leftmost write-back")
