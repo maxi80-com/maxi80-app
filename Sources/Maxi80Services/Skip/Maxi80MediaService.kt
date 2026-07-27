@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Process
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
@@ -280,6 +281,29 @@ class Maxi80MediaService : MediaLibraryService() {
             val resolved = mediaItems.map { buildStreamItem() }.toMutableList()
             return Futures.immediateFuture(resolved)
         }
+
+        /**
+         * Called when a controller (e.g. Android Auto on connect, or a media-button event) asks to
+         * resume the last session. media3 REQUIRES this to be implemented once the app ships a media
+         * button receiver / the recent-media contract with a MediaLibraryService — otherwise it
+         * throws `UnsupportedOperationException` and the car shows a "tap to open" placeholder
+         * instead of auto-resuming (GitHub issue #41).
+         *
+         * Maxi 80 is a single live stream with no seek position, so we resume the one stream item at
+         * index 0 with an unset start position (live edge). This restores the Android Auto behaviour
+         * of auto-resuming the last-used media app when the user connects in the car.
+         */
+        override fun onPlaybackResumption(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> =
+            Futures.immediateFuture(
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.of(buildStreamItem()),
+                    /* startIndex = */ 0,
+                    /* startPositionMs = */ C.TIME_UNSET
+                )
+            )
     }
 
     // ---------------------------------------------------------------------------
