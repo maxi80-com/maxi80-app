@@ -24,6 +24,13 @@ import Foundation
     /// Callback invoked when an audio interruption occurs (true = began, false = ended with resume).
     public var onInterruption: ((Bool) -> Void)?
 
+    /// Callback invoked when the audio output becomes permanently unavailable (e.g. Bluetooth /
+    /// wired headset disconnect — "becoming noisy" on Android). Unlike an interruption, this is a
+    /// permanent output loss: the coordinator responds with a *true stop* (release the buffer,
+    /// reconnect to the live edge on the next play) to match Apple's disconnect behavior.
+    /// Wired only on Android; iOS handles disconnect in `AVPlayerStreamPlayer.handleRouteChange`.
+    public var onDisconnectStop: (() -> Void)?
+
     /// Callback invoked when playback state changes.
     public var onPlaybackStateChanged: ((Bool) -> Void)?
 

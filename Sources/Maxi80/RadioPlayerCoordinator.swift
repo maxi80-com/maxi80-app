@@ -169,6 +169,14 @@ public final class RadioPlayerCoordinator {
   /// Stop streaming and update state.
   public func pause() {
     // User-initiated stop — abandon any in-progress reconnection.
+    stopForDisconnect()
+  }
+
+  /// True-stop the live stream: cancel any reconnection, release the player buffer, and reflect
+  /// the stopped state. Shared by the user pause button and the Bluetooth/wired disconnect path
+  /// so both drop to `STATE_IDLE` and reconnect to the live edge on the next play (rather than
+  /// resuming a stale buffered position).
+  private func stopForDisconnect() {
     reconnectionManager.cancel()
     player.stop()
     playbackState = .paused
@@ -314,6 +322,15 @@ public final class RadioPlayerCoordinator {
     player.onInterruption = { [weak self] began in
       Task { @MainActor [weak self] in
         self?.handleInterruption(began: began)
+      }
+    }
+
+    // Audio output permanently lost (Bluetooth / wired headset disconnect on Android). Unlike an
+    // interruption this is not resumable — perform a true stop so the next play reconnects to the
+    // live edge, matching iOS disconnect behavior.
+    player.onDisconnectStop = { [weak self] in
+      Task { @MainActor [weak self] in
+        self?.handleDisconnectStop()
       }
     }
 
@@ -617,6 +634,15 @@ public final class RadioPlayerCoordinator {
       // Interruption ended with resume option — resume playback
       play()
     }
+  }
+
+  // Bluetooth / wired headset disconnect (permanent output loss). Unlike an interruption this is
+  // not resumable: truly stop the stream (same semantics as the user pause button) so the buffer
+  // is released and the next play reconnects to the live edge instead of a stale position.
+  // Internal (not private) so tests can drive the disconnect flow directly — the production caller
+  // is the `player.onDisconnectStop` closure wired in `setupCallbacks()`.
+  func handleDisconnectStop() {
+    stopForDisconnect()
   }
 
   // MARK: - External Playback State Handling

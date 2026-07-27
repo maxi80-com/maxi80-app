@@ -62,9 +62,14 @@ import Foundation
       }
 
       override func onPlayWhenReadyChanged(playWhenReady: Bool, reason: Int) {
-        if !playWhenReady && (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
-          || reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
-        {
+        if !playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY {
+          // Permanent output loss (Bluetooth / wired disconnect). Unlike a focus loss this is not
+          // a resumable interruption: route it to a true stop so the buffer is released and the
+          // next play reconnects to the live edge — matching iOS `handleRouteChange`.
+          player.isPlaying = false
+          player.onPlaybackStateChanged?(false)
+          player.onDisconnectStop?()
+        } else if !playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS {
           player.isPlaying = false
           player.onPlaybackStateChanged?(false)
           player.onInterruption?(true)
