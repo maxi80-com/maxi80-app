@@ -317,6 +317,15 @@ public final class RadioPlayerCoordinator {
       }
     }
 
+    // External playback transitions driven by the platform (e.g. the media3 notification
+    // pause/play on Android). Mirror them into the observable state so the in-app control
+    // reflects the player's real state — see `handlePlaybackStateChanged`.
+    player.onPlaybackStateChanged = { [weak self] isPlaying in
+      Task { @MainActor [weak self] in
+        self?.handlePlaybackStateChanged(isPlaying: isPlaying)
+      }
+    }
+
     // System volume changed (Android hardware buttons / volume panel). Mirror it into observable
     // state so the in-app volume bar tracks it. The observer fires on the main looper, but hop to
     // @MainActor explicitly so the write is isolated correctly.
@@ -600,6 +609,38 @@ public final class RadioPlayerCoordinator {
     } else {
       // Interruption ended with resume option — resume playback
       play()
+    }
+  }
+
+  // MARK: - External Playback State Handling
+
+  /// Reconcile the observable `playbackState` with an *external* player transition
+  /// (e.g. the media3 notification pause on Android). This is the demotion counterpart to
+  /// `reconcileWithPlayer()`, which only promotes.
+  ///
+  /// Internal (not private) so tests can drive it directly — the production caller is the
+  /// `player.onPlaybackStateChanged` closure wired in `setupCallbacks()`.
+  func handlePlaybackStateChanged(isPlaying: Bool) {
+    if isPlaying {
+      // Only clear a pending spinner; do not fabricate playback from idle/paused.
+      switch playbackState {
+      case .loading, .reconnecting:
+        playbackState = .playing
+        publishPlaybackState(isPlaying: true)
+      default:
+        break
+      }
+    } else {
+      // External pause/stop. Demote only from active states; never stomp an in-flight
+      // reconnection/error cycle (that path owns its own state via ReconnectionManager and
+      // emits isPlaying=false transients while replaying) or a terminal .idle/.paused.
+      switch playbackState {
+      case .playing, .loading:
+        playbackState = .paused
+        publishPlaybackState(isPlaying: false)
+      default:
+        break
+      }
     }
   }
 
