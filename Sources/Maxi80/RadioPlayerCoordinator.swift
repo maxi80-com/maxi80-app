@@ -639,7 +639,16 @@ public final class RadioPlayerCoordinator {
     // First load (empty history): resolve artwork for every entry and seed the list.
     if history.isEmpty {
       let resolved = await resolveArtwork(for: entries)
-      history = resolved
+      // Re-check AFTER the await: `handleMetadataChanged` may have live-appended a song while we
+      // were suspended resolving artwork (both run on @MainActor but interleave across suspension
+      // points). Overwriting `history` here would either drop that live entry or, combined with a
+      // later fetch, duplicate it. If the list is no longer empty, reconcile incrementally against
+      // the live array instead of clobbering it.
+      if history.isEmpty {
+        history = resolved
+      } else {
+        mergeResolvedEntries(resolved)
+      }
       lastHistoryFetchedAt = Date()
       logger.info("fetchHistory: seeded \(self.history.count) entries")
       return
@@ -676,6 +685,28 @@ public final class RadioPlayerCoordinator {
 
     let resolved = await resolveArtwork(for: toResolve)
 
+    // Heal existing entries and append genuinely-new songs, deduping against the LIVE `history`
+    // read *after* the await — not the `existingSongs` snapshot taken before it. See
+    // `mergeResolvedEntries` for why the post-await read is required.
+    mergeResolvedEntries(resolved)
+  }
+
+  /// Merges backend-resolved entries into the live `history`: heals in-place any existing entry
+  /// missing artwork/artist from its backend copy, then appends songs not already present, ordered
+  /// by timestamp.
+  ///
+  /// The existence check keys off `history` **as read here**, at mutation time — NOT off a snapshot
+  /// captured before the artwork `await` in `fetchHistory()`. `RadioPlayerCoordinator` is
+  /// `@MainActor`, which prevents data races but not interleaving across suspension points: while
+  /// `fetchHistory()` is suspended resolving artwork, `handleMetadataChanged(...)` can run to
+  /// completion and live-append the currently-playing song. Deduping against a pre-await snapshot
+  /// would then miss that live entry and append the backend's copy of the same song a second time
+  /// → the duplicate reported in issue #28. Reading `history` here closes that window.
+  ///
+  /// Dedup is by *presence in the current array* (`songIdentity`), so genuine repeat plays (same
+  /// song, different timestamps) are preserved — the backend reports each song once, so a repeat
+  /// that is already in memory simply isn't re-appended.
+  private func mergeResolvedEntries(_ resolved: [HistoryEntry]) {
     // Backend entry per identity, for healing existing entries (carries the `Maxi80` artist,
     // artwork URL, and color the live copy may be missing).
     var backendBySong: [SongMetadata: HistoryEntry] = [:]
@@ -697,8 +728,11 @@ public final class RadioPlayerCoordinator {
     }
 
     // 2. Append genuinely-new songs, then order by timestamp so newest sits nearest the now-slot
-    //    (the carousel renders history oldest→newest, left→right).
-    let newEntries = resolved.filter { !existingSongs.contains($0.songIdentity) }
+    //    (the carousel renders history oldest→newest, left→right). Dedup against the LIVE array
+    //    read on the line above — not a pre-await snapshot — so a song `handleMetadataChanged`
+    //    live-appended during the artwork await is not added a second time.
+    let existingSongsNow = Set(history.map(\.songIdentity))
+    let newEntries = resolved.filter { !existingSongsNow.contains($0.songIdentity) }
     if !newEntries.isEmpty {
       history = (history + newEntries).sorted { $0.timestamp < $1.timestamp }
     }
