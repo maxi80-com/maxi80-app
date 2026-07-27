@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Process
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
@@ -67,7 +68,13 @@ object MediaControllerHolder {
                     .setArtist("Live")
                     .setArtworkUri(
                         android.net.Uri.parse(
-                            "android.resource://${context.packageName}/mipmap/ic_launcher"
+                            // `ic_launcher_foreground`, NOT `ic_launcher`: the latter resolves to the
+                            // adaptive-icon XML (mipmap-anydpi/ic_launcher.xml), which media3's
+                            // RawResourceDataSource / ImageDecoder cannot rasterize — it failed with
+                            // RawResourceDataSourceException / 'unimplemented' and showed no artwork in
+                            // the car and notification (issue #41). `_foreground` is a plain raster PNG
+                            // at every density: the actual Maxi'80 logo.
+                            "android.resource://${context.packageName}/mipmap/ic_launcher_foreground"
                         )
                     )
                     .setIsPlayable(true)
@@ -209,13 +216,17 @@ class Maxi80MediaService : MediaLibraryService() {
             .build()
 
     /**
-     * The bundled launcher icon as an `android.resource://` URI so the car browse item shows the
+     * The bundled launcher logo as an `android.resource://` URI so the car browse item shows the
      * station logo before any live cover arrives (live song artwork replaces it via the shared
      * player's metadata once playback starts). Built from the runtime package name so it resolves
      * for every build variant. There is no hosted station-artwork URL in the app config to use here.
+     *
+     * Uses `ic_launcher_foreground` (a raster PNG), NOT `ic_launcher` (the adaptive-icon XML) —
+     * media3's RawResourceDataSource / ImageDecoder can't rasterize the adaptive XML and would fail
+     * with RawResourceDataSourceException, leaving the artwork blank (issue #41).
      */
     private fun stationArtworkUri(): android.net.Uri =
-        android.net.Uri.parse("android.resource://$packageName/mipmap/ic_launcher")
+        android.net.Uri.parse("android.resource://$packageName/mipmap/ic_launcher_foreground")
 
     // ---------------------------------------------------------------------------
     // MediaLibrarySession.Callback
@@ -280,6 +291,29 @@ class Maxi80MediaService : MediaLibraryService() {
             val resolved = mediaItems.map { buildStreamItem() }.toMutableList()
             return Futures.immediateFuture(resolved)
         }
+
+        /**
+         * Called when a controller (e.g. Android Auto on connect, or a media-button event) asks to
+         * resume the last session. media3 REQUIRES this to be implemented once the app ships a media
+         * button receiver / the recent-media contract with a MediaLibraryService — otherwise it
+         * throws `UnsupportedOperationException` and the car shows a "tap to open" placeholder
+         * instead of auto-resuming (GitHub issue #41).
+         *
+         * Maxi 80 is a single live stream with no seek position, so we resume the one stream item at
+         * index 0 with an unset start position (live edge). This restores the Android Auto behaviour
+         * of auto-resuming the last-used media app when the user connects in the car.
+         */
+        override fun onPlaybackResumption(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> =
+            Futures.immediateFuture(
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.of(buildStreamItem()),
+                    /* startIndex = */ 0,
+                    /* startPositionMs = */ C.TIME_UNSET
+                )
+            )
     }
 
     // ---------------------------------------------------------------------------
