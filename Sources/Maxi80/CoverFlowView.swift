@@ -78,7 +78,22 @@ struct CoverFlowView: View {
           // starting then cancelling their AsyncImage loads so those covers stick on the
           // placeholder. Jumping lands directly without instantiating the cells between.
           try? await Task.sleep(nanoseconds: 60_000_000)
-          if let target { proxy.scrollTo(target, anchor: .center) }
+          guard let target else { return }
+          #if os(Android)
+            proxy.scrollTo(target, anchor: .center)
+          #else
+            // `.leading` is deliberate, not a typo. `.viewAligned` rests items LEADING-aligned, and
+            // the symmetric horizontal padding ((width - coverSize) / 2) is exactly what makes a
+            // leading-aligned cover appear visually centered — so in this layout "centered" IS the
+            // leading-anchored offset. An anchor of `.center` subtracts a further (width-coverSize)/2
+            // and lands short by exactly the padding (measured via contentOffset on iOS 27: the
+            // visually-centered rest is 71 pt past scrollTo(.center)'s target at width 402, 43.3 pt
+            // at width 347 — the padding at each width), which left a browsed cover off-center after
+            // every rotation. `.leading` lands on the same offset the swipe snap rests at: dead
+            // center. Android keeps `.center` — its SkipUI scroll path measures differently and
+            // never had the drift.
+            proxy.scrollTo(target, anchor: .leading)
+          #endif
         }
         // Reports which cover the user swiped to. Apple derives the centered id from each cell's
         // distance-to-center (CenteredCoverKey) because scrollPosition(id:) doesn't report proxy
