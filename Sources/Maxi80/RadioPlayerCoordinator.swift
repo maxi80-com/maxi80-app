@@ -317,14 +317,21 @@ public final class RadioPlayerCoordinator {
       }
     }
 
-    // External playback transitions driven by the platform (e.g. the media3 notification
-    // pause/play on Android). Mirror them into the observable state so the in-app control
-    // reflects the player's real state — see `handlePlaybackStateChanged`.
-    player.onPlaybackStateChanged = { [weak self] isPlaying in
-      Task { @MainActor [weak self] in
-        self?.handlePlaybackStateChanged(isPlaying: isPlaying)
+    // External playback transitions driven by the platform. On Android the media3 notification
+    // pause/play fires `onIsPlayingChanged` with no accompanying remote-command or interruption
+    // event, so it's the only signal that reflects a notification pause into the app (issue #29,
+    // symptom 2). This wiring is Android-only: on Apple, notification/lock-screen transport goes
+    // through `MPRemoteCommandCenter` (→ `handleRemoteCommand`) and interruptions through
+    // `onInterruption`; there the `onPlaybackStateChanged` callback is a noisy KVO mirror of
+    // `timeControlStatus` (it fires `false` throughout buffering/stall), so driving observable
+    // state from it would clobber `.loading`/`.playing`. See `handlePlaybackStateChanged`.
+    #if SKIP
+      player.onPlaybackStateChanged = { [weak self] isPlaying in
+        Task { @MainActor [weak self] in
+          self?.handlePlaybackStateChanged(isPlaying: isPlaying)
+        }
       }
-    }
+    #endif
 
     // System volume changed (Android hardware buttons / volume panel). Mirror it into observable
     // state so the in-app volume bar tracks it. The observer fires on the main looper, but hop to
@@ -614,12 +621,22 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - External Playback State Handling
 
-  /// Reconcile the observable `playbackState` with an *external* player transition
-  /// (e.g. the media3 notification pause on Android). This is the demotion counterpart to
-  /// `reconcileWithPlayer()`, which only promotes.
+  /// Reconcile the observable `playbackState` with an *external* player transition — specifically
+  /// the media3 notification pause/play on Android (see the Android-only wiring in
+  /// `setupCallbacks()`). This is the demotion counterpart to `reconcileWithPlayer()`, which only
+  /// promotes.
+  ///
+  /// Deliberately conservative so it can't fight the coordinator's own state machine:
+  /// - It only demotes from a *steady* `.playing` state, never from `.loading` — a `false` while
+  ///   loading is an expected buffering/startup transient, not a user pause.
+  /// - It never touches `.idle`/`.paused`/`.reconnecting`/`.error`: `.idle`/`.paused` are terminal
+  ///   here, and the `.reconnecting`/`.error` cycle is owned by `ReconnectionManager`
+  ///   (`setupReconnection()`), which emits `isPlaying=false` transients while it stops/replays.
+  /// - On `isPlaying == true` it only clears a pending spinner (`.loading`/`.reconnecting` →
+  ///   `.playing`), matching `reconcileWithPlayer`; it never fabricates playback from `.idle`.
   ///
   /// Internal (not private) so tests can drive it directly — the production caller is the
-  /// `player.onPlaybackStateChanged` closure wired in `setupCallbacks()`.
+  /// `player.onPlaybackStateChanged` closure wired (Android-only) in `setupCallbacks()`.
   func handlePlaybackStateChanged(isPlaying: Bool) {
     if isPlaying {
       // Only clear a pending spinner; do not fabricate playback from idle/paused.
@@ -631,11 +648,11 @@ public final class RadioPlayerCoordinator {
         break
       }
     } else {
-      // External pause/stop. Demote only from active states; never stomp an in-flight
-      // reconnection/error cycle (that path owns its own state via ReconnectionManager and
-      // emits isPlaying=false transients while replaying) or a terminal .idle/.paused.
+      // External pause (media3 notification). Demote only from a steady `.playing`; a `false`
+      // while `.loading` is a buffering/startup transient, and `.reconnecting`/`.error`/`.idle`/
+      // `.paused` are owned elsewhere or already terminal.
       switch playbackState {
-      case .playing, .loading:
+      case .playing:
         playbackState = .paused
         publishPlaybackState(isPlaying: false)
       default:
