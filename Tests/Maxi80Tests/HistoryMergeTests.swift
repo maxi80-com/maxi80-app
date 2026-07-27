@@ -213,6 +213,145 @@ struct HistoryMergeTests {
     #expect(coordinator.history.map(\.title) == ["Song A", "Song B", "Song A"])
   }
 
+  /// API client whose artwork lookups can be paused: the FIRST `fetchArtworkURL` call parks on a
+  /// gate the test opens explicitly, all later calls resolve immediately. This lets a test suspend
+  /// `fetchHistory()` (which resolves artwork for backend entries) at its `await` while a live
+  /// `handleMetadataChanged(...)` runs to completion and appends the same song — the exact
+  /// interleave behind issue #28's duplicate.
+  ///
+  /// The gate is a cooperative `Task.yield()` poll (not a continuation): on the single-threaded
+  /// MainActor test scheduler, the parked call yields control back repeatedly until the test opens
+  /// the gate, which is deterministic and transpiles cleanly to Kotlin under Skip.
+  actor GatedArtworkAPIClient: APIClientProtocol {
+    private let historyJSON: String
+    private var firstCall = true
+    private(set) var parked = false
+    private var gateOpen = false
+
+    init(historyJSON: String) {
+      self.historyJSON = historyJSON
+    }
+
+    private func markParked() { parked = true }
+    private func openGateFlag() { gateOpen = true }
+    private func isParked() -> Bool { parked }
+    private func isGateOpen() -> Bool { gateOpen }
+
+    /// Suspends until the first gated `fetchArtworkURL` call has parked on the gate.
+    func waitUntilFirstArtworkParked() async {
+      while !isParked() {
+        await Task.yield()
+      }
+    }
+
+    /// Releases the parked first `fetchArtworkURL` call.
+    func openGate() { openGateFlag() }
+
+    func fetchStation() async throws(APIClientError) -> String { throw .noContent }
+
+    func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
+      if firstCall {
+        firstCall = false
+        markParked()
+        // Park here until the test opens the gate, yielding so other MainActor work (the live
+        // `handleMetadataChanged` append) can run to completion while we're suspended.
+        while !isGateOpen() {
+          await Task.yield()
+        }
+      }
+      return "{\"url\":\"https://art.example/\(title).jpg\"}"
+    }
+
+    func fetchHistory() async throws(APIClientError) -> String { historyJSON }
+  }
+
+  @MainActor
+  private func makeGatedCoordinator(client: GatedArtworkAPIClient) -> RadioPlayerCoordinator {
+    RadioPlayerCoordinator(
+      player: AudioStreamPlayer(),
+      nowPlaying: NowPlayingController(),
+      apiClient: client,
+      artworkService: ArtworkService(apiClient: client)
+    )
+  }
+
+  /// Regression for issue #28: a stale-history refresh whose `fetchHistory()` is suspended on
+  /// artwork resolution must NOT double-add a song that `handleMetadataChanged(...)` live-appends
+  /// during that suspension. Before the fix, `fetchHistory()` deduped against a snapshot captured
+  /// *before* the await, so the backend copy of the just-live-appended song passed the "new entry"
+  /// filter and was appended a second time.
+  @Test("Concurrent live append during a suspended fetchHistory does not duplicate the song")
+  @MainActor
+  func liveAppendDuringSuspendedFetchDoesNotDuplicate() async {
+    // Backend history holds an older song plus the song currently playing ("Song A"). "Song A" is
+    // NOT yet in the in-memory list, so fetchHistory() will try to resolve+append it — and that
+    // artwork resolution is where we force the suspension.
+    let json = Self.historyJSON([
+      ("Older", "Older Song", "2026-07-15T10:00:00Z"),
+      ("A", "Song A", "2026-07-15T10:30:00Z"),
+    ])
+    let client = GatedArtworkAPIClient(historyJSON: json)
+    let coordinator = makeGatedCoordinator(client: client)
+
+    // In-memory list already has the older song (as if seeded earlier), so fetchHistory() takes the
+    // incremental reconcile path — where the duplicate race lives.
+    coordinator.history = [
+      HistoryEntry(
+        artist: "Older", title: "Older Song",
+        timestamp: "2026-07-15T10:00:00Z", artworkURL: "older-url")
+    ]
+
+    // Kick off the stale refresh. It resolves artwork for "Song A" and parks on the gate mid-await.
+    let fetchTask = Task { @MainActor in await coordinator.fetchHistory() }
+
+    // Wait until fetchHistory() is genuinely suspended inside artwork resolution.
+    await client.waitUntilFirstArtworkParked()
+
+    // While it is suspended, a live ICY event for the SAME song lands and appends it. Its own
+    // artwork lookup runs on the ungated fast path, so this completes without touching the gate.
+    await coordinator.handleMetadataChanged("A - Song A")
+    #expect(coordinator.history.filter { $0.title == "Song A" }.count == 1)
+
+    // Now let fetchHistory() resume and finish its reconcile.
+    await client.openGate()
+    await fetchTask.value
+
+    // The just-live-appended "Song A" must appear exactly once — the backend copy is deduped
+    // against the live array, not against the pre-await snapshot.
+    #expect(coordinator.history.filter { $0.title == "Song A" }.count == 1)
+    #expect(coordinator.history.map(\.title) == ["Older Song", "Song A"])
+  }
+
+  /// Companion for the seed path: `fetchHistory()` on an empty list suspends on artwork resolution,
+  /// a live event appends the now-playing song during the suspension, and the seed must reconcile
+  /// against that live entry instead of clobbering or duplicating it.
+  @Test("Seed path: a live append during suspended seeding is neither dropped nor duplicated")
+  @MainActor
+  func liveAppendDuringSuspendedSeedDoesNotDuplicateOrDrop() async {
+    let json = Self.historyJSON([
+      ("Older", "Older Song", "2026-07-15T10:00:00Z"),
+      ("A", "Song A", "2026-07-15T10:30:00Z"),
+    ])
+    let client = GatedArtworkAPIClient(historyJSON: json)
+    let coordinator = makeGatedCoordinator(client: client)
+    coordinator.history = []  // empty → seed path
+
+    let fetchTask = Task { @MainActor in await coordinator.fetchHistory() }
+    await client.waitUntilFirstArtworkParked()
+
+    // Live now-playing event for "Song A" lands while the seed is suspended resolving artwork.
+    await coordinator.handleMetadataChanged("A - Song A")
+    #expect(coordinator.history.filter { $0.title == "Song A" }.count == 1)
+
+    await client.openGate()
+    await fetchTask.value
+
+    // "Song A" appears exactly once and "Older Song" (backend-only) is present — the live entry was
+    // reconciled, not overwritten.
+    #expect(coordinator.history.filter { $0.title == "Song A" }.count == 1)
+    #expect(Set(coordinator.history.map(\.title)) == ["Older Song", "Song A"])
+  }
+
   @Test("An existing entry that already has artwork is not re-resolved")
   @MainActor
   func existingArtworkIsPreserved() async {

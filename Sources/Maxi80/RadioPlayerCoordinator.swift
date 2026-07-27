@@ -334,6 +334,22 @@ public final class RadioPlayerCoordinator {
       }
     }
 
+    // External playback transitions driven by the platform. On Android the media3 notification
+    // pause/play fires `onIsPlayingChanged` with no accompanying remote-command or interruption
+    // event, so it's the only signal that reflects a notification pause into the app (issue #29,
+    // symptom 2). This wiring is Android-only: on Apple, notification/lock-screen transport goes
+    // through `MPRemoteCommandCenter` (→ `handleRemoteCommand`) and interruptions through
+    // `onInterruption`; there the `onPlaybackStateChanged` callback is a noisy KVO mirror of
+    // `timeControlStatus` (it fires `false` throughout buffering/stall), so driving observable
+    // state from it would clobber `.loading`/`.playing`. See `handlePlaybackStateChanged`.
+    #if os(Android)
+      player.onPlaybackStateChanged = { [weak self] isPlaying in
+        Task { @MainActor [weak self] in
+          self?.handlePlaybackStateChanged(isPlaying: isPlaying)
+        }
+      }
+    #endif
+
     // System volume changed (Android hardware buttons / volume panel). Mirror it into observable
     // state so the in-app volume bar tracks it. The observer fires on the main looper, but hop to
     // @MainActor explicitly so the write is isolated correctly.
@@ -629,6 +645,48 @@ public final class RadioPlayerCoordinator {
     stopForDisconnect()
   }
 
+  // MARK: - External Playback State Handling
+
+  /// Reconcile the observable `playbackState` with an *external* player transition — specifically
+  /// the media3 notification pause/play on Android (see the Android-only wiring in
+  /// `setupCallbacks()`). This is the demotion counterpart to `reconcileWithPlayer()`, which only
+  /// promotes.
+  ///
+  /// Deliberately conservative so it can't fight the coordinator's own state machine:
+  /// - It only demotes from a *steady* `.playing` state, never from `.loading` — a `false` while
+  ///   loading is an expected buffering/startup transient, not a user pause.
+  /// - It never touches `.idle`/`.paused`/`.reconnecting`/`.error`: `.idle`/`.paused` are terminal
+  ///   here, and the `.reconnecting`/`.error` cycle is owned by `ReconnectionManager`
+  ///   (`setupReconnection()`), which emits `isPlaying=false` transients while it stops/replays.
+  /// - On `isPlaying == true` it only clears a pending spinner (`.loading`/`.reconnecting` →
+  ///   `.playing`), matching `reconcileWithPlayer`; it never fabricates playback from `.idle`.
+  ///
+  /// Internal (not private) so tests can drive it directly — the production caller is the
+  /// `player.onPlaybackStateChanged` closure wired (Android-only) in `setupCallbacks()`.
+  func handlePlaybackStateChanged(isPlaying: Bool) {
+    if isPlaying {
+      // Only clear a pending spinner; do not fabricate playback from idle/paused.
+      switch playbackState {
+      case .loading, .reconnecting:
+        playbackState = .playing
+        publishPlaybackState(isPlaying: true)
+      default:
+        break
+      }
+    } else {
+      // External pause (media3 notification). Demote only from a steady `.playing`; a `false`
+      // while `.loading` is a buffering/startup transient, and `.reconnecting`/`.error`/`.idle`/
+      // `.paused` are owned elsewhere or already terminal.
+      switch playbackState {
+      case .playing:
+        playbackState = .paused
+        publishPlaybackState(isPlaying: false)
+      default:
+        break
+      }
+    }
+  }
+
   // MARK: - Remote Command Handling
 
   private func handleRemoteCommand(_ command: String) {
@@ -665,7 +723,16 @@ public final class RadioPlayerCoordinator {
     // First load (empty history): resolve artwork for every entry and seed the list.
     if history.isEmpty {
       let resolved = await resolveArtwork(for: entries)
-      history = resolved
+      // Re-check AFTER the await: `handleMetadataChanged` may have live-appended a song while we
+      // were suspended resolving artwork (both run on @MainActor but interleave across suspension
+      // points). Overwriting `history` here would either drop that live entry or, combined with a
+      // later fetch, duplicate it. If the list is no longer empty, reconcile incrementally against
+      // the live array instead of clobbering it.
+      if history.isEmpty {
+        history = resolved
+      } else {
+        mergeResolvedEntries(resolved)
+      }
       lastHistoryFetchedAt = Date()
       logger.info("fetchHistory: seeded \(self.history.count) entries")
       return
@@ -702,6 +769,28 @@ public final class RadioPlayerCoordinator {
 
     let resolved = await resolveArtwork(for: toResolve)
 
+    // Heal existing entries and append genuinely-new songs, deduping against the LIVE `history`
+    // read *after* the await — not the `existingSongs` snapshot taken before it. See
+    // `mergeResolvedEntries` for why the post-await read is required.
+    mergeResolvedEntries(resolved)
+  }
+
+  /// Merges backend-resolved entries into the live `history`: heals in-place any existing entry
+  /// missing artwork/artist from its backend copy, then appends songs not already present, ordered
+  /// by timestamp.
+  ///
+  /// The existence check keys off `history` **as read here**, at mutation time — NOT off a snapshot
+  /// captured before the artwork `await` in `fetchHistory()`. `RadioPlayerCoordinator` is
+  /// `@MainActor`, which prevents data races but not interleaving across suspension points: while
+  /// `fetchHistory()` is suspended resolving artwork, `handleMetadataChanged(...)` can run to
+  /// completion and live-append the currently-playing song. Deduping against a pre-await snapshot
+  /// would then miss that live entry and append the backend's copy of the same song a second time
+  /// → the duplicate reported in issue #28. Reading `history` here closes that window.
+  ///
+  /// Dedup is by *presence in the current array* (`songIdentity`), so genuine repeat plays (same
+  /// song, different timestamps) are preserved — the backend reports each song once, so a repeat
+  /// that is already in memory simply isn't re-appended.
+  private func mergeResolvedEntries(_ resolved: [HistoryEntry]) {
     // Backend entry per identity, for healing existing entries (carries the `Maxi80` artist,
     // artwork URL, and color the live copy may be missing).
     var backendBySong: [SongMetadata: HistoryEntry] = [:]
@@ -723,8 +812,11 @@ public final class RadioPlayerCoordinator {
     }
 
     // 2. Append genuinely-new songs, then order by timestamp so newest sits nearest the now-slot
-    //    (the carousel renders history oldest→newest, left→right).
-    let newEntries = resolved.filter { !existingSongs.contains($0.songIdentity) }
+    //    (the carousel renders history oldest→newest, left→right). Dedup against the LIVE array
+    //    read on the line above — not a pre-await snapshot — so a song `handleMetadataChanged`
+    //    live-appended during the artwork await is not added a second time.
+    let existingSongsNow = Set(history.map(\.songIdentity))
+    let newEntries = resolved.filter { !existingSongsNow.contains($0.songIdentity) }
     if !newEntries.isEmpty {
       history = (history + newEntries).sorted { $0.timestamp < $1.timestamp }
     }
