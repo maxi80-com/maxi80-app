@@ -68,7 +68,13 @@ object MediaControllerHolder {
                     .setArtist("Live")
                     .setArtworkUri(
                         android.net.Uri.parse(
-                            "android.resource://${context.packageName}/mipmap/ic_launcher"
+                            // `ic_launcher_foreground`, NOT `ic_launcher`: the latter resolves to the
+                            // adaptive-icon XML (mipmap-anydpi/ic_launcher.xml), which media3's
+                            // RawResourceDataSource / ImageDecoder cannot rasterize — it failed with
+                            // RawResourceDataSourceException / 'unimplemented' and showed no artwork in
+                            // the car and notification (issue #41). `_foreground` is a plain raster PNG
+                            // at every density: the actual Maxi'80 logo.
+                            "android.resource://${context.packageName}/mipmap/ic_launcher_foreground"
                         )
                     )
                     .setIsPlayable(true)
@@ -210,13 +216,17 @@ class Maxi80MediaService : MediaLibraryService() {
             .build()
 
     /**
-     * The bundled launcher icon as an `android.resource://` URI so the car browse item shows the
+     * The bundled launcher logo as an `android.resource://` URI so the car browse item shows the
      * station logo before any live cover arrives (live song artwork replaces it via the shared
      * player's metadata once playback starts). Built from the runtime package name so it resolves
      * for every build variant. There is no hosted station-artwork URL in the app config to use here.
+     *
+     * Uses `ic_launcher_foreground` (a raster PNG), NOT `ic_launcher` (the adaptive-icon XML) —
+     * media3's RawResourceDataSource / ImageDecoder can't rasterize the adaptive XML and would fail
+     * with RawResourceDataSourceException, leaving the artwork blank (issue #41).
      */
     private fun stationArtworkUri(): android.net.Uri =
-        android.net.Uri.parse("android.resource://$packageName/mipmap/ic_launcher")
+        android.net.Uri.parse("android.resource://$packageName/mipmap/ic_launcher_foreground")
 
     // ---------------------------------------------------------------------------
     // MediaLibrarySession.Callback

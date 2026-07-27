@@ -76,19 +76,22 @@ struct ResumeReconciliationTests {
     #expect(coordinator.playbackState == .paused)
   }
 
-  @Test("Reconciling only promotes a pending loading state, not an idle one")
+  @Test("Reconciling promotes idle to playing when the player is really playing")
   @MainActor
-  func reconcileDoesNotPromoteIdle() {
+  func reconcilePromotesIdleWhenPlayerPlaying() {
     let (coordinator, player) = makeCoordinator()
 
-    // Idle (never played) with the player somehow reporting playing must not fabricate .playing —
-    // reconcile only clears a *pending* loading/reconnecting spinner, it doesn't start playback.
+    // Idle app but the player is really playing = playback was started EXTERNALLY (e.g. Android
+    // Auto / the car auto-resuming) while the app was backgrounded. On foreground return, reconcile
+    // must reflect that so the button shows ⏸ not ▶ (issue #41). This can't override a user pause:
+    // a user pause stops the player, so this path (guarded by `player.isPlaying`) is unreachable
+    // after one.
     #expect(coordinator.playbackState == .idle)
     player.isPlaying = true
 
     coordinator.reconcileWithPlayer()
 
-    #expect(coordinator.playbackState == .idle)
+    #expect(coordinator.playbackState == .playing)
   }
 
   // MARK: - Axis C: external playback state sync (GitHub issue #29, symptom 2)
@@ -108,17 +111,19 @@ struct ResumeReconciliationTests {
     #expect(coordinator.playbackState == .paused)
   }
 
-  @Test("An external play signal does not fabricate playback from idle")
+  @Test("An external play signal promotes idle to playing (player is source of truth)")
   @MainActor
-  func externalPlayDoesNotPromoteIdle() {
+  func externalPlayPromotesIdle() {
     let (coordinator, _) = makeCoordinator()
 
     #expect(coordinator.playbackState == .idle)
 
-    // A stray media3 "ready/playing" transition must not start playback the user didn't ask for.
+    // The player only reports isPlaying=true when audio is actually playing (STATE_READY /
+    // onIsPlayingChanged), so an external start (Android Auto / the car auto-resuming) while the
+    // app is idle must flip the button to playing — the player is the source of truth (issue #41).
     coordinator.handlePlaybackStateChanged(isPlaying: true)
 
-    #expect(coordinator.playbackState == .idle)
+    #expect(coordinator.playbackState == .playing)
   }
 
   @Test("External state changes do not override an in-flight reconnection")

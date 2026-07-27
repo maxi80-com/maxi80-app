@@ -188,17 +188,20 @@ public final class RadioPlayerCoordinator {
   /// Called on foreground (background→foreground resume recreates the Android activity but the
   /// coordinator is a process-wide singleton). The foreground-service stream keeps playing across
   /// the transition, so no fresh ICY metadata arrives to promote a stale `.loading` — this reads
-  /// the player's ground truth instead. Conservative by design: it only *promotes* a
-  /// `.loading`/`.reconnecting` state to `.playing` when the player is really playing, and never
-  /// overrides a user-driven `.paused` or an in-flight reconnection/error cycle.
+  /// the player's ground truth instead. Only runs when the player is really playing, so it can
+  /// safely promote ANY non-playing state (`.loading`/`.reconnecting`/`.idle`/`.paused`) to
+  /// `.playing`: a user pause always stops the player, so reaching here with a paused/idle state
+  /// means playback was started externally (e.g. Android Auto / the car auto-resuming) while the
+  /// app was in the background — the button must reflect that on return (issue #41). It never
+  /// fabricates playback from a stopped player (the `guard`), so a genuine user pause is untouched.
   public func reconcileWithPlayer() {
     guard player.isPlaying else { return }
     switch playbackState {
-    case .loading, .reconnecting:
+    case .playing:
+      break
+    default:
       playbackState = .playing
       publishPlaybackState(isPlaying: true)
-    default:
-      break
     }
     republishNowPlaying()
   }
@@ -665,13 +668,20 @@ public final class RadioPlayerCoordinator {
   /// `player.onPlaybackStateChanged` closure wired (Android-only) in `setupCallbacks()`.
   func handlePlaybackStateChanged(isPlaying: Bool) {
     if isPlaying {
-      // Only clear a pending spinner; do not fabricate playback from idle/paused.
+      // The player is the source of truth for whether audio is playing: when it reports playing,
+      // reflect `.playing` — including from `.idle`/`.paused`, not just a pending spinner. This
+      // keeps the button in sync when playback is started EXTERNALLY (Android Auto / the car
+      // auto-resuming while the app is foregrounded, which bypasses the app's own `play()` —
+      // issue #41: button stuck on ▶ while the car played). Safe against overriding a user pause:
+      // a user pause stops the player, so this callback can't arrive `true` off the back of one.
+      // `.error`/`.reconnecting` are deliberately excluded — the `ReconnectionManager` owns that
+      // cycle and emits `isPlaying` transients while it stops/replays the stream.
       switch playbackState {
-      case .loading, .reconnecting:
+      case .playing, .error, .reconnecting:
+        break
+      default:
         playbackState = .playing
         publishPlaybackState(isPlaying: true)
-      default:
-        break
       }
     } else {
       // External pause (media3 notification). Demote only from a steady `.playing`; a `false`
