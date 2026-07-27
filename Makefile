@@ -80,7 +80,7 @@ APK_DESKTOP_COPY := $(HOME)/Desktop/maxi80-$(MARKETING_VERSION)-$(BUILD_NUMBER).
 KEYSTORE_PROPS := Android/app/keystore.properties
 
 .PHONY: help version doctor verify check-config check-clean-tree test \
-        clean build-ios build-android build-all \
+        clean kill-daemons android-studio build-ios build-android build-all \
         package-ios package-tvos package-macos package-android package-all \
         publish-metadata-ios publish-metadata-tvos publish-metadata-mac publish-metadata-all \
         publish-ios publish-ios-open publish-tvos publish-tvos-open \
@@ -122,6 +122,8 @@ help: ## Show this help (default target)
 	@echo "    build-ios         Build the Swift/iOS side (swift build)"
 	@echo "    build-android     Skip transpile + gradle build (both halves)"
 	@echo "    build-all         build-ios + build-android"
+	@echo "    android-studio    RECOVER an Android Studio build (clean + full CLI build)"
+	@echo "    kill-daemons      Drain ALL Gradle/Kotlin daemons (CLI + Android Studio)"
 	@echo ""
 	@echo "  Package (signed artifacts, no upload)"
 	@echo "    package-ios       Signed iOS IPA (incl. CarPlay)"
@@ -269,31 +271,45 @@ test: ## Run the real Swift/Swift-Testing suite (used as the publish gate)
 	swift test --skip XCSkipTests --no-parallel --scratch-path .build/host-test
 
 # ------------------------------------------------------------------------------
-# Clean
+# Daemon hygiene (shared by clean + android-studio)
 # ------------------------------------------------------------------------------
-clean: ## Remove build artifacts (safe: never touches sources/secrets/config)
-	# All of these are git-ignored, generated outputs — verified not tracked.
-	#
-	# TWO things defeat a naive `rm -rf .build` and leave it half-deleted (which
-	# then causes baffling "Unresolved reference" / "No variants exist" errors on
-	# the NEXT build against the stale remnants):
-	#   1. A live Gradle/Kotlin daemon holds open handles under .build AND may be
-	#      REUSED by the next build with a stale, wrongly-ordered task graph — the
-	#      symptom is a build that runs ~185 tasks (not ~489), schedules
-	#      `:app:compileDebugKotlin` BEFORE `:skipstone:Maxi80:buildAndroidSwift...`,
-	#      and fails with "Unresolved reference 'Maxi80RootView' / 'SkipLogger' /
-	#      'ProcessInfo' …" plus "multiple Kotlin daemon sessions" warnings. So we
-	#      must fully DRAIN daemons: `gradle --stop` (graceful, current version),
-	#      then SIGKILL any stragglers, then a short settle so handles release and
-	#      no half-dead daemon is reused. Best-effort (|| true): a clean on a
-	#      machine with no daemon running must still succeed.
-	#   2. skipstone marks transpiled Kotlin (*.kt) READ-ONLY (mode 0444), so
-	#      `rm -rf` reports "Directory not empty" and stops. `chmod -R u+w` first.
-	# GNU Make 3.81 (macOS) runs each recipe LINE in its own shell under `-eu -o
-	# pipefail`, so guard best-effort steps with `|| true` and existence checks.
-	-cd Android && gradle --stop >/dev/null 2>&1 || true
+kill-daemons: ## Drain ALL Gradle/Kotlin daemons (every version), across CLI + Android Studio
+	# Drain daemons so `clean` can wipe .build (a live daemon holds open handles
+	# there) and so no stale Kotlin daemon lingers between builds. Best-effort
+	# (|| true) so a machine with no daemon running still succeeds; GNU Make 3.81
+	# runs each recipe LINE in its own shell.
+	-gradle --stop >/dev/null 2>&1 || true
 	-pkill -9 -f 'GradleDaemon|KotlinCompileDaemon' >/dev/null 2>&1 || true
 	sleep 2
+	@echo "==> drained all Gradle/Kotlin daemons"
+
+android-studio: clean build-android ## RECOVER an Android Studio build (clean + full CLI build)
+	# Normally Android Studio just needs Gradle Sync + build — the root wrapper
+	# (Android/gradle/wrapper/gradle-wrapper.properties) and Homebrew `gradle` are
+	# pinned to the SAME Gradle version, so both build the shared skipstone composite
+	# identically. Use this target only to RECOVER from a corrupted state — e.g. AS
+	# shows "Unresolved reference 'SkipLogger'/'Maxi80RootView'/…", which means the
+	# skipstone modules' Kotlin incremental caches under .build went bad and the
+	# module jars came out empty. `clean` wipes .build; `build-android` runs the full
+	# compile so every module jar is repopulated; then Gradle Sync in AS opens onto
+	# healthy outputs. (Historically this was caused by AS and the CLI using different
+	# Gradle versions on those shared caches — fixed by pinning both to one version.)
+	@echo "==> Recovered. In Android Studio: Gradle Sync, then build."
+
+# ------------------------------------------------------------------------------
+# Clean
+# ------------------------------------------------------------------------------
+clean: kill-daemons ## Remove build artifacts (safe: never touches sources/secrets/config)
+	# All of these are git-ignored, generated outputs — verified not tracked.
+	# Daemon draining runs FIRST via the `kill-daemons` prereq (a live daemon holds
+	# open handles under .build and would block the wipe).
+	#
+	# skipstone marks transpiled Kotlin (*.kt) READ-ONLY (mode 0444), so a naive
+	# `rm -rf .build` reports "Directory not empty" and stops half-done (which then
+	# causes baffling "Unresolved reference" / "No variants exist" errors on the NEXT
+	# build against the stale remnants). `chmod -R u+w` first. GNU Make 3.81 (macOS)
+	# runs each recipe LINE in its own shell under `-eu -o pipefail`, so guard
+	# best-effort steps with `|| true` and existence checks.
 	[ -d .build ] && chmod -R u+w .build || true
 	rm -rf .build
 	rm -rf Android/.build Android/.gradle Android/.kotlin Android/build Android/app/build
@@ -318,10 +334,11 @@ build-android: check-config ## Skip transpile + gradle build (both halves)
 	#      (Debug avoids requiring a release signing key for a routine dev build;
 	#       use `package-android` for the signed release AAB.)
 	skip android build
-	# --no-daemon: run gradle daemonless so the build's JVM exits when it finishes,
-	# rather than leaving a long-lived daemon that later gets REUSED with a stale,
-	# wrongly-ordered task graph (the "Unresolved reference 'Maxi80RootView'" race
-	# documented in `clean`). Also stops per-toolchain daemons accumulating over time.
+	# --no-daemon: the build's JVM exits when it finishes rather than leaving a
+	# long-lived daemon lingering between builds. This Homebrew `gradle` and the
+	# Android Studio wrapper (Android/gradle/wrapper/gradle-wrapper.properties) must
+	# stay pinned to the SAME Gradle version — they build the shared skipstone
+	# composite, and a version mismatch corrupts its Kotlin caches (see android-studio).
 	cd Android && gradle --no-daemon --warning-mode none -x lint assembleDebug
 
 build-all: build-ios build-android ## Build both platforms

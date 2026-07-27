@@ -15,13 +15,18 @@ pluginManagement {
     val skipPluginError = skipPluginResult.standardError.asText.get()
     print(skipPluginError)
 
-    // skip 1.9.4 (SPM binary artifact) hardcodes gradle-9.0.0 in generated sub-project wrappers,
-    // but AGP 9.2.0 requires Gradle ≥ 9.4.1. Patch all generated wrappers to match.
+    // skip 1.9.4 (SPM binary artifact) hardcodes gradle-9.0.0 in generated sub-project
+    // wrappers. Patch all generated wrappers to match the ROOT wrapper's version
+    // (Android/gradle/wrapper/gradle-wrapper.properties, currently 9.6.1) so the CLI,
+    // fastlane and Android Studio all build the shared skipstone composite with ONE
+    // Gradle version. Mixing versions across those tools corrupts the modules' shared
+    // Kotlin incremental caches → "Unresolved reference 'SkipLogger'/…" (empty module
+    // jars). Keep this in lockstep with the root wrapper's distributionUrl.
     providers.exec {
         commandLine("/bin/sh", "-c",
             "find '${settings.rootDir.parent}/.build/plugins/outputs' -name 'gradle-wrapper.properties'" +
             " -exec chmod u+w {} \\;" +
-            " -exec sed -i '' 's|gradle-[0-9][0-9.]*-bin\\.zip|gradle-9.4.1-bin.zip|g' {} \\;")
+            " -exec sed -i '' 's|gradle-[0-9][0-9.]*-bin\\.zip|gradle-9.6.1-bin.zip|g' {} \\;")
     }.result.get()
 
     includeBuild(pluginPath.readText()) {
