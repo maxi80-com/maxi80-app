@@ -30,15 +30,16 @@ import Foundation
         if let urlString = artworkURL, !urlString.isEmpty {
           _ = metadata.setArtworkUri(android.net.Uri.parse(urlString))
         } else {
-          // No live cover: fall back to the bundled launcher logo rather than clearing artwork,
+          // No live cover: fall back to the bundled station logo rather than clearing artwork,
           // so a coverless song does not flicker the card to no-art. Mirrors the initial MediaItem
           // built in ExoPlayerStreamPlayer.androidPlay() and Maxi80MediaService.stationArtworkUri().
-          // `ic_launcher_foreground` (raster PNG), NOT `ic_launcher` (adaptive-icon XML): media3's
-          // RawResourceDataSource can't rasterize the adaptive XML — it throws
-          // RawResourceDataSourceException and the card shows no artwork (issue #41).
+          // `drawable/media_placeholder` is a dedicated 1024px raster PNG (NOT the small
+          // ic_launcher_foreground, and NOT the ic_launcher adaptive-icon XML which media3's
+          // RawResourceDataSource can't rasterize — issue #41): high-res so Android Auto's large
+          // artwork surface stays crisp instead of pixelated.
           _ = metadata.setArtworkUri(
             android.net.Uri.parse(
-              "android.resource://\(context.packageName)/mipmap/ic_launcher_foreground")
+              "android.resource://\(context.packageName)/drawable/media_placeholder")
           )
         }
         // Apply to the shared player's current item so the service's session (and notification,

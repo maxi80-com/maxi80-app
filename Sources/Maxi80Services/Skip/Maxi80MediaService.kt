@@ -68,13 +68,14 @@ object MediaControllerHolder {
                     .setArtist("Live")
                     .setArtworkUri(
                         android.net.Uri.parse(
-                            // `ic_launcher_foreground`, NOT `ic_launcher`: the latter resolves to the
-                            // adaptive-icon XML (mipmap-anydpi/ic_launcher.xml), which media3's
+                            // `drawable/media_placeholder`, NOT `ic_launcher`: the latter resolves to
+                            // the adaptive-icon XML (mipmap-anydpi/ic_launcher.xml), which media3's
                             // RawResourceDataSource / ImageDecoder cannot rasterize — it failed with
                             // RawResourceDataSourceException / 'unimplemented' and showed no artwork in
-                            // the car and notification (issue #41). `_foreground` is a plain raster PNG
-                            // at every density: the actual Maxi'80 logo.
-                            "android.resource://${context.packageName}/mipmap/ic_launcher_foreground"
+                            // the car and notification (issue #41). `media_placeholder` is a dedicated
+                            // 1024px raster PNG of the Maxi'80 logo — high-res so the car's large
+                            // artwork surface stays crisp (the small ic_launcher_foreground pixelated).
+                            "android.resource://${context.packageName}/drawable/media_placeholder"
                         )
                     )
                     .setIsPlayable(true)
@@ -221,12 +222,14 @@ class Maxi80MediaService : MediaLibraryService() {
      * player's metadata once playback starts). Built from the runtime package name so it resolves
      * for every build variant. There is no hosted station-artwork URL in the app config to use here.
      *
-     * Uses `ic_launcher_foreground` (a raster PNG), NOT `ic_launcher` (the adaptive-icon XML) —
-     * media3's RawResourceDataSource / ImageDecoder can't rasterize the adaptive XML and would fail
-     * with RawResourceDataSourceException, leaving the artwork blank (issue #41).
+     * Uses `drawable/media_placeholder` (a dedicated 1024px raster PNG), NOT `ic_launcher` (the
+     * adaptive-icon XML) — media3's RawResourceDataSource / ImageDecoder can't rasterize the adaptive
+     * XML and would fail with RawResourceDataSourceException, leaving the artwork blank (issue #41).
+     * High-res so the car's large artwork surface stays crisp (the small ic_launcher_foreground
+     * used previously looked pixelated).
      */
     private fun stationArtworkUri(): android.net.Uri =
-        android.net.Uri.parse("android.resource://$packageName/mipmap/ic_launcher_foreground")
+        android.net.Uri.parse("android.resource://$packageName/drawable/media_placeholder")
 
     // ---------------------------------------------------------------------------
     // MediaLibrarySession.Callback
