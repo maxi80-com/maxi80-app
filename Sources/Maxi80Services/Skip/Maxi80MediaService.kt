@@ -10,8 +10,10 @@ import android.os.Build
 import android.os.Process
 import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
@@ -95,12 +97,22 @@ object MediaControllerHolder {
         }
     }
 
-    /** Stop playback (true stop, not pause): the next play() reconnects to the live edge. */
+    /**
+     * Stop playback (true stop, not pause): releases the buffer and drops to STATE_IDLE so the next
+     * play() reconnects to the live edge — never a stale buffer.
+     *
+     * Deliberately does NOT clear the media items. Keeping the current item (a) leaves the
+     * notification/lock-screen card visible (media3 removes it only on clearMediaItems()/release()),
+     * so the in-app stop matches the notification button, and (b) preserves the current song's
+     * title/artwork on the card. Clearing it here made a subsequent replay rebuild the bare "Live"
+     * placeholder because onAddMediaItems then had no currentMediaItem metadata to carry forward, and
+     * no fresh ICY follows a same-song reload to restore it (issue #49). This is the same true-stop
+     * semantics StopOnPausePlayer applies to the notification/lock-screen/Auto pause buttons.
+     */
     fun stop() {
         val c = controller
         if (c != null && c.isConnected) {
             c.stop()
-            c.clearMediaItems()
         } else {
             // Not yet connected: cancel any queued play so a late connect doesn't start audio.
             pendingAction = null
@@ -143,6 +155,51 @@ object MediaControllerHolder {
         connecting = false
         controller?.release()
         controller = null
+    }
+}
+
+/**
+ * Wraps the shared player so a "pause" from ANY media surface — the media3 notification, the lock
+ * screen, Android Auto, or a Bluetooth media button — is a true STOP of the live stream, not a
+ * buffered pause. This makes the system transport controls behave identically to the in-app button,
+ * which has always treated "pause" as "stop and reconnect at the live edge".
+ *
+ * WHY: live radio has no meaningful pause. Pausing buffers a frozen slice of audio that is already
+ * stale the instant you resume; the user expects to rejoin the live broadcast, not replay buffered
+ * seconds. Previously the notification button called the default `pause()` (buffered) while the
+ * in-app button did a true stop, so the two disagreed.
+ *
+ * HOW: media3 routes every transport play/pause it receives (notification, media button, connected
+ * MediaController) through `BasePlayer.play()`/`pause()` → `setPlayWhenReady(true/false)` →
+ * `handleSetPlayWhenReady`, so this single override is the choke point for all of them.
+ *
+ * - On pause (`playWhenReady == false`): forward the paused intent, then `stop()` the wrapped player.
+ *   `stop()` releases the buffer and drops to `STATE_IDLE` but does NOT clear the media items, so
+ *   media3 keeps the notification/lock-screen card visible (it removes the card only on
+ *   `clearMediaItems()` / `release()`). The card simply flips to a play button, and the retained
+ *   media item preserves the current song's title/artwork so the card never regresses to the "Live"
+ *   placeholder (issue #49).
+ * - On play (`playWhenReady == true`) after a stop the player sits in `STATE_IDLE`, so `prepare()`
+ *   first to reconnect the stream at the live edge before playing. Fresh ICY metadata arriving on
+ *   reconnect then refreshes the card via the direct metadata listener → `replaceMediaItem`.
+ */
+@OptIn(UnstableApi::class)
+class StopOnPausePlayer(player: Player) : ForwardingSimpleBasePlayer(player) {
+    override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
+        if (!playWhenReady) {
+            // Reflect the paused intent (so isPlaying/notification state stay consistent), then truly
+            // stop — releasing the buffer and dropping to STATE_IDLE while keeping the media item.
+            val future = super.handleSetPlayWhenReady(false)
+            getPlayer().stop()
+            return future
+        }
+        // Resuming after a stop: the player is idle, so re-prepare to reconnect at the live edge
+        // before playing. (A play that follows an explicit setMediaItem+prepare — the in-app path —
+        // is already past STATE_IDLE, so this doesn't double-prepare.)
+        if (getPlayer().playbackState == Player.STATE_IDLE) {
+            getPlayer().prepare()
+        }
+        return super.handleSetPlayWhenReady(true)
     }
 }
 
@@ -368,7 +425,10 @@ class Maxi80MediaService : MediaLibraryService() {
             manager.createNotificationChannel(channel)
         }
 
-        val player = SharedAudioPlayer.shared(applicationContext)
+        // Wrap the shared player so every transport "pause" (notification, lock screen, Android Auto,
+        // media button) becomes a true STOP + live-edge reconnect on the next play — matching the
+        // in-app button. See StopOnPausePlayer.
+        val player = StopOnPausePlayer(SharedAudioPlayer.shared(applicationContext))
         session = MediaLibrarySession.Builder(this, player, libraryCallback)
             .apply {
                 // Tapping the notification / lock-screen card returns the user to the app — this was
