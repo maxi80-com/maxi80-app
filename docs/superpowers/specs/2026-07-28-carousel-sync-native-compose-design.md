@@ -88,7 +88,7 @@ on Android — the whole `#if os(Android) … #else … #endif` must sit directl
 ```
 RadioPlayerView.body
   #if os(Android)
-    AndroidCoverFlow(state: viewModel.carouselBridge)   // new
+    AndroidCoverFlow(state: viewModel.carouselState)   // new; state lives in Maxi80Services
   #else
     CoverFlowView(covers:selection:pinTarget:pinToken:)  // unchanged iOS impl
   #endif
@@ -96,6 +96,32 @@ RadioPlayerView.body
 
 Both platforms read/write the same view-model state; the title/background derive from the centered
 cover on both (iOS already does this via its `CenteredCoverKey` preference).
+
+## Spike findings (Task 0, compile-verified 2026-07-28)
+
+The bridge channel was proven before locking the design (both build halves green). Two results
+reshaped the original plan:
+
+1. **A `/* SKIP @bridge */` object in the NATIVE `Maxi80` module is useless inside Compose.** It
+   transpiles to a field-less `SwiftPeerBridged` stub (only a `Swift_peer` pointer); a `#if SKIP`
+   composer referencing its fields gets `Unresolved reference`. So the "shared observable state
+   object owned by the view model" cannot be the bridge channel. (Re-confirms the gotcha in project
+   memory `coverflow-rotation-pin-findings`.)
+
+2. **The same `/* SKIP @bridge */` object in the TRANSPILED `Maxi80Services` module generates real
+   Kotlin fields and a real closure.** `CarouselState` there transpiles to
+   `class CarouselState { var coverCount: Int; var targetIndex: Int; var pinNonce: Int;
+   var onCenteredIndexChanged: ((Int) -> Unit)? }` — exactly the `AudioStreamPlayer` pattern already
+   used in production. A native-module `#if SKIP` composer reads those fields directly AND calls
+   `state.emitCenteredIndex(i)`, which fires the closure the native view model assigned. Verified:
+   `skip android build` (native `.so`) + `make build-android` (transpiled Kotlin) both succeed.
+
+Consequence: the bridge is a **`CarouselState` class in `Maxi80Services`** (not a native view-model
+object), the write-back is a **delegate call** (not an observed `Int` on a native object), and
+data-in is **primitive fields** on that class. The runtime behavior (write-back fires on settle;
+`rememberSaveable` survives recreation) is the first fail-fast task of implementation. (The spike
+proved the equivalent *closure* form compiles both halves; the delegate is the Swift-6-clean variant,
+verified first thing in implementation.)
 
 ## Components
 
@@ -120,38 +146,52 @@ cover on both (iOS already does this via its `CenteredCoverKey` preference).
      "Back to live" action (a user-initiated, post-layout scroll on a stable layout — which works;
      it is not fighting a reset).
 
-### Bridge — shared observable state holder
+### Bridge — `CarouselState` in the transpiled `Maxi80Services` module
 
-3. **`CarouselBridgeState`** — a small bridged class holding only bridgeable primitives (no
-   closures — closures cannot bridge through a `ContentComposer`: as a ctor param they fail to
-   compile, as a settable var they crash at launch):
-   - **In (Swift → Compose):** `covers: [String]` (ordered cover ids/urls), `targetIndex: Int`,
-     `pinNonce: Int` (bumped by "Back to live").
-   - **Out (Compose → Swift):** `centeredIndex: Int` (written on settle).
+3. **`CarouselState`** (`Sources/Maxi80Services/CarouselState.swift`) — a `/* SKIP @bridge */`
+   `@MainActor final class` guarded by `#if !SKIP_BRIDGE`, exactly like `AudioStreamPlayer`. Because
+   it lives in the **transpiled** module it generates a real Kotlin class the native composer can
+   read and invoke:
+   - **In (Swift → Compose), primitive fields:** `coverCount: Int`, `coverURLs: [String]`
+     (empty string == placeholder), `targetIndex: Int`, `pinNonce: Int`.
+   - **Out (Compose → Swift), delegate:** a `CarouselStateDelegate` protocol (defined in
+     `Maxi80Services`) with `func carouselDidCenter(on index: Int)`; `CarouselState` holds
+     `weak var delegate: (any CarouselStateDelegate)?` and exposes `notifyCentered(_ index: Int)`
+     which the composer calls on settle. Chosen over a mutable `((Int) -> Void)?` closure: typed,
+     `weak` (no retain cycle), and idiomatic Swift 6 — the clean form of the same cross-bridge
+     callback the services layer already uses.
 
-   The view model **owns** it, populates the "in" fields from `covers`/`selectedCoverID`, and
-   observes `centeredIndex` to update `selectedCoverID` → title/background. Single source of truth
-   stays in Swift; Compose is a pure render-and-report of it.
+   The **native `RadioPlayerViewModel` owns the `CarouselState` instance**, populates the "in" fields
+   from `covers`/`selectedCoverID`, and **is its delegate**, mapping the reported index → cover id →
+   `selectedCoverID` (→ title/background). Compose is a pure render-of-fields + report-via-delegate.
+   The single source of truth is still `selectedCoverID` in the view model; `CarouselState` is the
+   bridge conduit.
+
+   *Risk note:* the closure form is compile-proven across this bridge; the delegate form (native
+   conformer invoked from transpiled Compose) is verified as the first step of implementation, with
+   the proven closure as the documented fallback if a native-protocol delegate does not bridge.
 
 ## Data flow
 
-**Steady state (user swiping):** `LazyRow` scroll settles → `snapshotFlow` writes `centeredIndex`
-→ view model maps index → cover id → sets `selectedCoverID` → title/background recompute. The title
+**Steady state (user swiping):** `LazyRow` scroll settles → `snapshotFlow` (gated on
+`!isScrollInProgress`) calls `state.notifyCentered(i)` → `delegate.carouselDidCenter(on: i)` → the
+view model maps index → cover id → sets `selectedCoverID` → title/background recompute. The title
 always equals the centered cover. No `scrollTo` involved.
 
 **Recreation (rotation / resume / low-memory):** `selectedCoverID` survives in the process-wide view
-model. On rebuild, the view model computes `targetIndex` from it; `rememberSaveable` also restores the
-index; they agree → the `LazyRow` is **born centered** on the right cover. Title derives from the same
-index → in sync from the first frame. Nothing to command, nothing to race.
+model. On rebuild, the view model sets `state.targetIndex` from it; `rememberSaveable` also restores
+the index; they agree → the `LazyRow` is **born centered** on the right cover. The view model
+re-sets itself as `delegate` on the fresh view. Title derives from the same index → in sync from the
+first frame. Nothing to command, nothing to race.
 
-**"Back to live":** `returnToLive()` sets `selectedCoverID = liveCoverID` and bumps `pinNonce`; a
-`LaunchedEffect(pinNonce)` animates the scroll to the live index. (iOS keeps its existing
-`returnToLiveNonce` path.)
+**"Back to live":** `returnToLive()` sets `selectedCoverID = liveCoverID` and bumps
+`state.pinNonce`; a `LaunchedEffect(state.pinNonce)` animates the scroll to `state.targetIndex`.
+(iOS keeps its existing `returnToLiveNonce` path.)
 
-**Invariant that removes the bug class:** the title/background derive from `centeredIndex` (what is
-actually visible), never from a separately stored selection that could drift. iOS already holds this
-via its centered-cover preference key. On both platforms: **the title is a pure function of the
-visible cover**, so desync is unrepresentable.
+**Invariant that removes the bug class:** the title/background derive from the centered index Compose
+reports (what is actually visible), never from a separately stored selection that could drift. iOS
+already holds this via its centered-cover preference key. On both platforms: **the title is a pure
+function of the visible cover**, so desync is unrepresentable.
 
 ### Edge cases
 
@@ -162,26 +202,30 @@ visible cover**, so desync is unrepresentable.
 
 ## The one real risk, and how it is de-risked
 
-How Compose reacts to Swift-side writes, and how Swift observes Compose's `centeredIndex`, **across
-the `ComposeView` boundary**, is version-sensitive in Skip and is the highest-risk part. It is gated
-by a **prototype spike before any app code**:
+The bridge mechanism (the original highest risk) is **resolved** — see "Spike findings" above. The
+compile-verified architecture is: `CarouselState` in the transpiled `Maxi80Services` module (real
+Kotlin fields), read/invoked by a native-module `#if SKIP` composer, with
+`rememberSaveable(LazyListState.Saver)` + `LazyListState(firstVisibleItemIndex:)` for born-at-index.
 
-In `/Users/sst/code/maxi80/skip-tutorial/hello-world` (the known-good native+transpiled+bridging
-reference prototype), prove:
+**What remains unproven**, made the **first fail-fast steps** of implementation:
 
-1. A bridged `CarouselBridgeState` object passed into a `ComposeView { LazyRow }`.
-2. Compose writes `centeredIndex` on settle; the Swift side observes the change.
-3. `rememberSaveable(LazyListState.Saver)` + `initialFirstVisibleItemIndex` survives a rotation and a
-   forced activity recreation, landing on the saved index.
+1. **Delegate bridges (compile):** a native-module `RadioPlayerViewModel` conforming to
+   `CarouselStateDelegate` and invoked from the transpiled composer via `state.notifyCentered(_:)`
+   compiles both halves. (Fallback if not: the compile-proven `((Int) -> Void)?` closure form.)
+2. **Write-back fires (runtime):** scrolling the `LazyRow` and settling calls the delegate; Swift
+   observes the index.
+3. **rememberSaveable survives (runtime):** `rememberSaveable(LazyListState.Saver)` restores the
+   saved index across a forced activity recreation (Developer Options → *Don't keep activities*),
+   landing on the saved index, not index 0.
 
-**Exit criteria:** all three verified on the emulator. The spec/implementation then documents the
-*exact proven* bridging pattern.
+If any fail, stop and revisit before building the full 3D carousel. The write-back is low-risk (it is
+the exact `AudioStreamPlayer.onMetadataChanged` mechanism already shipping, just typed as a delegate);
+the `rememberSaveable` half is the part to watch.
 
-**Fallback if bidirectional object reactivity fails:** pass primitives in (`covers: [String]`,
-`targetIndex: Int`) and drive the re-pin from a `LaunchedEffect` keyed on `pinNonce` **and**
-`listState.layoutInfo.viewportSize.width` (the exact lever proven on-device during the rotation
-investigation), reporting the centered index out via a single bridged `Int`. The spec documents
-whichever mechanism the spike proves.
+**Backstop lever (if `rememberSaveable` alone doesn't hold across a width change):** additionally key
+a re-pin `LaunchedEffect` on `state.pinNonce` **and** `listState.layoutInfo.viewportSize.width` (the
+exact lever proven on-device during the rotation investigation) to force the saved index after a
+relayout.
 
 ## Testing
 
@@ -208,9 +252,9 @@ memory). Build the instrumented/verification APK via a hardened `make clean buil
 
 ## Rollout
 
-Feature branch → **prototype gate** (must pass before app code) → implement Android carousel →
-device matrix → PR. The iOS diff should be effectively zero (only the `#if os(Android)` selection
-point in `RadioPlayerView.body`).
+Feature branch → **runtime fail-fast** (the two device checks in "The one real risk") → implement
+Android carousel → device matrix → PR. The bridge spike (Task 0) is already done. The iOS diff
+should be effectively zero (only the `#if os(Android)` selection point in `RadioPlayerView.body`).
 
 ## Out of scope (YAGNI)
 
