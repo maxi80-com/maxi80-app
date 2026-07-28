@@ -451,7 +451,7 @@ bump: ## Rewrite CURRENT_PROJECT_VERSION in Skip.env to a fresh build number
 #                  (then test on device, then promote to prod in the Consoles)
 #                  add `make publish-metadata-all` when the listing changed.
 
-release: ## Prepare a signed, versioned release of ALL platforms (no upload)
+release: clean ## Prepare a signed, versioned release of ALL platforms (no upload)
 	# One codebase -> one build number -> one commit+tag -> all binaries.
 	# The version is compiled into each binary, so bump BEFORE building; commit+tag
 	# land LAST so a failed build/test leaves git clean (fix and rerun). GNU Make
