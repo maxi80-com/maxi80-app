@@ -180,4 +180,57 @@ struct ResumeReconciliationTests {
     // The write must be dropped so the persisted live selection survives.
     #expect(viewModel.selectedCoverID == AnyHashable(RadioPlayerViewModel.nowSlotID))
   }
+
+  @Test(
+    "Every non-matching write-back is dropped until the carousel settles, however late (issue #44)")
+  @MainActor
+  func foregroundTransitionDropsLateTransientUntilSettled() {
+    let (coordinator, _) = makeCoordinator()
+    let viewModel = RadioPlayerViewModel(coordinator: coordinator)
+
+    #expect(viewModel.selectedCoverID == AnyHashable(RadioPlayerViewModel.nowSlotID))
+
+    viewModel.beginForegroundTransition()
+
+    // The recreated Compose carousel reports the leftmost/oldest cover repeatedly while it settles.
+    // On-device (issue #44) the old fixed-timeout guard expired mid-sweep and let one of these
+    // land, stranding the carousel on the oldest cover. The settle-based guard must drop ALL of
+    // them — including ones arriving arbitrarily late — because none matches the preserved cover.
+    for _ in 0..<10 {
+      viewModel.setSelectionFromCarousel(AnyHashable("oldest|Artist|Old Song"))
+    }
+    #expect(viewModel.selectedCoverID == AnyHashable(RadioPlayerViewModel.nowSlotID))
+    #expect(viewModel.isCarouselRecreating)
+
+    // The carousel finally re-pins to the preserved (live) cover and reports it: this is the
+    // settle signal — it lands and closes the window.
+    viewModel.setSelectionFromCarousel(AnyHashable(RadioPlayerViewModel.nowSlotID))
+    #expect(viewModel.selectedCoverID == AnyHashable(RadioPlayerViewModel.nowSlotID))
+    #expect(!viewModel.isCarouselRecreating)
+
+    // After settling, normal user scrolls to history are honored again.
+    viewModel.setSelectionFromCarousel(AnyHashable("some|Past|Cover"))
+    #expect(viewModel.selectedCoverID == AnyHashable("some|Past|Cover"))
+  }
+
+  @Test("The recreation guard preserves a browsed history cover, not just the live slot")
+  @MainActor
+  func foregroundTransitionPreservesBrowsedHistoryCover() {
+    let (coordinator, _) = makeCoordinator()
+    let viewModel = RadioPlayerViewModel(coordinator: coordinator)
+
+    // User was browsing a past cover when they backgrounded the app.
+    viewModel.selectedCoverID = AnyHashable("browsed|Artist|Song")
+
+    viewModel.beginForegroundTransition()
+
+    // The recreated carousel sweeps through the oldest cover first.
+    viewModel.setSelectionFromCarousel(AnyHashable("oldest|Artist|Old Song"))
+    #expect(viewModel.selectedCoverID == AnyHashable("browsed|Artist|Song"))
+
+    // It settles back on the browsed cover.
+    viewModel.setSelectionFromCarousel(AnyHashable("browsed|Artist|Song"))
+    #expect(viewModel.selectedCoverID == AnyHashable("browsed|Artist|Song"))
+    #expect(!viewModel.isCarouselRecreating)
+  }
 }

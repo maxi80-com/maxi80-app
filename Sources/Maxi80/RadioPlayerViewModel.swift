@@ -198,6 +198,20 @@ public final class RadioPlayerViewModel {
   @ObservationIgnored
   private var carouselRecreateClearTask: Task<Void, Never>?
 
+  /// The selection to preserve across a carousel recreation, snapshotted when the window opens.
+  /// The recreated carousel sweeps through covers (starting at the leftmost/oldest) before it
+  /// settles on the re-pin target; the window closes only once the carousel reports THIS cover,
+  /// which is the signal that it has settled. See `setSelectionFromCarousel` and issue #44.
+  @ObservationIgnored
+  private var carouselSelectionToPreserve: AnyHashable?
+
+  /// Safety backstop for the recreation window: long enough that the carousel has always settled
+  /// by now. Only closes the window if the settle signal (a write-back matching the preserved
+  /// cover) never arrived, so a stuck flag can't drop later legitimate user scrolls forever. It
+  /// does not touch the selection — while the window is open no non-matching write can land, so
+  /// the preserved cover is already intact.
+  private static let carouselRecreateBackstopNanos: UInt64 = 2_500_000_000
+
   /// Begin the recreation lock for an orientation change, auto-clearing once the recreated
   /// carousel has settled.
   func beginReorientation() {
@@ -213,17 +227,34 @@ public final class RadioPlayerViewModel {
 
   private func beginCarouselRecreationWindow() {
     isCarouselRecreating = true
+    carouselSelectionToPreserve = selectedCoverID
     carouselRecreateClearTask?.cancel()
     carouselRecreateClearTask = Task { @MainActor [weak self] in
-      try? await Task.sleep(nanoseconds: 700_000_000)
-      self?.isCarouselRecreating = false
+      try? await Task.sleep(nanoseconds: Self.carouselRecreateBackstopNanos)
+      guard let self, self.isCarouselRecreating else { return }
+      // The carousel never reported the preserved cover within the backstop; just close the
+      // window so later legitimate user scrolls aren't dropped. The selection is untouched — no
+      // non-matching write could have landed while the window was open.
+      self.isCarouselRecreating = false
     }
   }
 
-  /// Set the selection unless a carousel recreation is in flight, so transient relayout centering
-  /// during a rotation or a resume can't clobber the browsed/live cover.
+  /// Route a carousel-reported selection through the recreation guard.
+  ///
+  /// Normally this just stores the value. But while a recreation is in flight (rotation or a
+  /// background→foreground resume), the freshly-laid-out carousel reports the leftmost (oldest)
+  /// cover repeatedly before its re-pin `.task` scrolls it back to the target. A blind timeout
+  /// guard expires mid-sweep and lets one of those transient reports land, stranding the carousel
+  /// on the oldest cover (issue #44, confirmed on-device). Instead, drop EVERY write that doesn't
+  /// match the cover we preserved when the window opened — however late it arrives — and treat a
+  /// write matching the preserved cover as the "settled" signal that closes the window.
   func setSelectionFromCarousel(_ newValue: AnyHashable?) {
-    guard !isCarouselRecreating else { return }
+    if isCarouselRecreating {
+      guard newValue == carouselSelectionToPreserve else { return }
+      // The carousel has settled back on the preserved cover: accept it and close the window.
+      isCarouselRecreating = false
+      carouselRecreateClearTask?.cancel()
+    }
     selectedCoverID = newValue
   }
 
