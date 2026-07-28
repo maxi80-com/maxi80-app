@@ -288,7 +288,25 @@ class Maxi80MediaService : MediaLibraryService() {
             // synthesize the stream item server-side for every requested item, ignoring whatever
             // mediaId/URI the caller sent. This prevents a malicious/foreign controller from making
             // the player load an arbitrary URI, and there is no legitimate case for any other item.
-            val resolved = mediaItems.map { buildStreamItem() }.toMutableList()
+            //
+            // Metadata, however, must be PRESERVED across a same-stream reload. In-app play always
+            // reloads to the live edge (MediaControllerHolder.play → setMediaItem), which routes
+            // here; rebuilding the bare placeholder every time reset the notification/lock-screen
+            // card to "Live" + the generic logo whenever the user paused from the notification and
+            // then replayed the SAME song — no fresh ICY event follows a same-song reload to restore
+            // it, so the placeholder stuck (issue #43). This callback resolves the new items BEFORE
+            // the timeline updates, so `currentMediaItem` still holds the pre-reload item: carry its
+            // live metadata forward. When nothing is loaded (cold start, or after a true stop that
+            // cleared the item) `currentMediaItem` is null and we fall back to the placeholder, which
+            // the first ICY event then upgrades to the live song.
+            val current = mediaSession.player.currentMediaItem?.mediaMetadata
+            val resolved = mediaItems.map {
+                if (current != null) {
+                    buildStreamItem().buildUpon().setMediaMetadata(current).build()
+                } else {
+                    buildStreamItem()
+                }
+            }.toMutableList()
             return Futures.immediateFuture(resolved)
         }
 
