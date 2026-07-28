@@ -177,6 +177,11 @@ lane :metadata do |options|
   ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
   upload_to_app_store(
     platform: "ios",
+    # Target the CURRENT app version from Skip.env (loaded into ENV by the Appfile)
+    # rather than letting deliver default to whichever version happens to be editable
+    # on App Store Connect (that's how a stale 5.0.1 edit got picked up). deliver
+    # creates/selects this version edit for the draft.
+    app_version: ENV["MARKETING_VERSION"],
     # ABSOLUTE path. Lanes run with CWD = Darwin/ (fastlane auto-detects the
     # ./fastlane metadata folder), so a RELATIVE "screenshots/ios" resolves to
     # Darwin/screenshots/ (empty) instead of Darwin/fastlane/screenshots/ where
@@ -192,19 +197,12 @@ lane :metadata do |options|
     force: true,                          # skip the HTML preview confirmation
     precheck_include_in_app_purchases: false
   )
-  # App Privacy: declare "Data Not Collected" (app_privacy_details.json) so the
-  # answers are published automatically instead of by hand in the Console. This
-  # is app-level (shared across platforms), so it only needs to run once — the
-  # iOS metadata lane is a fine home for it.
-  privacy_details
-end
-
-desc "Publish the App Privacy declaration (Data Not Collected) — app-level, once"
-lane :privacy_details do |options|
-  upload_app_privacy_details_to_app_store(
-    api_key_path: "fastlane/apikey.json",
-    json_path: "fastlane/metadata/app_privacy_details.json"
-  )
+  # NOTE: App Privacy ("Data Not Collected") is NOT automated here. The fastlane
+  # action upload_app_privacy_details_to_app_store does a legacy Apple-ID + password
+  # web-session login (it has no api_key option and ignores app_store_connect_api_key),
+  # which would break this otherwise API-key-driven, unattended flow. The declaration
+  # is app-level and only needs to be set ONCE, by hand, in App Store Connect →
+  # App Privacy. app_privacy_details.json is kept as a record of that declaration.
 end
 
 desc "Upload the EXISTING built binary to TestFlight (no rebuild)."
@@ -274,13 +272,16 @@ desc "iOS: submit the LATEST uploaded build FOR REVIEW (attach build + metadata 
 # version of Xcode and can't be submitted"). Run this only on a GM-Xcode build.
 # Kept OUT of the normal publish flow so nothing auto-submits; run deliberately.
 lane :release do |options|
-  # Publish the App Privacy declaration first (required before review).
-  privacy_details
+  # App Privacy ("Data Not Collected") must be declared before review, but it's a
+  # ONE-TIME manual step in App Store Connect → App Privacy — not automated here
+  # (the fastlane action uses Apple-ID/password web login, not the API key; see the
+  # metadata lane). Ensure it's declared in the Console before submitting.
   # sync_screenshots (not overwrite) — avoids the duplicate-upload race (see metadata lane).
   ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
   # No rebuild / no re-upload of the binary — submit the build that's already up.
   upload_to_app_store(
     platform: "ios",
+    app_version: ENV["MARKETING_VERSION"],   # target the current version (see the metadata lane)
     screenshots_path: File.expand_path("screenshots/ios", __dir__),
     api_key_path: "fastlane/apikey.json",
     app_rating_config_path: "fastlane/metadata/rating.json",

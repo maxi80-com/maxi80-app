@@ -29,14 +29,6 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 
 iOS: push store listing (text + iPhone screenshots) as a DRAFT — no binary, no review
 
-### privacy_details
-
-```sh
-[bundle exec] fastlane privacy_details
-```
-
-Publish the App Privacy declaration (Data Not Collected) — app-level, once
-
 ### upload
 
 ```sh
