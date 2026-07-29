@@ -636,4 +636,14 @@ screenshots: ## Capture a store screenshot (wraps fastlane/capture_screenshots.s
         fi; \
         echo "==> forwarding tcp:5277"; \
         adb forward tcp:5277 tcp:5277; \
-        echo "==
+                echo "Install 'Android Auto Desktop Head Unit Emulator' via Android Studio → SDK Manager → SDK Tools"; \
+                exit 1; \
+        fi; \
+        echo "==> forwarding tcp:5277"; \
+        adb forward tcp:5277 tcp:5277; \
+        echo "==> launching DHU (close the DHU window to stop)"; \
+        "$$DHU"
+
+        adb forward tcp:5277 tcp:5277; \
+        echo "==> launching DHU (close the DHU window to stop)"; \
+        "$$DHU"
