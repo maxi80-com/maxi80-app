@@ -273,6 +273,19 @@ public final class RadioPlayerViewModel {
     return !song.artist.isEmpty && !song.title.isEmpty
   }
 
+  // MARK: - Sleep Timer (read-through)
+
+  /// Whether a sleep timer is currently running. Drives the moon glyph's filled/idle state and
+  /// whether the countdown pill occupies the status slot.
+  public var isSleepTimerActive: Bool { coordinator.sleepTimerFiresAt != nil }
+
+  /// When the running sleep timer will fire, or `nil` when inactive. The countdown pill computes
+  /// its remaining time from this against `Date()` via `TimelineView`, so no ticking state is stored.
+  public var sleepTimerFiresAt: Date? { coordinator.sleepTimerFiresAt }
+
+  /// The preset durations (minutes) offered by the picker. Presets only — no custom picker.
+  public static let sleepTimerPresets: [Int] = [15, 30, 45, 60, 90]
+
   // MARK: - Computed Display Properties
 
   /// The history entry the carousel is focused on, if the user is browsing an older song.
@@ -343,6 +356,31 @@ public final class RadioPlayerViewModel {
 
   public func retry() {
     coordinator.retryConnection()
+  }
+
+  // MARK: - Sleep Timer Actions
+
+  public func startSleepTimer(minutes: Int) {
+    coordinator.startSleepTimer(minutes: minutes)
+  }
+
+  public func cancelSleepTimer() {
+    coordinator.cancelSleepTimer()
+  }
+
+  public func extendSleepTimer(minutes: Int) {
+    coordinator.extendSleepTimer(minutes: minutes)
+  }
+
+  /// The localized "MM:SS remaining"-style label for the countdown pill, computed against `now`
+  /// (supplied by the pill's `TimelineView`). Returns the bare `MM:SS` string; the accessibility
+  /// label wraps it via the "%@ remaining" catalog string. `nil` when no timer is active.
+  public func sleepCountdownText(now: Date) -> String? {
+    guard let firesAt = coordinator.sleepTimerFiresAt else { return nil }
+    let remaining = max(0, Int(firesAt.timeIntervalSince(now).rounded(.up)))
+    let minutes = remaining / 60
+    let seconds = remaining % 60
+    return String(format: "%d:%02d", minutes, seconds)
   }
 
   public func shareCurrentTrack() -> ShareContent {

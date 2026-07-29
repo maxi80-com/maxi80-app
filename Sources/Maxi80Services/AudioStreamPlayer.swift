@@ -15,6 +15,13 @@ import Foundation
     public var isPlaying: Bool = false
     public var volume: Double = 1.0
 
+    /// Transient playback attenuation (0…1) that multiplies the user's `volume`, kept separate so
+    /// the sleep-timer fade can drive output toward silence WITHOUT touching the user's volume slider
+    /// value or (on Android) the system STREAM_MUSIC level. Normally `1.0`; only the fade writes it.
+    /// Effective app output on Apple is `volume * attenuation`; on Android it is applied to
+    /// ExoPlayer's private per-player volume (the system volume is the separate STREAM_MUSIC level).
+    public var attenuation: Double = 1.0
+
     /// Callback invoked when new ICY metadata is received.
     public var onMetadataChanged: ((String) -> Void)?
 
@@ -80,6 +87,21 @@ import Foundation
         platformSetVolume(newVolume)
       #elseif os(macOS)
         macSetVolume(newVolume)
+      #endif
+    }
+
+    /// Set the transient playback attenuation (0…1) used by the sleep-timer fade. Composes with the
+    /// user `volume` for the effective output and, crucially, never touches the user's slider value
+    /// or the system media volume. Implementation provided by platform extension files.
+    public func setPlaybackAttenuation(_ multiplier: Double) {
+      let clamped = multiplier.isNaN ? 0.0 : max(0.0, min(1.0, multiplier))
+      attenuation = clamped
+      #if SKIP
+        androidSetAttenuation(clamped)
+      #elseif os(iOS) || os(tvOS)
+        platformSetAttenuation(clamped)
+      #elseif os(macOS)
+        macSetAttenuation(clamped)
       #endif
     }
 

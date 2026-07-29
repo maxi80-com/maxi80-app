@@ -47,6 +47,13 @@ public final class RadioPlayerCoordinator {
   /// `Slider` to this value (through `viewModel.volume`).
   public var volume: Double = 1.0
 
+  /// When the sleep timer will fire, or `nil` when no timer is running. Storing the absolute fire
+  /// *date* (rather than a countdown integer) makes the remaining time always computable fresh, so
+  /// the countdown survives backgrounding/activity recreation without drift and needs no ticking
+  /// state of its own. This is the single source of truth for both "is a timer running" and "how
+  /// long is left".
+  public private(set) var sleepTimerFiresAt: Date?
+
   /// The generic cover shown before any song has played. Chosen once per launch.
   @ObservationIgnored
   let placeholderCover: PlaceholderCover = .random()
@@ -67,6 +74,10 @@ public final class RadioPlayerCoordinator {
   /// (backend collector hadn't produced it yet). Cancelled whenever the song changes.
   @ObservationIgnored
   private var artworkRetryTask: Task<Void, Never>?
+  /// The running sleep-timer task: sleeps until the fire time, then fades out and stops playback.
+  /// Cancelled by `cancelSleepTimer()` and superseded by `startSleepTimer(minutes:)`.
+  @ObservationIgnored
+  private var sleepTimerTask: Task<Void, Never>?
 
   #if !SKIP
     /// Modern NowPlaying-framework publisher (iOS 26+). `nil` on platforms/SDKs without the
@@ -130,6 +141,9 @@ public final class RadioPlayerCoordinator {
 
   /// Start streaming immediately and fetch history concurrently.
   public func play() {
+    // A manual/resumed play supersedes any running sleep timer: the listener is clearly awake and
+    // wants sound, so never fade a freshly-started stream out from under them.
+    cancelSleepTimer()
     // A fresh user-initiated play supersedes any in-progress reconnection cycle.
     reconnectionManager.reset()
     playbackState = .loading
@@ -177,6 +191,12 @@ public final class RadioPlayerCoordinator {
   /// so both drop to `STATE_IDLE` and reconnect to the live edge on the next play (rather than
   /// resuming a stale buffered position).
   private func stopForDisconnect() {
+    // A manual/disconnect stop cancels any running sleep timer so it can't later fade a stream the
+    // user already stopped. `cancelSleepTimer()` early-returns when no timer is running, so the
+    // sleep-timer *fire* path — which clears its own state before calling `stopForDisconnect()` —
+    // does not re-enter this and fight the fade (the fade already drove attenuation to 0; the fire
+    // path resets it to full itself afterwards). See `fireSleepTimer()`.
+    cancelSleepTimer()
     reconnectionManager.cancel()
     player.stop()
     playbackState = .paused
@@ -219,6 +239,89 @@ public final class RadioPlayerCoordinator {
     reconnectionManager.reset()
     errorMessage = nil
     play()
+  }
+
+  // MARK: - Sleep Timer
+
+  /// How long the fade-out runs before playback stops, in nanoseconds.
+  private static let sleepFadeDurationNanos: UInt64 = 2_500_000_000
+  /// Number of attenuation steps across the fade. ~12 steps over ~2.5s is smooth without spinning.
+  private static let sleepFadeSteps = 12
+
+  /// Compute the absolute fire date for a timer of `minutes`, relative to `now`. Pure and static so
+  /// the arithmetic is unit-testable without real sleeping or a live coordinator. Negative or zero
+  /// durations clamp to `now` (fire immediately) rather than scheduling in the past.
+  nonisolated static func sleepTimerFireDate(minutes: Int, from now: Date) -> Date {
+    now.addingTimeInterval(TimeInterval(max(0, minutes) * 60))
+  }
+
+  /// Whole minutes remaining until `firesAt`, relative to `now`, rounded up so a partial final
+  /// minute still counts (e.g. 90s left → 2 min). Never negative. Pure/static for testability;
+  /// used by `extendSleepTimer(minutes:)` to fold the current remainder into the new duration.
+  nonisolated static func remainingMinutes(until firesAt: Date, from now: Date) -> Int {
+    let seconds = firesAt.timeIntervalSince(now)
+    guard seconds > 0 else { return 0 }
+    return Int((seconds / 60).rounded(.up))
+  }
+
+  /// Start (or restart) the sleep timer for `minutes` from now. Playback fades out and stops when it
+  /// fires. Modeled on `startArtworkRetry(for:)`: a stored cancelable `Task` with `Task.isCancelled`
+  /// guards. Cancelling or extending mid-run supersedes this task cleanly.
+  public func startSleepTimer(minutes: Int) {
+    sleepTimerTask?.cancel()
+    let firesAt = Self.sleepTimerFireDate(minutes: minutes, from: Date())
+    sleepTimerFiresAt = firesAt
+    logger.info("sleep timer set for \(minutes) min (fires at \(firesAt))")
+
+    sleepTimerTask = Task { [weak self] in
+      let interval = firesAt.timeIntervalSinceNow
+      if interval > 0 {
+        try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+      }
+      if Task.isCancelled { return }
+      guard let self else { return }
+      await self.fireSleepTimer()
+    }
+  }
+
+  /// Cancel a running sleep timer and restore full playback volume. A no-op when no timer is
+  /// running (so the fire path, which clears its own state first, doesn't re-enter it).
+  public func cancelSleepTimer() {
+    guard sleepTimerFiresAt != nil || sleepTimerTask != nil else { return }
+    sleepTimerTask?.cancel()
+    sleepTimerTask = nil
+    sleepTimerFiresAt = nil
+    player.setPlaybackAttenuation(1.0)
+    logger.info("sleep timer cancelled")
+  }
+
+  /// Extend the running timer by `minutes`, folding in whatever time is currently left. When no
+  /// timer is running this is a no-op (the UI only offers extend while active).
+  public func extendSleepTimer(minutes: Int) {
+    guard let firesAt = sleepTimerFiresAt else { return }
+    let remaining = Self.remainingMinutes(until: firesAt, from: Date())
+    startSleepTimer(minutes: remaining + minutes)
+  }
+
+  /// Runs when the timer elapses: fade the output to silence, then perform the existing true-stop
+  /// and restore attenuation for the next play. Clears `sleepTimerFiresAt`/`sleepTimerTask` BEFORE
+  /// calling `stopForDisconnect()` so the cancel-on-stop hook there early-returns instead of
+  /// fighting this fade.
+  private func fireSleepTimer() async {
+    logger.info("sleep timer fired — fading out and stopping")
+    sleepTimerFiresAt = nil
+    sleepTimerTask = nil
+
+    let stepDelay = Self.sleepFadeDurationNanos / UInt64(Self.sleepFadeSteps)
+    for step in 1...Self.sleepFadeSteps {
+      if Task.isCancelled { player.setPlaybackAttenuation(1.0); return }
+      let multiplier = 1.0 - Double(step) / Double(Self.sleepFadeSteps)
+      player.setPlaybackAttenuation(multiplier)
+      try? await Task.sleep(nanoseconds: stepDelay)
+    }
+
+    stopForDisconnect()
+    player.setPlaybackAttenuation(1.0)
   }
 
   // MARK: - CarPlay

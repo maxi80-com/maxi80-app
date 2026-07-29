@@ -230,6 +230,15 @@ import Foundation
         am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
       }
 
+      /// Apply the sleep-timer fade via ExoPlayer's PRIVATE per-player volume (0…1), NOT
+      /// `androidSetVolume`. The user's volume is the system STREAM_MUSIC level (see above); ExoPlayer's
+      /// own `volume` normally sits at 1.0, so the fade is the only writer of it and the system volume
+      /// — and the `onVolumeChanged` observer that mirrors it into the UI — are never touched. On the
+      /// next play the coordinator resets attenuation to 1.0, restoring full private volume.
+      func androidSetAttenuation(_ multiplier: Double) {
+        _exoPlayer?.volume = Float(multiplier)
+      }
+
       /// The current STREAM_MUSIC level as a 0.0–1.0 fraction of its maximum.
       func androidCurrentVolume() -> Double {
         let am = audioManager

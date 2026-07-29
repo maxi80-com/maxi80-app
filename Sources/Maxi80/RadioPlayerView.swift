@@ -13,6 +13,9 @@ public struct RadioPlayerView: View {
   @Bindable var viewModel: RadioPlayerViewModel
   @Environment(\.colorScheme) var colorScheme
   @Environment(\.scenePhase) var scenePhase
+  // Re-opening the sleep-timer picker from the countdown pill (to extend/change the duration).
+  // Internal, not private: Skip's bridge requires @State properties to be non-private.
+  @State var showSleepTimerSheet = false
 
   public init(viewModel: RadioPlayerViewModel) {
     self.viewModel = viewModel
@@ -329,7 +332,8 @@ public struct RadioPlayerView: View {
 
   @ViewBuilder
   private func liveIndicator() -> some View {
-    // Shown only while browsing an older cover; tapping returns to the live track.
+    // The reserved status slot, shown in priority order so activating either state causes no
+    // reflow: back-to-live (browsing history) → sleep countdown (timer running) → clear spacer.
     if viewModel.isBrowsingHistory {
       Button {
         withAnimation(.easeInOut) { viewModel.returnToLive() }
@@ -343,6 +347,12 @@ public struct RadioPlayerView: View {
       }
       .buttonStyle(.plain)
       .transition(.move(edge: .bottom).combined(with: .opacity))
+    } else if viewModel.isSleepTimerActive {
+      SleepCountdownPill(viewModel: viewModel, showPicker: $showSleepTimerSheet)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .sheet(isPresented: $showSleepTimerSheet) {
+          SleepTimerPickerSheet(viewModel: viewModel, isPresented: $showSleepTimerSheet)
+        }
     } else {
       // Reserve consistent vertical space so the layout doesn't jump.
       Color.clear.frame(height: 32)
