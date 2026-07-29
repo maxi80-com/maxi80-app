@@ -8,6 +8,16 @@ struct VolumeSliderView: View {
 
   var body: some View {
     HStack(spacing: 12) {
+      // Invisible mirror of the trailing AirPlay button so the speaker/slider/speaker trio stays
+      // centered in the row. Gated to exactly the platforms where the picker actually renders
+      // (iOS/iPadOS + macOS); on Android/tvOS there is no picker, so the trio is already centered
+      // and a placeholder would re-introduce the imbalance.
+      #if !SKIP && !os(tvOS) && (canImport(UIKit) || canImport(AppKit))
+        Color.clear
+          .frame(width: 28, height: 28)
+          .accessibilityHidden(true)
+      #endif
+
       speakerIcon("speaker.fill", android: .volumeDown)
 
       volumeSlider
