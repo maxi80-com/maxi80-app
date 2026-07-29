@@ -418,11 +418,14 @@ struct SleepTimerPickerSheet: View {
         .buttonStyle(.plain)
         .padding(.top, 4)
       }
-
-      Spacer(minLength: 0)
     }
+    // No trailing Spacer: on Android the sheet is a Compose ModalBottomSheet that wraps its content
+    // height, so a height-filling Spacer forced it to open near full-screen with the content
+    // stranded in the top third. Without it the sheet sizes to its content. iOS keeps the medium
+    // detent below (`presentationDetents` isn't in SkipUI's surface, so it's Apple-only).
     .padding(.horizontal, 24)
-    .padding(.bottom, 20)
+    .padding(.top, 8)
+    .padding(.bottom, 28)
     .presentationDetentsMediumIfAvailable()
   }
 }
@@ -489,12 +492,13 @@ enum SleepTimerFormatting {
 }
 
 extension View {
-  /// Apply a medium presentation detent where the API exists (iOS/iPadOS 16+). `presentationDetents`
-  /// isn't in SkipUI's surface, so it's gated out on Android, and macOS sheets aren't detented.
+  /// Open the sheet at a compact fraction (draggable up to medium) where the API exists
+  /// (iOS/iPadOS 16+). `presentationDetents` isn't in SkipUI's surface, so it's gated out on Android
+  /// (there the sheet wraps its content height directly), and macOS sheets aren't detented.
   @ViewBuilder
   func presentationDetentsMediumIfAvailable() -> some View {
     #if !os(Android) && !os(macOS)
-      self.presentationDetents([.medium])
+      self.presentationDetents([.fraction(0.35), .medium])
     #else
       self
     #endif
