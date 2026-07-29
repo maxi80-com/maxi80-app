@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(UIKit)
+  import UIKit
+#endif
+
 #if SKIP
   import android.content.res.Configuration
   import android.content.Context
@@ -16,6 +20,21 @@ import Foundation
 
     /// `true` on tvOS; on Android `true` when the device UI mode is television; `false` otherwise.
     public static let isTVMode: Bool = computeIsTVMode()
+
+    /// `true` when running on an iPad; `false` on iPhone, macOS, tvOS, and Android.
+    public static let isPad: Bool = computeIsPad()
+
+    private static func computeIsPad() -> Bool {
+      #if os(iOS)
+        #if canImport(UIKit)
+          return UIDevice.current.userInterfaceIdiom == .pad
+        #else
+          return false
+        #endif
+      #else
+        return false
+      #endif
+    }
 
     private static func computeIsTVMode() -> Bool {
       #if os(tvOS)

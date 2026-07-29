@@ -11,8 +11,6 @@ import SwiftUI
 public struct RadioPlayerView: View {
 
   @Bindable var viewModel: RadioPlayerViewModel
-  @Environment(\.horizontalSizeClass) var horizontalSizeClass
-  @Environment(\.verticalSizeClass) var verticalSizeClass
   @Environment(\.colorScheme) var colorScheme
   @Environment(\.scenePhase) var scenePhase
 
@@ -22,27 +20,35 @@ public struct RadioPlayerView: View {
 
   public var body: some View {
     NavigationStack {
-      Group {
-        if isPortrait {
-          portraitView()
-        } else {
-          landscapeView()
+      // Detect orientation from the actual container size rather than size class: on iPad the
+      // horizontal size class is `.regular` in both orientations, so a size-class test never
+      // reports portrait. Width-vs-height also tracks iPad split-view / Slide Over pane sizes.
+      GeometryReader { geo in
+        let isPortrait = geo.size.height > geo.size.width
+        Group {
+          if isPortrait {
+            portraitView()
+          } else {
+            landscapeView()
+          }
         }
+        // GeometryReader top-left-aligns its child; expand so the layout fills the pane as before.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background { dynamicBackground(isPortrait: isPortrait).ignoresSafeArea() }
+        // The branded default background is always dark, so force dark text/controls when
+        // it's showing (no artwork color). With artwork, respect the device scheme.
+        .environment(\.colorScheme, viewModel.dominantColor == nil ? .dark : colorScheme)
+        // A rotation recreates the CoverFlowView; open a short window where its selection write-back
+        // is dropped so the browsed cover survives the recreation.
+        .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
+        // Returning to the foreground recreates the view tree (esp. the Android activity) the same
+        // way; reconcile playback + guard the carousel. The Android activity's onResume also drives
+        // this via the app delegate, so both entry paths (icon and notification) are covered. #9
+        .onChange(of: scenePhase) { _, newPhase in
+          if newPhase == .active { SharedPlayer.handleForeground() }
+        }
+        .overlay(alignment: .bottom) { versionFooter }
       }
-      .background { dynamicBackground().ignoresSafeArea() }
-      // The branded default background is always dark, so force dark text/controls when
-      // it's showing (no artwork color). With artwork, respect the device scheme.
-      .environment(\.colorScheme, viewModel.dominantColor == nil ? .dark : colorScheme)
-      // A rotation recreates the CoverFlowView; open a short window where its selection write-back
-      // is dropped so the browsed cover survives the recreation.
-      .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
-      // Returning to the foreground recreates the view tree (esp. the Android activity) the same
-      // way; reconcile playback + guard the carousel. The Android activity's onResume also drives
-      // this via the app delegate, so both entry paths (icon and notification) are covered. #9
-      .onChange(of: scenePhase) { _, newPhase in
-        if newPhase == .active { SharedPlayer.handleForeground() }
-      }
-      .overlay(alignment: .bottom) { versionFooter }
     }
     .overlay(alignment: .top) {
       if let errorMessage = viewModel.errorMessage {
@@ -51,16 +57,10 @@ public struct RadioPlayerView: View {
     }
   }
 
-  // MARK: - Layout Detection
-
-  private var isPortrait: Bool {
-    horizontalSizeClass == .compact && verticalSizeClass == .regular
-  }
-
   // MARK: - Background
 
   @ViewBuilder
-  private func dynamicBackground() -> some View {
+  private func dynamicBackground(isPortrait: Bool) -> some View {
     Group {
       if let color = viewModel.dominantColor {
         // Artwork-driven: a soft wash of the cover's dominant color.
@@ -161,7 +161,9 @@ public struct RadioPlayerView: View {
       // Pin to the now slot unless the user is browsing history; re-pin whenever the
       // cover set changes (history loads to the left, shifting the viewport).
       pinTarget: viewModel.isBrowsingHistory ? nil : viewModel.liveCoverID,
-      pinToken: viewModel.coverPinToken
+      pinToken: viewModel.coverPinToken,
+      // Enlarge the hero on iPad's bigger canvas; iPhone/macOS/tvOS/Android keep the 260 default.
+      coverSize: PlatformEnvironment.isPad ? 380 : 260
     )
     .accessibilityLabel(
       Text("Song history. Swipe to browse previously played tracks.", bundle: .module))
