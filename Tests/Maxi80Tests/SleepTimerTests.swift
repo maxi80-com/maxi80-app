@@ -127,16 +127,49 @@ struct SleepTimerTests {
     #expect(coordinator.sleepTimerFiresAt == nil)
   }
 
-  @Test("Starting playback cancels a running sleep timer so a fresh stream isn't faded")
+  @Test("An external pause (media3 notification) cancels a running sleep timer")
   @MainActor
-  func playCancelsTimer() {
+  func externalPauseCancelsTimer() async {
     let (coordinator, _) = makeCoordinator()
 
+    coordinator.play()
+    await coordinator.handleMetadataChanged("Artist - Song")
     coordinator.startSleepTimer(minutes: 30)
     #expect(coordinator.sleepTimerFiresAt != nil)
 
-    coordinator.play()
+    // Simulate the Android media3 notification / external pause callback.
+    coordinator.handlePlaybackStateChanged(isPlaying: false)
     #expect(coordinator.sleepTimerFiresAt == nil)
+  }
+
+  @Test("A Bluetooth/wired disconnect stop cancels a running sleep timer")
+  @MainActor
+  func disconnectStopCancelsTimer() async {
+    let (coordinator, _) = makeCoordinator()
+
+    coordinator.play()
+    await coordinator.handleMetadataChanged("Artist - Song")
+    coordinator.startSleepTimer(minutes: 30)
+    #expect(coordinator.sleepTimerFiresAt != nil)
+
+    coordinator.handleDisconnectStop()
+    #expect(coordinator.sleepTimerFiresAt == nil)
+  }
+
+  @Test("Resuming playback leaves a running sleep timer intact (only manual pause cancels)")
+  @MainActor
+  func playDoesNotCancelTimer() async {
+    let (coordinator, _) = makeCoordinator()
+
+    coordinator.play()
+    await coordinator.handleMetadataChanged("Artist - Song")
+    coordinator.startSleepTimer(minutes: 30)
+    #expect(coordinator.sleepTimerFiresAt != nil)
+
+    // A resume/replay (e.g. auto-reconnect confirmation or a redundant play) must NOT drop the
+    // running timer — only an explicit pause/stop does.
+    coordinator.play()
+    #expect(coordinator.sleepTimerFiresAt != nil)
   }
 
   @Test("Extending with no active timer is a no-op")

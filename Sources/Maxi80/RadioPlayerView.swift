@@ -30,7 +30,7 @@ public struct RadioPlayerView: View {
         let isPortrait = geo.size.height > geo.size.width
         Group {
           if isPortrait {
-            portraitView(containerWidth: geo.size.width)
+            portraitView(containerWidth: geo.size.width, containerHeight: geo.size.height)
           } else {
             landscapeView(containerWidth: geo.size.width)
           }
@@ -142,10 +142,27 @@ public struct RadioPlayerView: View {
     return max(260, min(cap, carouselWidth * 0.58))
   }
 
+  /// Phone-portrait hero size, adapted to the container height so the spacer-free column always
+  /// fills the screen exactly — the hero takes all the slack left after the fixed chrome (labels,
+  /// status slot, two-tier controls, volume row, paddings, and footer clearance). The hero renders
+  /// at `coverSize + 80` tall (its internal vertical margins). Capped at 320 so very tall phones
+  /// don't inflate it past a sensible hero, floored at 160 so shorter phones still show a usable
+  /// carousel rather than clipping.
+  private func phonePortraitCoverSize(containerHeight: CGFloat) -> CGFloat {
+    let heroChrome: CGFloat = 80  // CoverFlowView's verticalMargin * 2
+    let available = containerHeight - Self.phonePortraitChromeHeight - heroChrome
+    return max(160, min(320, available))
+  }
+
+  /// Approximate fixed height consumed by everything in phone portrait other than the hero: song
+  /// labels, status slot, the two-tier controls, the volume row, top/bottom padding + footer
+  /// clearance, and the inter-element spacing. Used to size the adaptive hero so nothing clips.
+  private static let phonePortraitChromeHeight: CGFloat = 448
+
   // MARK: - Portrait Layout
 
   @ViewBuilder
-  private func portraitView(containerWidth: CGFloat) -> some View {
+  private func portraitView(containerWidth: CGFloat, containerHeight: CGFloat) -> some View {
     if usesExpandedLayout {
       // iPad's tall canvas: anchor the enlarged hero + song info near the top and the controls
       // near the bottom, with flexible air between the two groups so the space reads as
@@ -165,23 +182,24 @@ public struct RadioPlayerView: View {
         Spacer().frame(height: 48)
       }
     } else {
-      VStack(spacing: 24) {
-        Spacer().frame(minHeight: 40)  // avoid the dynamic island
-
-        coverFlow()
+      // No flexible spacers: they let the column overflow on shorter phones (collapsing to 0 and
+      // pushing the footer off-screen) while leaving a dead gap on taller ones. Instead the hero
+      // absorbs all the slack — it's sized to exactly the height left after the fixed chrome, so the
+      // column always fills the screen precisely: nothing clips, and the coverflow (the app's key
+      // element) is as large as the device allows.
+      VStack(spacing: 20) {
+        coverFlow(coverSize: phonePortraitCoverSize(containerHeight: containerHeight))
 
         songLabel()
 
         liveIndicator()
 
-        Spacer()
-
         PlaybackControlsView(viewModel: viewModel)
 
         volumeControl()
-
-        Spacer().frame(minHeight: 20)
       }
+      .padding(.top, 12)
+      .padding(.bottom, 24)  // clearance for the pinned version footer
     }
   }
 
@@ -289,7 +307,11 @@ public struct RadioPlayerView: View {
     #if os(Android)
       26
     #else
-      38
+      if usesExpandedLayout {
+          38 // iPad and macOS
+      } else {
+          26 //iPhone
+      }
     #endif
   }
 
@@ -297,7 +319,11 @@ public struct RadioPlayerView: View {
     #if os(Android)
       19
     #else
-      30
+      if usesExpandedLayout {
+          30 // iPad and macOS
+      } else {
+          19 //iPhone
+      }
     #endif
   }
 
@@ -332,27 +358,34 @@ public struct RadioPlayerView: View {
 
   @ViewBuilder
   private func liveIndicator() -> some View {
-    // The reserved status slot, shown in priority order so activating either state causes no
-    // reflow: back-to-live (browsing history) → sleep countdown (timer running) → clear spacer.
-    if viewModel.isBrowsingHistory {
-      Button {
-        withAnimation(.easeInOut) { viewModel.returnToLive() }
-      } label: {
-        backToLiveLabel
-          .font(.caption.weight(.semibold))
-          .padding(.horizontal, 14)
-          .padding(.vertical, 7)
-          .background(.orange, in: Capsule())
-          .foregroundStyle(.white)
-      }
-      .buttonStyle(.plain)
-      .transition(.move(edge: .bottom).combined(with: .opacity))
-    } else if viewModel.isSleepTimerActive {
-      SleepCountdownPill(viewModel: viewModel, showPicker: $showSleepTimerSheet)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-        .sheet(isPresented: $showSleepTimerSheet) {
-          SleepTimerPickerSheet(viewModel: viewModel, isPresented: $showSleepTimerSheet)
+    // The reserved status slot. Both states can be active at once — a sleep timer runs while the
+    // user scrolls into history — so show them side-by-side on a single row rather than letting one
+    // hide the other or stacking them (stacking pushed the volume row off-screen in landscape).
+    // When neither is active a clear spacer holds the height.
+    if viewModel.isBrowsingHistory || viewModel.isSleepTimerActive {
+      HStack(spacing: 8) {
+        if viewModel.isBrowsingHistory {
+          Button {
+            withAnimation(.easeInOut) { viewModel.returnToLive() }
+          } label: {
+            backToLiveLabel
+              .font(.caption.weight(.semibold))
+              .padding(.horizontal, 14)
+              .padding(.vertical, 7)
+              .background(.orange, in: Capsule())
+              .foregroundStyle(.white)
+          }
+          .buttonStyle(.plain)
+          .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+        if viewModel.isSleepTimerActive {
+          SleepCountdownPill(viewModel: viewModel, showPicker: $showSleepTimerSheet)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+      }
+      .sheet(isPresented: $showSleepTimerSheet) {
+        SleepTimerPickerSheet(viewModel: viewModel, isPresented: $showSleepTimerSheet)
+      }
     } else {
       // Reserve consistent vertical space so the layout doesn't jump.
       Color.clear.frame(height: 32)

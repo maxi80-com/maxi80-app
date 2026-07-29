@@ -150,6 +150,10 @@ struct PlaybackControlsView: View {
 
   @ViewBuilder
   private var sleepControl: some View {
+    // A sleep timer only makes sense while audio is playing ("stop the music after N minutes"), so
+    // the control is only enabled during playback. A running timer implies playback, so it stays
+    // enabled then too.
+    let isEnabled = viewModel.isPlaying || viewModel.isSleepTimerActive
     Button {
       showSleepTimerSheet = true
     } label: {
@@ -159,9 +163,12 @@ struct PlaybackControlsView: View {
         secondaryIcon(
           viewModel.isSleepTimerActive ? "moon.zzz.fill" : "moon.zzz",
           android: .bedtime,
-          tint: viewModel.isSleepTimerActive ? .orange : secondaryControlColor)
+          tint: viewModel.isSleepTimerActive
+            ? .orange
+            : secondaryControlColor.opacity(isEnabled ? 1.0 : 0.5))
       }
     }
+    .disabled(!isEnabled)
     .accessibilityLabel(
       viewModel.isSleepTimerActive
         ? Text("Sleep timer active", bundle: .module)
@@ -277,7 +284,7 @@ struct SleepCountdownPillBody: View {
       } label: {
         HStack(spacing: 6) {
           #if os(Android)
-            AndroidIcon(symbol: .bedtime, size: 15, tint: .white)
+            AndroidIcon(symbol: .bedtime, size: 15, tint: .orange)
           #else
             Image(systemName: "moon.zzz.fill")
           #endif
@@ -302,8 +309,12 @@ struct SleepCountdownPillBody: View {
     .font(.caption.weight(.semibold))
     .padding(.horizontal, 14)
     .padding(.vertical, 7)
-    .background(.orange, in: Capsule())
-    .foregroundStyle(.white)
+    // Deliberately quieter than the solid-orange play/pause hero: a soft tinted capsule with orange
+    // text + a hairline border, so the countdown reads as secondary status rather than competing
+    // with the primary transport control.
+    .background(Color.orange.opacity(0.15), in: Capsule())
+    .overlay(Capsule().stroke(Color.orange.opacity(0.4), lineWidth: 1))
+    .foregroundStyle(.orange)
   }
 
   /// The countdown time label. `monospacedDigit()` keeps the pill width steady as digits change,
@@ -320,72 +331,144 @@ struct SleepCountdownPillBody: View {
 
 // MARK: - Sleep Timer Picker Sheet
 
-/// Preset-only sleep-timer picker (15 / 30 / 45 / 60 / 90 min). Selecting a preset starts the timer
-/// and dismisses; a Cancel row closes without changing anything.
+/// Preset-only sleep-timer picker (15 / 30 / 45 / 60 / 90 min) presented as a single row of light
+/// duration chips — orange reads as an accent, not five solid slabs. Selecting a chip starts the
+/// timer and dismisses. While a timer runs, the sheet also shows the remaining time and offers
+/// Extend / Turn off; otherwise a quiet Cancel closes it without changing anything.
 struct SleepTimerPickerSheet: View {
   @Bindable var viewModel: RadioPlayerViewModel
   @Binding var isPresented: Bool
 
   var body: some View {
-    VStack(spacing: 20) {
-      Text("Sleep timer", bundle: .module)
-        .font(.headline)
-        .padding(.top, 24)
+    VStack(spacing: 24) {
+      Capsule()
+        .fill(Color.secondary.opacity(0.4))
+        .frame(width: 36, height: 5)
+        .padding(.top, 10)
 
-      VStack(spacing: 12) {
+      VStack(spacing: 6) {
+        Text("Sleep timer", bundle: .module)
+          .font(.headline)
+
+        if viewModel.isSleepTimerActive {
+          // Surface the running countdown so the sheet doubles as the management screen.
+          SleepTimerSheetRemaining(viewModel: viewModel)
+        } else {
+          Text("Stop playback after", bundle: .module)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      HStack(spacing: 10) {
         ForEach(RadioPlayerViewModel.sleepTimerPresets, id: \.self) { minutes in
           Button {
             viewModel.startSleepTimer(minutes: minutes)
             isPresented = false
           } label: {
-            Text(SleepTimerFormatting.minutesLabel(minutes))
-              .font(.body.weight(.semibold))
-              .frame(maxWidth: .infinity)
-              .padding(.vertical, 14)
-              .background(.orange, in: Capsule())
-              .foregroundStyle(.white)
+            DurationChipLabel(minutes: minutes)
           }
           .buttonStyle(.plain)
         }
       }
+      Text("minutes", bundle: .module)
+        .font(.caption)
+        .foregroundStyle(.secondary)
 
       // While a timer is running, offer a quick extend (folds +15 min onto the remaining time) and
       // a way to turn it off entirely, in addition to picking a fresh preset above.
       if viewModel.isSleepTimerActive {
+        HStack(spacing: 12) {
+          Button {
+            viewModel.extendSleepTimer(minutes: 15)
+            isPresented = false
+          } label: {
+            Text("Extend", bundle: .module)
+              .font(.subheadline.weight(.semibold))
+              .foregroundStyle(.orange)
+              .padding(.vertical, 10)
+              .padding(.horizontal, 20)
+              .overlay(Capsule().stroke(.orange, lineWidth: 1))
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            viewModel.cancelSleepTimer()
+            isPresented = false
+          } label: {
+            Text("Turn off", bundle: .module)
+              .font(.subheadline.weight(.semibold))
+              .foregroundStyle(.secondary)
+              .padding(.vertical, 10)
+              .padding(.horizontal, 20)
+              .overlay(Capsule().stroke(Color.secondary.opacity(0.5), lineWidth: 1))
+          }
+          .buttonStyle(.plain)
+        }
+        .padding(.top, 4)
+      } else {
         Button {
-          viewModel.extendSleepTimer(minutes: 15)
           isPresented = false
         } label: {
-          Text("Extend", bundle: .module)
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.orange)
+          Text("Cancel", bundle: .module)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
             .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
+        .padding(.top, 4)
       }
 
-      Button {
-        if viewModel.isSleepTimerActive {
-          viewModel.cancelSleepTimer()
-        }
-        isPresented = false
-      } label: {
-        Group {
-          if viewModel.isSleepTimerActive {
-            Text("Turn off", bundle: .module)
-          } else {
-            Text("Cancel", bundle: .module)
-          }
-        }
-        .font(.body)
-        .padding(.vertical, 8)
-      }
-      .buttonStyle(.plain)
-
-      Spacer()
+      Spacer(minLength: 0)
     }
     .padding(.horizontal, 24)
+    .padding(.bottom, 20)
     .presentationDetentsMediumIfAvailable()
+  }
+}
+
+/// A single duration chip: a light tinted capsule with orange text — the accent-not-slab treatment
+/// that keeps the row of five feeling airy.
+struct DurationChipLabel: View {
+  let minutes: Int
+
+  var body: some View {
+    Text(verbatim: "\(minutes)")
+      .font(.title3.weight(.semibold))
+      .foregroundStyle(.orange)
+      .frame(minWidth: 52)
+      .padding(.vertical, 16)
+      .background(Color.orange.opacity(0.12), in: Capsule())
+      .overlay(Capsule().stroke(Color.orange.opacity(0.35), lineWidth: 1))
+      .accessibilityLabel(Text(SleepTimerFormatting.minutesLabel(minutes)))
+  }
+}
+
+/// The live "MM:SS remaining" line shown in the sheet while a timer is active. Ticks via the same
+/// platform-split clock as the countdown pill and reuses the view model's countdown formatter.
+struct SleepTimerSheetRemaining: View {
+  @Bindable var viewModel: RadioPlayerViewModel
+
+  var body: some View {
+    #if os(Android)
+      SleepTimerSheetRemainingBody(viewModel: viewModel, now: Date())
+    #else
+      TimelineView(.periodic(from: Date(), by: 1)) { context in
+        SleepTimerSheetRemainingBody(viewModel: viewModel, now: context.date)
+      }
+    #endif
+  }
+}
+
+struct SleepTimerSheetRemainingBody: View {
+  @Bindable var viewModel: RadioPlayerViewModel
+  let now: Date
+
+  var body: some View {
+    let countdown = viewModel.sleepCountdownText(now: now) ?? "0:00"
+    Text(verbatim: SleepTimerFormatting.remainingLabel(countdown))
+      .font(.subheadline.weight(.medium))
+      .foregroundStyle(.orange)
   }
 }
 
@@ -431,5 +514,17 @@ extension View {
     PlaybackControlsView(viewModel: PreviewMocks.makeViewModel(hasMetadata: false))
       .padding()
       .background(Color(red: 0.15, green: 0.1, blue: 0.3))
+  }
+
+  #Preview("Sleep Timer Sheet — Idle") {
+    SleepTimerPickerSheet(
+      viewModel: PreviewMocks.makeViewModel(isPlaying: true),
+      isPresented: .constant(true))
+  }
+
+  #Preview("Sleep Timer Sheet — Active") {
+    let vm = PreviewMocks.makeViewModel(isPlaying: true)
+    vm.startSleepTimer(minutes: 30)
+    return SleepTimerPickerSheet(viewModel: vm, isPresented: .constant(true))
   }
 #endif

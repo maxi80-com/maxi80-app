@@ -141,10 +141,11 @@ public final class RadioPlayerCoordinator {
 
   /// Start streaming immediately and fetch history concurrently.
   public func play() {
-    // A manual/resumed play supersedes any running sleep timer: the listener is clearly awake and
-    // wants sound, so never fade a freshly-started stream out from under them.
-    cancelSleepTimer()
     // A fresh user-initiated play supersedes any in-progress reconnection cycle.
+    // (No sleep-timer cancel here: the timer is only settable while already playing, and a manual
+    // pause cancels it via `stopForDisconnect()`, so there is never a stale timer to clear on a
+    // resume. Auto-reconnect re-plays through `player.play(url:)` directly, not this method, so a
+    // brief stream drop leaves a running timer intact.)
     reconnectionManager.reset()
     playbackState = .loading
     errorMessage = nil
@@ -733,7 +734,9 @@ public final class RadioPlayerCoordinator {
 
   private func handleInterruption(began: Bool) {
     if began {
-      // Interruption began — pause
+      // Interruption began — pause. Cancel any sleep timer: audio has stopped by an external means,
+      // so the timer must not keep counting toward a fade of a stream that's no longer playing.
+      cancelSleepTimer()
       playbackState = .paused
       publishPlaybackState(isPlaying: false)
     } else {
@@ -792,6 +795,9 @@ public final class RadioPlayerCoordinator {
       // `.paused` are owned elsewhere or already terminal.
       switch playbackState {
       case .playing:
+        // Audio was paused externally — cancel any sleep timer so it can't fade/stop a stream the
+        // user (or the system) already paused.
+        cancelSleepTimer()
         playbackState = .paused
         publishPlaybackState(isPlaying: false)
       default:
