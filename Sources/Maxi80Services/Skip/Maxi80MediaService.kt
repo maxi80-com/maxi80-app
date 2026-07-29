@@ -14,6 +14,7 @@ import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
@@ -182,9 +183,43 @@ object MediaControllerHolder {
  * - On play (`playWhenReady == true`) after a stop the player sits in `STATE_IDLE`, so `prepare()`
  *   first to reconnect the stream at the live edge before playing. Fresh ICY metadata arriving on
  *   reconnect then refreshes the card via the direct metadata listener → `replaceMediaItem`.
+ *
+ * OUTWARD STATE REMAP (issue: Android Auto play button dead after stop): the true-stop drops the
+ * real player to `STATE_IDLE`. media3 bridges session state to Android Auto through the legacy
+ * `PlaybackStateCompat`, where `STATE_IDLE` maps to `STATE_NONE` ("no active media") — which Auto
+ * renders as a DISABLED play button, so the car could no longer restart playback (only the in-app
+ * button, which re-prepares explicitly, could). The phone notification survived only because it also
+ * honors the media3-level `COMMAND_PLAY_PAUSE` (always permanent); Auto does not.
+ *
+ * `getState()` therefore presents the retained-item idle player as `STATE_READY` +
+ * `playWhenReady = false` (→ legacy `STATE_PAUSED`, an ENABLED play button) WITHOUT touching the real
+ * ExoPlayer, which stays idle underneath — the resume path above still re-prepares from `STATE_IDLE`.
+ * `isPlaying()` stays false (READY && !playWhenReady), and foreground promotion is unchanged (it
+ * requires playWhenReady == true). The app's own state is unaffected: the coordinator's listeners are
+ * attached to the raw ExoPlayer, not this wrapper, so they still observe the true `STATE_IDLE`.
+ *
+ * The remap is gated on a NON-EMPTY timeline: `SimpleBasePlayer.State` forbids `STATE_READY` with an
+ * empty playlist ("Empty playlist only allowed in STATE_IDLE or STATE_ENDED") and would throw. A
+ * genuine idle with a retained media item (after true-stop) is non-empty; cold start and post-teardown
+ * are empty and correctly fall through as `STATE_IDLE`. Player errors also fall through so a real
+ * failure still surfaces as an error, not a spurious paused-ready.
  */
 @OptIn(UnstableApi::class)
 class StopOnPausePlayer(player: Player) : ForwardingSimpleBasePlayer(player) {
+    override fun getState(): SimpleBasePlayer.State {
+        val state = super.getState()
+        if (state.playbackState == Player.STATE_IDLE &&
+            state.playerError == null &&
+            !state.timeline.isEmpty()
+        ) {
+            return state.buildUpon()
+                .setPlaybackState(Player.STATE_READY)
+                .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
+                .build()
+        }
+        return state
+    }
+
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
         if (!playWhenReady) {
             // Reflect the paused intent (so isPlaying/notification state stay consistent), then truly
