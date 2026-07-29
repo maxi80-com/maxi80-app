@@ -11,8 +11,6 @@ import SwiftUI
 public struct RadioPlayerView: View {
 
   @Bindable var viewModel: RadioPlayerViewModel
-  @Environment(\.horizontalSizeClass) var horizontalSizeClass
-  @Environment(\.verticalSizeClass) var verticalSizeClass
   @Environment(\.colorScheme) var colorScheme
   @Environment(\.scenePhase) var scenePhase
 
@@ -22,27 +20,35 @@ public struct RadioPlayerView: View {
 
   public var body: some View {
     NavigationStack {
-      Group {
-        if isPortrait {
-          portraitView()
-        } else {
-          landscapeView()
+      // Detect orientation from the actual container size rather than size class: on iPad the
+      // horizontal size class is `.regular` in both orientations, so a size-class test never
+      // reports portrait. Width-vs-height also tracks iPad split-view / Slide Over pane sizes.
+      GeometryReader { geo in
+        let isPortrait = geo.size.height > geo.size.width
+        Group {
+          if isPortrait {
+            portraitView(containerWidth: geo.size.width)
+          } else {
+            landscapeView(containerWidth: geo.size.width)
+          }
         }
+        // GeometryReader top-left-aligns its child; expand so the layout fills the pane as before.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background { dynamicBackground(isPortrait: isPortrait).ignoresSafeArea() }
+        // The branded default background is always dark, so force dark text/controls when
+        // it's showing (no artwork color). With artwork, respect the device scheme.
+        .environment(\.colorScheme, viewModel.dominantColor == nil ? .dark : colorScheme)
+        // A rotation recreates the CoverFlowView; open a short window where its selection write-back
+        // is dropped so the browsed cover survives the recreation.
+        .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
+        // Returning to the foreground recreates the view tree (esp. the Android activity) the same
+        // way; reconcile playback + guard the carousel. The Android activity's onResume also drives
+        // this via the app delegate, so both entry paths (icon and notification) are covered. #9
+        .onChange(of: scenePhase) { _, newPhase in
+          if newPhase == .active { SharedPlayer.handleForeground() }
+        }
+        .overlay(alignment: .bottom) { versionFooter }
       }
-      .background { dynamicBackground().ignoresSafeArea() }
-      // The branded default background is always dark, so force dark text/controls when
-      // it's showing (no artwork color). With artwork, respect the device scheme.
-      .environment(\.colorScheme, viewModel.dominantColor == nil ? .dark : colorScheme)
-      // A rotation recreates the CoverFlowView; open a short window where its selection write-back
-      // is dropped so the browsed cover survives the recreation.
-      .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
-      // Returning to the foreground recreates the view tree (esp. the Android activity) the same
-      // way; reconcile playback + guard the carousel. The Android activity's onResume also drives
-      // this via the app delegate, so both entry paths (icon and notification) are covered. #9
-      .onChange(of: scenePhase) { _, newPhase in
-        if newPhase == .active { SharedPlayer.handleForeground() }
-      }
-      .overlay(alignment: .bottom) { versionFooter }
     }
     .overlay(alignment: .top) {
       if let errorMessage = viewModel.errorMessage {
@@ -51,16 +57,10 @@ public struct RadioPlayerView: View {
     }
   }
 
-  // MARK: - Layout Detection
-
-  private var isPortrait: Bool {
-    horizontalSizeClass == .compact && verticalSizeClass == .regular
-  }
-
   // MARK: - Background
 
   @ViewBuilder
-  private func dynamicBackground() -> some View {
+  private func dynamicBackground(isPortrait: Bool) -> some View {
     Group {
       if let color = viewModel.dominantColor {
         // Artwork-driven: a soft wash of the cover's dominant color.
@@ -104,51 +104,134 @@ public struct RadioPlayerView: View {
     }
   }
 
+  // MARK: - Layout Sizing
+
+  /// Whether to use the roomier "big canvas" treatment (enlarged hero + capped info/controls
+  /// column) instead of the phone layout. True on iPad and on macOS — both have a large window to
+  /// fill; iPhone/Android phones keep the compact phone layout.
+  private var usesExpandedLayout: Bool {
+    #if os(macOS)
+      return true
+    #else
+      return PlatformEnvironment.isPad
+    #endif
+  }
+
+  /// Width cap for the info/controls column in the expanded landscape layout.
+  private let expandedColumnWidth: CGFloat = 420
+  private let expandedHSpacing: CGFloat = 24
+  private let expandedHPadding: CGFloat = 24
+
+  /// Hero size for the expanded layouts, derived from the width actually available to the carousel
+  /// so its left/right neighbor covers always peek through — a fixed size clipped them on narrower
+  /// windows (macOS) even though it fit the iPad. Sized as a fraction of the carousel's own cell
+  /// width and capped so it never grows absurdly large on very wide displays.
+  private func expandedCoverSize(containerWidth: CGFloat, isLandscape: Bool) -> CGFloat {
+    let carouselWidth: CGFloat
+    if isLandscape {
+      // Left cell of the HStack: total minus padding, inter-column spacing, and the capped column.
+      carouselWidth = containerWidth - expandedHPadding * 2 - expandedHSpacing - expandedColumnWidth
+    } else {
+      carouselWidth = containerWidth
+    }
+    // ~58% of the cell leaves ~21% on each side for the neighbor covers to show.
+    let cap: CGFloat = isLandscape ? 560 : 460
+    return max(260, min(cap, carouselWidth * 0.58))
+  }
+
   // MARK: - Portrait Layout
 
-  private func portraitView() -> some View {
-    VStack(spacing: 24) {
-      Spacer().frame(minHeight: 40)  // avoid the dynamic island
+  @ViewBuilder
+  private func portraitView(containerWidth: CGFloat) -> some View {
+    if usesExpandedLayout {
+      // iPad's tall canvas: anchor the enlarged hero + song info near the top and the controls
+      // near the bottom, with flexible air between the two groups so the space reads as
+      // intentional breathing room rather than one empty void above everything.
+      VStack(spacing: 28) {
+        Spacer().frame(height: 32)
+        coverFlow(coverSize: expandedCoverSize(containerWidth: containerWidth, isLandscape: false))
+        songLabel()
+        liveIndicator()
+        Spacer()
+        PlaybackControlsView(viewModel: viewModel)
+        Spacer().frame(height: 32)
+        // The volume row would otherwise stretch edge-to-edge on iPad's wide portrait canvas;
+        // cap it so it sits as a centered cluster with generous side insets.
+        volumeControl()
+          .frame(maxWidth: 520)
+        Spacer().frame(height: 48)
+      }
+    } else {
+      VStack(spacing: 24) {
+        Spacer().frame(minHeight: 40)  // avoid the dynamic island
 
-      coverFlow()
+        coverFlow()
 
-      songLabel()
+        songLabel()
 
-      liveIndicator()
+        liveIndicator()
 
-      Spacer()
+        Spacer()
 
-      PlaybackControlsView(viewModel: viewModel)
+        PlaybackControlsView(viewModel: viewModel)
 
-      volumeControl()
+        volumeControl()
 
-      Spacer().frame(minHeight: 20)
+        Spacer().frame(minHeight: 20)
+      }
     }
   }
 
   // MARK: - Landscape Layout
 
-  private func landscapeView() -> some View {
-    HStack(spacing: 24) {
-      coverFlow()
-
-      VStack(spacing: 16) {
-        Spacer()
-        songLabel()
-        liveIndicator()
-        Spacer()
-        PlaybackControlsView(viewModel: viewModel)
-        volumeControl()
-        Spacer()
+  @ViewBuilder
+  private func landscapeView(containerWidth: CGFloat) -> some View {
+    if usesExpandedLayout {
+      // iPad / macOS landscape: let the hero fill the left half and vertically center the info +
+      // controls as one block in the right half (title/artist/back-to-live sat too high before).
+      HStack(spacing: expandedHSpacing) {
+        coverFlow(coverSize: expandedCoverSize(containerWidth: containerWidth, isLandscape: true))
+        VStack(spacing: 24) {
+          Spacer()
+          songLabel()
+          liveIndicator()
+          Spacer().frame(height: 32)
+          PlaybackControlsView(viewModel: viewModel)
+          Spacer().frame(height: 32)
+          volumeControl()
+          Spacer()
+        }
+        // Cap the info/controls column so the hero keeps enough horizontal room for its
+        // left/right neighbor covers to stay on screen (they were clipping when the column
+        // expanded to fill half the width), while still giving the title/controls real presence.
+        .frame(maxWidth: expandedColumnWidth)
       }
+      .padding(.horizontal, expandedHPadding)
+    } else {
+      HStack(spacing: 24) {
+        coverFlow()
+
+        VStack(spacing: 16) {
+          Spacer()
+          songLabel()
+          liveIndicator()
+          Spacer()
+          PlaybackControlsView(viewModel: viewModel)
+          volumeControl()
+          Spacer()
+        }
+      }
+      .padding()
     }
-    .padding()
   }
 
   // MARK: - Cover Flow Hero
 
+  /// The hero carousel. `coverSize` lets each layout size the hero for its canvas — iPad portrait
+  /// and (especially) landscape have room for a much larger hero than the phone default. When a
+  /// caller doesn't specify, fall back to a per-idiom default: enlarged on iPad, 260 elsewhere.
   @ViewBuilder
-  private func coverFlow() -> some View {
+  private func coverFlow(coverSize: CGFloat? = nil) -> some View {
     CoverFlowView(
       covers: viewModel.covers,
       // The carousel reads `selectedCoverID` but writes through the view model, which drops writes
@@ -161,7 +244,8 @@ public struct RadioPlayerView: View {
       // Pin to the now slot unless the user is browsing history; re-pin whenever the
       // cover set changes (history loads to the left, shifting the viewport).
       pinTarget: viewModel.isBrowsingHistory ? nil : viewModel.liveCoverID,
-      pinToken: viewModel.coverPinToken
+      pinToken: viewModel.coverPinToken,
+      coverSize: coverSize ?? (PlatformEnvironment.isPad ? 380 : 260)
     )
     .accessibilityLabel(
       Text("Song history. Swipe to browse previously played tracks.", bundle: .module))
@@ -352,6 +436,13 @@ public struct RadioPlayerView: View {
 
   #Preview("Error State") {
     RadioPlayerView(viewModel: PreviewMocks.makeViewModel(hasError: true))
+      .tint(.orange)
+  }
+
+  // iPad landscape: exercises the enlarged hero + capped info/controls column. The device trait
+  // makes `PlatformEnvironment.isPad` resolve true so the iPad layout branch renders.
+  #Preview("iPad Landscape", traits: .landscapeLeft) {
+    RadioPlayerView(viewModel: PreviewMocks.makeViewModel(isPlaying: true))
       .tint(.orange)
   }
 #endif
