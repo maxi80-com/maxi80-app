@@ -621,3 +621,19 @@ screenshots: ## Capture a store screenshot (wraps fastlane/capture_screenshots.s
 	  exit 1; \
 	fi
 	./fastlane/capture_screenshots.sh $(ARGS)
+
+  start-android-auto: ## Launch the Android Auto Desktop Head Unit (DHU) against a USB-connected phone
+        # Phone one-time setup (do once, then per session):
+        #   1. Android Auto app → tap "Version" ~10x → enable Developer mode
+        #   2. Overflow menu → Developer settings → enable "Start head unit server"
+        #   3. Connect the phone via USB (reseat cable if `adb devices` is empty)
+        @command -v adb >/dev/null || { echo "adb not on PATH — install Android platform-tools"; exit 1; }
+        @DHU="$$HOME/Library/Android/sdk/extras/google/auto/desktop-head-unit"; \
+        if [ ! -x "$$DHU" ]; then \
+                echo "DHU not found at $$DHU"; \
+                echo "Install 'Android Auto Desktop Head Unit Emulator' via Android Studio → SDK Manager → SDK Tools"; \
+                exit 1; \
+        fi; \
+        echo "==> forwarding tcp:5277"; \
+        adb forward tcp:5277 tcp:5277; \
+        echo "==
