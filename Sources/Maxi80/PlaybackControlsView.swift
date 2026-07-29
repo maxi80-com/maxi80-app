@@ -492,12 +492,13 @@ enum SleepTimerFormatting {
 }
 
 extension View {
-  /// Open the sheet at a compact fraction (draggable up to medium) where the API exists
-  /// (iOS/iPadOS 16+). `presentationDetents` isn't in SkipUI's surface, so it's gated out on Android
-  /// (there the sheet wraps its content height directly), and macOS sheets aren't detented.
+  /// Open the sheet at a compact fraction (draggable up to medium). SkipUI DOES honor
+  /// `presentationDetents` on Android (it insets the Compose ModalBottomSheet by the detent height),
+  /// so apply it there too — without it the Android sheet defaults to near-full-screen. Only macOS
+  /// is excluded (its sheets aren't detented).
   @ViewBuilder
   func presentationDetentsMediumIfAvailable() -> some View {
-    #if !os(Android) && !os(macOS)
+    #if !os(macOS)
       self.presentationDetents([.fraction(0.35), .medium])
     #else
       self
