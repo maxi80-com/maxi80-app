@@ -38,6 +38,15 @@ struct SleepTimerTests {
     return (coordinator, player)
   }
 
+  /// Drive the coordinator into `.playing` — `startSleepTimer` now guards on playback state (a timer
+  /// is only settable while audio is playing), so tests that arm a timer must play first. `play()`
+  /// sets `.loading`; a metadata callback promotes it to `.playing`.
+  @MainActor
+  private func startPlaying(_ coordinator: RadioPlayerCoordinator) async {
+    coordinator.play()
+    await coordinator.handleMetadataChanged("Artist - Song")
+  }
+
   // MARK: - Pure fire-time arithmetic
 
   @Test("Fire date is the reference date plus the requested minutes")
@@ -73,6 +82,17 @@ struct SleepTimerTests {
     #expect(RadioPlayerCoordinator.remainingMinutes(until: firesAt, from: base) == 0)
   }
 
+  @Test("The fade ramp ends at exactly zero (no faded-but-audible final step)")
+  func fadeMultiplierEndsAtSilence() {
+    // The last step must be full silence so the stream is never audible at the moment of stop.
+    #expect(RadioPlayerCoordinator.fadeMultiplier(step: 12) == 0.0)
+    // The ramp is monotonic and starts below 1.0.
+    #expect(RadioPlayerCoordinator.fadeMultiplier(step: 1) < 1.0)
+    #expect(
+      RadioPlayerCoordinator.fadeMultiplier(step: 1) > RadioPlayerCoordinator.fadeMultiplier(step: 6)
+    )
+  }
+
   @Test("Extend folds the current remainder into the new duration")
   func extendFoldsRemainder() {
     let base = Date(timeIntervalSince1970: 1_000_000)
@@ -86,10 +106,11 @@ struct SleepTimerTests {
 
   @Test("Starting a timer sets a future fire date; cancelling clears it")
   @MainActor
-  func startThenCancel() {
+  func startThenCancel() async {
     let (coordinator, _) = makeCoordinator()
     #expect(coordinator.sleepTimerFiresAt == nil)
 
+    await startPlaying(coordinator)
     coordinator.startSleepTimer(minutes: 30)
     #expect(coordinator.sleepTimerFiresAt != nil)
     #expect(coordinator.sleepTimerFiresAt! > Date())
@@ -100,9 +121,10 @@ struct SleepTimerTests {
 
   @Test("Starting a timer again replaces the previous fire date")
   @MainActor
-  func restartReplacesFireDate() {
+  func restartReplacesFireDate() async {
     let (coordinator, _) = makeCoordinator()
 
+    await startPlaying(coordinator)
     coordinator.startSleepTimer(minutes: 15)
     let first = coordinator.sleepTimerFiresAt
     coordinator.startSleepTimer(minutes: 90)
@@ -111,6 +133,15 @@ struct SleepTimerTests {
     #expect(first != nil)
     #expect(second != nil)
     #expect(second! > first!)
+  }
+
+  @Test("Starting a timer while not playing is ignored (guarded at the API boundary)")
+  @MainActor
+  func startWhileNotPlayingIsIgnored() {
+    let (coordinator, _) = makeCoordinator()
+    // Fresh coordinator is `.idle` — no audio, so arming must no-op.
+    coordinator.startSleepTimer(minutes: 30)
+    #expect(coordinator.sleepTimerFiresAt == nil)
   }
 
   @Test("A manual pause cancels a running sleep timer")
@@ -184,13 +215,14 @@ struct SleepTimerTests {
 
   @Test("The view model reflects the coordinator's sleep-timer state")
   @MainActor
-  func viewModelReadsThrough() {
+  func viewModelReadsThrough() async {
     let (coordinator, _) = makeCoordinator()
     let viewModel = RadioPlayerViewModel(coordinator: coordinator)
 
     #expect(!viewModel.isSleepTimerActive)
     #expect(viewModel.sleepTimerFiresAt == nil)
 
+    await startPlaying(coordinator)
     viewModel.startSleepTimer(minutes: 45)
     #expect(viewModel.isSleepTimerActive)
     #expect(viewModel.sleepTimerFiresAt != nil)
@@ -201,12 +233,13 @@ struct SleepTimerTests {
 
   @Test("The countdown text formats remaining time as M:SS")
   @MainActor
-  func countdownTextFormatsMMSS() {
+  func countdownTextFormatsMMSS() async {
     let (coordinator, _) = makeCoordinator()
     let viewModel = RadioPlayerViewModel(coordinator: coordinator)
 
     #expect(viewModel.sleepCountdownText(now: Date()) == nil)
 
+    await startPlaying(coordinator)
     coordinator.startSleepTimer(minutes: 30)
     let firesAt = coordinator.sleepTimerFiresAt!
     // 90 seconds before firing → "1:30".

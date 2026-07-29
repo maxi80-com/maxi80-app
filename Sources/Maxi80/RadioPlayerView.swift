@@ -142,6 +142,27 @@ public struct RadioPlayerView: View {
     return max(260, min(cap, carouselWidth * 0.58))
   }
 
+  // Phone-portrait column paddings/spacing — named so the same values feed both the layout and the
+  // adaptive-hero chrome budget below (rather than being hardcoded in two places).
+  private static let phonePortraitVSpacing: CGFloat = 20
+  private static let phonePortraitTopPadding: CGFloat = 12
+  private static let phonePortraitBottomPadding: CGFloat = 24
+
+  /// Estimated height of the non-hero *subviews* in phone portrait — song labels + status slot +
+  /// two-tier controls + volume row. Kept separate from the paddings/spacing (which are derived
+  /// from the named constants above) so only this genuine content estimate is hand-tuned. If those
+  /// subviews change materially, update this one number. Verified against iPhone SE → Pro Max.
+  /// (Kept so the derived total matches the previously tuned 448: 332 + 12 + 24 + 20*4.)
+  private static let phonePortraitSubviewsHeight: CGFloat = 332
+
+  /// Total fixed chrome height the adaptive hero must leave room for: the subview estimate plus the
+  /// column's own paddings and the 4 inter-element gaps (5 children → 4 spacings).
+  private static var phonePortraitChromeHeight: CGFloat {
+    phonePortraitSubviewsHeight
+      + phonePortraitTopPadding + phonePortraitBottomPadding
+      + phonePortraitVSpacing * 4
+  }
+
   /// Phone-portrait hero size, adapted to the container height so the spacer-free column always
   /// fills the screen exactly — the hero takes all the slack left after the fixed chrome (labels,
   /// status slot, two-tier controls, volume row, paddings, and footer clearance). The hero renders
@@ -153,11 +174,6 @@ public struct RadioPlayerView: View {
     let available = containerHeight - Self.phonePortraitChromeHeight - heroChrome
     return max(160, min(320, available))
   }
-
-  /// Approximate fixed height consumed by everything in phone portrait other than the hero: song
-  /// labels, status slot, the two-tier controls, the volume row, top/bottom padding + footer
-  /// clearance, and the inter-element spacing. Used to size the adaptive hero so nothing clips.
-  private static let phonePortraitChromeHeight: CGFloat = 448
 
   // MARK: - Portrait Layout
 
@@ -187,7 +203,7 @@ public struct RadioPlayerView: View {
       // absorbs all the slack — it's sized to exactly the height left after the fixed chrome, so the
       // column always fills the screen precisely: nothing clips, and the coverflow (the app's key
       // element) is as large as the device allows.
-      VStack(spacing: 20) {
+      VStack(spacing: Self.phonePortraitVSpacing) {
         coverFlow(coverSize: phonePortraitCoverSize(containerHeight: containerHeight))
 
         songLabel()
@@ -198,8 +214,8 @@ public struct RadioPlayerView: View {
 
         volumeControl()
       }
-      .padding(.top, 12)
-      .padding(.bottom, 24)  // clearance for the pinned version footer
+      .padding(.top, Self.phonePortraitTopPadding)
+      .padding(.bottom, Self.phonePortraitBottomPadding)  // clearance for the pinned version footer
     }
   }
 
@@ -308,9 +324,9 @@ public struct RadioPlayerView: View {
       26
     #else
       if usesExpandedLayout {
-          38 // iPad and macOS
+        38  // iPad and macOS
       } else {
-          26 //iPhone
+        26  // iPhone
       }
     #endif
   }
@@ -320,9 +336,9 @@ public struct RadioPlayerView: View {
       19
     #else
       if usesExpandedLayout {
-          30 // iPad and macOS
+        30  // iPad and macOS
       } else {
-          19 //iPhone
+        19  // iPhone
       }
     #endif
   }

@@ -235,6 +235,13 @@ import Foundation
       /// own `volume` normally sits at 1.0, so the fade is the only writer of it and the system volume
       /// — and the `onVolumeChanged` observer that mirrors it into the UI — are never touched. On the
       /// next play the coordinator resets attenuation to 1.0, restoring full private volume.
+      ///
+      /// NOTE: this shares the same private-volume channel that ExoPlayer's internal audio-focus
+      /// ducking writes (`setAudioAttributes(…, handleAudioFocusInternally: true)`). An overlapping
+      /// duck and fade would fight (last writer wins). Correctness relies on the coordinator
+      /// cancelling the sleep timer on any interruption/external pause BEFORE a duck could race this
+      /// fade — see `handleInterruption`/`handlePlaybackStateChanged` in RadioPlayerCoordinator. Keep
+      /// those cancel hooks if you touch this.
       func androidSetAttenuation(_ multiplier: Double) {
         _exoPlayer?.volume = Float(multiplier)
       }

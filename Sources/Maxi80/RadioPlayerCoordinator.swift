@@ -247,7 +247,15 @@ public final class RadioPlayerCoordinator {
   /// How long the fade-out runs before playback stops, in nanoseconds.
   private static let sleepFadeDurationNanos: UInt64 = 2_500_000_000
   /// Number of attenuation steps across the fade. ~12 steps over ~2.5s is smooth without spinning.
-  private static let sleepFadeSteps = 12
+  /// `nonisolated` so the pure `fadeMultiplier(step:)` helper can read it off the main actor.
+  nonisolated private static let sleepFadeSteps = 12
+
+  /// The attenuation multiplier at `step` (1…`sleepFadeSteps`); the final step is `0.0` (silence).
+  /// Pure/static so the fade ramp is unit-testable without real sleeping — a future change to
+  /// `sleepFadeSteps` can't silently leave a non-zero final multiplier (faded-but-audible on stop).
+  nonisolated static func fadeMultiplier(step: Int) -> Double {
+    1.0 - Double(step) / Double(sleepFadeSteps)
+  }
 
   /// Compute the absolute fire date for a timer of `minutes`, relative to `now`. Pure and static so
   /// the arithmetic is unit-testable without real sleeping or a live coordinator. Negative or zero
@@ -269,6 +277,13 @@ public final class RadioPlayerCoordinator {
   /// fires. Modeled on `startArtworkRetry(for:)`: a stored cancelable `Task` with `Task.isCancelled`
   /// guards. Cancelling or extending mid-run supersedes this task cleanly.
   public func startSleepTimer(minutes: Int) {
+    // Enforce the "only settable while playing" invariant at the API boundary, not only in the UI's
+    // `isEnabled`: a sleep timer with no audio is meaningless and would fire a fade/stop on an idle
+    // player. Keeps any current/future caller in sync with the UI.
+    guard case .playing = playbackState else {
+      logger.info("ignoring sleep timer request while not playing")
+      return
+    }
     sleepTimerTask?.cancel()
     let firesAt = Self.sleepTimerFireDate(minutes: minutes, from: Date())
     sleepTimerFiresAt = firesAt
@@ -316,8 +331,7 @@ public final class RadioPlayerCoordinator {
     let stepDelay = Self.sleepFadeDurationNanos / UInt64(Self.sleepFadeSteps)
     for step in 1...Self.sleepFadeSteps {
       if Task.isCancelled { player.setPlaybackAttenuation(1.0); return }
-      let multiplier = 1.0 - Double(step) / Double(Self.sleepFadeSteps)
-      player.setPlaybackAttenuation(multiplier)
+      player.setPlaybackAttenuation(Self.fadeMultiplier(step: step))
       try? await Task.sleep(nanoseconds: stepDelay)
     }
 
