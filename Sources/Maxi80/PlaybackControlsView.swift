@@ -439,8 +439,14 @@ struct DurationChipLabel: View {
     Text(verbatim: "\(minutes)")
       .font(.title3.weight(.semibold))
       .foregroundStyle(.orange)
-      .frame(minWidth: 52)
-      .padding(.vertical, 16)
+      // Lock the chip to a concrete size with the label pinned at its intrinsic size. On Android the
+      // sheet (a Compose ModalBottomSheet) presents tall on first open then animates down to the
+      // detent; the content Box fills the remaining height via Modifier.weight(1), so a chip with no
+      // fixed height gets vertically compressed by the shrinking parent during that pass — the
+      // capsule and number flatten into unreadable slivers (issue #56). A fixed frame + fixedSize()
+      // text can't be squeezed. See [[skipui-sheet-detent-flash]].
+      .fixedSize()
+      .frame(width: 56, height: 56)
       .background(Color.orange.opacity(0.12), in: Capsule())
       .overlay(Capsule().stroke(Color.orange.opacity(0.35), lineWidth: 1))
       .accessibilityLabel(Text(SleepTimerFormatting.minutesLabel(minutes)))
