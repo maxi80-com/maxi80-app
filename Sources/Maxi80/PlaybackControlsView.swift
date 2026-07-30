@@ -498,13 +498,23 @@ enum SleepTimerFormatting {
 }
 
 extension View {
-  /// Open the sheet at a compact fraction (draggable up to medium). SkipUI DOES honor
-  /// `presentationDetents` on Android (it insets the Compose ModalBottomSheet by the detent height),
-  /// so apply it there too — without it the Android sheet defaults to near-full-screen. Only macOS
-  /// is excluded (its sheets aren't detented).
+  /// Size the sleep-timer sheet.
+  ///
+  /// SkipUI honors `presentationDetents` on Android (it insets the Compose ModalBottomSheet by the
+  /// detent height), but it does NOT support multiple detents — it takes `Set.first`, and a Swift
+  /// `Set` has no defined order, so passing a two-element set makes the sheet open at a random one
+  /// of the two heights across opens (the shorter one clips the bottom buttons — issue observed on
+  /// device). So on Android pass a SINGLE detent for a deterministic height.
+  ///
+  /// iOS/iPadOS supports multiple detents fine, so there it opens compact (0.35) and stays draggable
+  /// up to medium. macOS sheets aren't detented.
   @ViewBuilder
   func presentationDetentsMediumIfAvailable() -> some View {
-    #if !os(macOS)
+    #if os(Android)
+      // Single deterministic detent, tall enough that the picker's title, chip row, and the
+      // Cancel/Extend row all fit without clipping.
+      self.presentationDetents([.medium])
+    #elseif !os(macOS)
       self.presentationDetents([.fraction(0.35), .medium])
     #else
       self
