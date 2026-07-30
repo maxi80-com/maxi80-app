@@ -191,13 +191,14 @@ public final class RadioPlayerCoordinator {
   /// the stopped state. Shared by the user pause button and the Bluetooth/wired disconnect path
   /// so both drop to `STATE_IDLE` and reconnect to the live edge on the next play (rather than
   /// resuming a stale buffered position).
+  ///
+  /// Deliberately does NOT cancel the sleep timer: a running timer is only ended by the user
+  /// explicitly cancelling it or by it reaching its fire time (matching Apple Podcasts / Music).
+  /// Pausing, an audio interruption, and a headphone disconnect all leave it running toward its
+  /// original absolute `sleepTimerFiresAt`. If the user resumes before it fires, playback stops on
+  /// schedule; if they don't, the timer simply elapses while already stopped (a harmless no-op —
+  /// see `fireSleepTimer`, whose fade/stop on an already-stopped player does nothing audible).
   private func stopForDisconnect() {
-    // A manual/disconnect stop cancels any running sleep timer so it can't later fade a stream the
-    // user already stopped. `cancelSleepTimer()` early-returns when no timer is running, so the
-    // sleep-timer *fire* path — which clears its own state before calling `stopForDisconnect()` —
-    // does not re-enter this and fight the fade (the fade already drove attenuation to 0; the fire
-    // path resets it to full itself afterwards). See `fireSleepTimer()`.
-    cancelSleepTimer()
     reconnectionManager.cancel()
     player.stop()
     playbackState = .paused
@@ -320,9 +321,9 @@ public final class RadioPlayerCoordinator {
   }
 
   /// Runs when the timer elapses: fade the output to silence, then perform the existing true-stop
-  /// and restore attenuation for the next play. Clears `sleepTimerFiresAt`/`sleepTimerTask` BEFORE
-  /// calling `stopForDisconnect()` so the cancel-on-stop hook there early-returns instead of
-  /// fighting this fade.
+  /// and restore attenuation for the next play. Clears `sleepTimerFiresAt`/`sleepTimerTask` up front
+  /// so the observable "timer running" state ends the moment it fires. If playback was already
+  /// stopped (the user paused earlier and never resumed), the fade + stop are inaudible no-ops.
   private func fireSleepTimer() async {
     logger.info("sleep timer fired — fading out and stopping")
     sleepTimerFiresAt = nil

@@ -144,17 +144,25 @@ struct SleepTimerTests {
     #expect(coordinator.sleepTimerFiresAt == nil)
   }
 
-  @Test("A manual pause cancels a running sleep timer")
+  @Test("A manual pause leaves the sleep timer running (only explicit cancel / firing ends it)")
   @MainActor
-  func pauseCancelsTimer() async {
+  func pauseDoesNotCancelTimer() async {
     let (coordinator, _) = makeCoordinator()
 
     coordinator.play()
     await coordinator.handleMetadataChanged("Artist - Song")
     coordinator.startSleepTimer(minutes: 30)
-    #expect(coordinator.sleepTimerFiresAt != nil)
+    let firesAt = coordinator.sleepTimerFiresAt
+    #expect(firesAt != nil)
 
+    // Pausing the stream keeps the timer running toward its original fire time (matching Apple
+    // Podcasts / Music): the user can resume and still have it stop on schedule, or leave it stopped
+    // and the timer simply elapses as a no-op. Only an explicit cancel or firing ends a timer.
     coordinator.pause()
+    #expect(coordinator.sleepTimerFiresAt == firesAt)
+
+    // The explicit cancel is still the way to end it.
+    coordinator.cancelSleepTimer()
     #expect(coordinator.sleepTimerFiresAt == nil)
   }
 
@@ -171,8 +179,8 @@ struct SleepTimerTests {
 
     // On Android a transient audio-focus loss surfaces as this external `false` transition (the
     // same event that fires `onInterruption(true)`), so it must NOT cancel the timer — otherwise
-    // another app taking audio focus would end the sleep session. Only an explicit user pause /
-    // disconnect (which reach `stopForDisconnect`) cancels.
+    // another app taking audio focus would end the sleep session. Nothing but an explicit cancel
+    // or the timer firing ends it.
     coordinator.handlePlaybackStateChanged(isPlaying: false)
     #expect(coordinator.sleepTimerFiresAt == firesAt)
   }
@@ -198,21 +206,23 @@ struct SleepTimerTests {
     #expect(coordinator.sleepTimerFiresAt == firesAt)
   }
 
-  @Test("A Bluetooth/wired disconnect stop cancels a running sleep timer")
+  @Test("A Bluetooth/wired disconnect leaves the sleep timer running")
   @MainActor
-  func disconnectStopCancelsTimer() async {
+  func disconnectStopDoesNotCancelTimer() async {
     let (coordinator, _) = makeCoordinator()
 
     coordinator.play()
     await coordinator.handleMetadataChanged("Artist - Song")
     coordinator.startSleepTimer(minutes: 30)
-    #expect(coordinator.sleepTimerFiresAt != nil)
+    let firesAt = coordinator.sleepTimerFiresAt
+    #expect(firesAt != nil)
 
+    // A headphone/BT disconnect is involuntary, like a pause — it must not end the sleep session.
     coordinator.handleDisconnectStop()
-    #expect(coordinator.sleepTimerFiresAt == nil)
+    #expect(coordinator.sleepTimerFiresAt == firesAt)
   }
 
-  @Test("Resuming playback leaves a running sleep timer intact (only manual pause cancels)")
+  @Test("Resuming playback leaves a running sleep timer intact")
   @MainActor
   func playDoesNotCancelTimer() async {
     let (coordinator, _) = makeCoordinator()
@@ -222,8 +232,8 @@ struct SleepTimerTests {
     coordinator.startSleepTimer(minutes: 30)
     #expect(coordinator.sleepTimerFiresAt != nil)
 
-    // A resume/replay (e.g. auto-reconnect confirmation or a redundant play) must NOT drop the
-    // running timer — only an explicit pause/stop does.
+    // A resume/replay (e.g. auto-reconnect confirmation, or resuming after a pause) must NOT drop
+    // the running timer. Only an explicit cancel or the timer firing ends it.
     coordinator.play()
     #expect(coordinator.sleepTimerFiresAt != nil)
   }
