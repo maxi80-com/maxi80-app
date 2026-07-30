@@ -284,7 +284,7 @@ public final class RadioPlayerViewModel {
   public var sleepTimerFiresAt: Date? { coordinator.sleepTimerFiresAt }
 
   /// The preset durations (minutes) offered by the picker. Presets only — no custom picker.
-  public static let sleepTimerPresets: [Int] = [15, 30, 45, 60, 90]
+  public static let sleepTimerPresets: [Int] = [5, 10, 15, 30, 45, 60, 90]
 
   // MARK: - Computed Display Properties
 
