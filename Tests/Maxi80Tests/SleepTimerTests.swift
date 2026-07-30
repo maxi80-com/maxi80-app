@@ -158,19 +158,44 @@ struct SleepTimerTests {
     #expect(coordinator.sleepTimerFiresAt == nil)
   }
 
-  @Test("An external pause (media3 notification) cancels a running sleep timer")
+  @Test("An external audio-focus pause leaves a running sleep timer intact (issue #57)")
   @MainActor
-  func externalPauseCancelsTimer() async {
+  func externalPauseDoesNotCancelTimer() async {
     let (coordinator, _) = makeCoordinator()
 
     coordinator.play()
     await coordinator.handleMetadataChanged("Artist - Song")
     coordinator.startSleepTimer(minutes: 30)
-    #expect(coordinator.sleepTimerFiresAt != nil)
+    let firesAt = coordinator.sleepTimerFiresAt
+    #expect(firesAt != nil)
 
-    // Simulate the Android media3 notification / external pause callback.
+    // On Android a transient audio-focus loss surfaces as this external `false` transition (the
+    // same event that fires `onInterruption(true)`), so it must NOT cancel the timer — otherwise
+    // another app taking audio focus would end the sleep session. Only an explicit user pause /
+    // disconnect (which reach `stopForDisconnect`) cancels.
     coordinator.handlePlaybackStateChanged(isPlaying: false)
-    #expect(coordinator.sleepTimerFiresAt == nil)
+    #expect(coordinator.sleepTimerFiresAt == firesAt)
+  }
+
+  @Test("A sleep timer survives an audio interruption began then ended (issue #57)")
+  @MainActor
+  func interruptionDoesNotCancelTimer() async {
+    let (coordinator, _) = makeCoordinator()
+
+    coordinator.play()
+    await coordinator.handleMetadataChanged("Artist - Song")
+    coordinator.startSleepTimer(minutes: 30)
+    let firesAt = coordinator.sleepTimerFiresAt
+    #expect(firesAt != nil)
+
+    // Interruption began (phone call / another app taking audio focus): playback pauses but the
+    // timer keeps running toward its original absolute fire time — unchanged.
+    coordinator.handleInterruption(began: true)
+    #expect(coordinator.sleepTimerFiresAt == firesAt)
+
+    // Interruption ended: playback resumes and the same timer is still armed for the same date.
+    coordinator.handleInterruption(began: false)
+    #expect(coordinator.sleepTimerFiresAt == firesAt)
   }
 
   @Test("A Bluetooth/wired disconnect stop cancels a running sleep timer")

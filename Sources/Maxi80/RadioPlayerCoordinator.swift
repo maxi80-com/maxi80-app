@@ -746,11 +746,14 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Interruption Handling
 
-  private func handleInterruption(began: Bool) {
+  // Internal (not private) so tests can drive the interruption flow directly — the production
+  // caller is the `player.onInterruption` closure wired in `setupCallbacks()`.
+  func handleInterruption(began: Bool) {
     if began {
-      // Interruption began — pause. Cancel any sleep timer: audio has stopped by an external means,
-      // so the timer must not keep counting toward a fade of a stream that's no longer playing.
-      cancelSleepTimer()
+      // Interruption began — pause. A running sleep timer is deliberately LEFT RUNNING (issue #57):
+      // the timer stores an absolute fire time, so a transient interruption from another app must
+      // not shorten or end the sleep session — "15 minutes" stays 15 minutes of wall-clock. Only an
+      // explicit user pause / disconnect (see `stopForDisconnect()`) cancels it.
       playbackState = .paused
       publishPlaybackState(isPlaying: false)
     } else {
@@ -809,9 +812,13 @@ public final class RadioPlayerCoordinator {
       // `.paused` are owned elsewhere or already terminal.
       switch playbackState {
       case .playing:
-        // Audio was paused externally — cancel any sleep timer so it can't fade/stop a stream the
-        // user (or the system) already paused.
-        cancelSleepTimer()
+        // Audio was paused externally. A running sleep timer is deliberately LEFT RUNNING (issue
+        // #57): on Android a transient audio-focus loss surfaces here (a focus loss fires both
+        // `onInterruption(true)` and this `onPlaybackStateChanged(false)` — see
+        // `MetadataPlayerListener`), so cancelling here would re-introduce the interruption-cancels
+        // bug this callback shares with `handleInterruption`. An explicit user pause reaches
+        // `stopForDisconnect()` first, which drops state to `.paused` and cancels the timer there,
+        // so this branch never runs for a deliberate stop.
         playbackState = .paused
         publishPlaybackState(isPlaying: false)
       default:
