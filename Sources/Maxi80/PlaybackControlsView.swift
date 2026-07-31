@@ -360,7 +360,7 @@ struct SleepTimerPickerSheet: View {
         }
       }
 
-      HStack(spacing: 10) {
+      HStack(spacing: 6) {
         ForEach(RadioPlayerViewModel.sleepTimerPresets, id: \.self) { minutes in
           Button {
             viewModel.startSleepTimer(minutes: minutes)
@@ -431,22 +431,24 @@ struct SleepTimerPickerSheet: View {
 }
 
 /// A single duration chip: a light tinted capsule with orange text — the accent-not-slab treatment
-/// that keeps the row of five feeling airy.
+/// that keeps the row airy. Flexible width (each chip takes an equal share of the row) so the row
+/// fits any number of presets without overflowing the phone width; a fixed height keeps it readable.
 struct DurationChipLabel: View {
   let minutes: Int
 
   var body: some View {
     Text(verbatim: "\(minutes)")
-      .font(.title3.weight(.semibold))
+      .font(.body.weight(.semibold))
       .foregroundStyle(.orange)
-      // Lock the chip to a concrete size with the label pinned at its intrinsic size. On Android the
-      // sheet (a Compose ModalBottomSheet) presents tall on first open then animates down to the
-      // detent; the content Box fills the remaining height via Modifier.weight(1), so a chip with no
-      // fixed height gets vertically compressed by the shrinking parent during that pass — the
-      // capsule and number flatten into unreadable slivers (issue #56). A fixed frame + fixedSize()
-      // text can't be squeezed. See [[skipui-sheet-detent-flash]].
-      .fixedSize()
-      .frame(width: 56, height: 56)
+      .lineLimit(1)
+      .minimumScaleFactor(0.7)
+      // Fixed HEIGHT + flexible width. The height must stay concrete: on Android the sheet (a
+      // Compose ModalBottomSheet) presents tall on first open then animates down to the detent; its
+      // content Box fills the remaining height via Modifier.weight(1), so a chip with no fixed
+      // height gets vertically compressed during that pass into unreadable slivers (issue #56). The
+      // width flexes so 5 or 7 (or more) presets share the row evenly instead of overflowing.
+      .frame(maxWidth: .infinity)
+      .frame(height: 48)
       .background(Color.orange.opacity(0.12), in: Capsule())
       .overlay(Capsule().stroke(Color.orange.opacity(0.35), lineWidth: 1))
       .accessibilityLabel(Text(SleepTimerFormatting.minutesLabel(minutes)))
