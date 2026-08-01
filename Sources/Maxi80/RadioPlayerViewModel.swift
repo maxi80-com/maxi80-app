@@ -186,98 +186,15 @@ public final class RadioPlayerViewModel {
     carousel.isBrowsing
   }
 
-  /// ANDROID LEGACY ONLY: incremented to force the legacy carousel to re-scroll to the now
-  /// slot even when the cover set is unchanged (e.g. the user taps "Back to live" —
-  /// `scrollPosition` is read-only, so setting `selectedCoverID` alone can't move the scroll).
-  /// Apple's state-driven `CoverFlowStrip` re-centers from `carousel.selectedID` alone.
-  /// Deleted when the native Compose renderer lands.
+  /// Incremented so `coverPinToken` changes when the user taps "Back to live" even though the
+  /// cover set is unchanged. Only the TV UI still keys on the token (its focus-driven row
+  /// re-scrolls on token change); the phone carousel re-centers from `carousel.selectedID` alone.
   private var returnToLiveNonce = 0
 
   /// Jump the carousel back to the now slot.
   func returnToLive() {
     carousel.returnToLive()
-    // The Android legacy pin path still needs the nonce to force a re-scroll.
     returnToLiveNonce += 1
-  }
-
-  /// ANDROID LEGACY ONLY (Apple's state-driven `CoverFlowStrip` survives recreation with no
-  /// guard; everything from here down to `setSelectionFromCarousel` is the legacy renderer's
-  /// guard tower, deleted when the native Compose renderer lands).
-  ///
-  /// True for a short window while the legacy carousel is being recreated and its fresh layout
-  /// would otherwise report the leftmost (oldest) cover. Two events recreate the carousel:
-  ///   - an orientation change (portrait and landscape host it in different structural slots), and
-  ///   - a background→foreground resume on Android (the activity is destroyed and recreated).
-  /// This lock lives in the view model — which survives both recreations, being a process-wide
-  /// singleton — so the carousel's transient selection write-back can be dropped while set,
-  /// preserving the browsed/live cover.
-  public private(set) var isCarouselRecreating = false
-
-  @ObservationIgnored
-  private var carouselRecreateClearTask: Task<Void, Never>?
-
-  /// The selection to preserve across a carousel recreation, snapshotted when the window opens.
-  /// The recreated carousel sweeps through covers (starting at the leftmost/oldest) before it
-  /// settles on the re-pin target; the window closes only once the carousel reports THIS cover,
-  /// which is the signal that it has settled. See `setSelectionFromCarousel` and issue #44.
-  @ObservationIgnored
-  private var carouselSelectionToPreserve: AnyHashable?
-
-  /// Safety backstop for the recreation window: long enough that the carousel has always settled
-  /// by now. Only closes the window if the settle signal (a write-back matching the preserved
-  /// cover) never arrived, so a stuck flag can't drop later legitimate user scrolls forever. It
-  /// does not touch the selection — while the window is open no non-matching write can land, so
-  /// the preserved cover is already intact.
-  private static let carouselRecreateBackstopNanos: UInt64 = 2_500_000_000
-
-  /// ANDROID LEGACY ONLY: begin the recreation lock for an orientation change, auto-clearing
-  /// once the recreated legacy carousel has settled.
-  func beginReorientation() {
-    beginCarouselRecreationWindow()
-  }
-
-  /// ANDROID LEGACY ONLY: begin the recreation lock for a background→foreground transition. The
-  /// recreated carousel's leftmost-cover write-back is dropped for the window, so the persisted
-  /// selection survives the resume — the same protection rotation already had, now covering the
-  /// resume path too.
-  func beginForegroundTransition() {
-    beginCarouselRecreationWindow()
-  }
-
-  private func beginCarouselRecreationWindow() {
-    isCarouselRecreating = true
-    carouselSelectionToPreserve = selectedCoverID
-    carouselRecreateClearTask?.cancel()
-    carouselRecreateClearTask = Task { @MainActor [weak self] in
-      try? await Task.sleep(nanoseconds: Self.carouselRecreateBackstopNanos)
-      guard let self, self.isCarouselRecreating else { return }
-      // The carousel never reported the preserved cover within the backstop; just close the
-      // window so later legitimate user scrolls aren't dropped. The selection is untouched — no
-      // non-matching write could have landed while the window was open.
-      self.isCarouselRecreating = false
-    }
-  }
-
-  /// ANDROID LEGACY ONLY: route a legacy-carousel-reported selection through the recreation
-  /// guard. Accepted writes now flow through the computed `selectedCoverID` proxy →
-  /// `carousel.userSettledOn`, which additionally ignores ids not in the cover list — strictly
-  /// safer than the old stored write.
-  ///
-  /// Normally this just stores the value. But while a recreation is in flight (rotation or a
-  /// background→foreground resume), the freshly-laid-out carousel reports the leftmost (oldest)
-  /// cover repeatedly before its re-pin `.task` scrolls it back to the target. A blind timeout
-  /// guard expires mid-sweep and lets one of those transient reports land, stranding the carousel
-  /// on the oldest cover (issue #44, confirmed on-device). Instead, drop EVERY write that doesn't
-  /// match the cover we preserved when the window opened — however late it arrives — and treat a
-  /// write matching the preserved cover as the "settled" signal that closes the window.
-  func setSelectionFromCarousel(_ newValue: AnyHashable?) {
-    if isCarouselRecreating {
-      guard newValue == carouselSelectionToPreserve else { return }
-      // The carousel has settled back on the preserved cover: accept it and close the window.
-      isCarouselRecreating = false
-      carouselRecreateClearTask?.cancel()
-    }
-    selectedCoverID = newValue
   }
 
   public var station: Station? {
@@ -342,10 +259,10 @@ public final class RadioPlayerViewModel {
     // The carousel model starts focused on the persistent "now" slot by default.
   }
 
-  /// ANDROID LEGACY ONLY: token that changes whenever the carousel's content changes — the
-  /// full ordered list of cover ids plus the now-slot artwork. The legacy view re-pins the
-  /// scroll to the now slot when it changes, so the carousel re-centers after history loads or
-  /// the current artwork swaps in. Deleted when the native Compose renderer lands.
+  /// TV ONLY: token that changes whenever the carousel's content changes — the full ordered
+  /// list of cover ids plus the now-slot artwork, and the back-to-live nonce. `TVHistoryRow`
+  /// keys its focus-driven re-scroll on it. The phone/tablet `CoverFlowStrip` doesn't use it:
+  /// it re-derives the centered cover from `carousel.selectedID` on every layout pass.
   var coverPinToken: String {
     let ids = pastEntries.map(\.id).joined(separator: ",")
     let nowURL = coordinator.currentArtwork.flatMap { $0.isDefault ? nil : $0.url } ?? "generic"

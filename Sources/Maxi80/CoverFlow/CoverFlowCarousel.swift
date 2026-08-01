@@ -2,12 +2,11 @@ import SwiftUI
 
 /// The single carousel entry point `RadioPlayerView` uses.
 ///
-/// Both platforms now render the shared state-driven `CoverFlowStrip` — every SwiftUI
-/// primitive it needs (ZStack, offset, scaleEffect, rotation3DEffect via Compose
-/// graphicsLayer, DragGesture with predictedEndTranslation, withTransaction, spring
-/// animation) exists in SkipSwiftUI's native Fuse API. The legacy ScrollView renderer
-/// (`CoverFlowView`) and the view-model guard tower it needed remain in the tree only
-/// until the Android field test confirms parity; then both get deleted.
+/// Both platforms render the shared state-driven `CoverFlowStrip` — every SwiftUI primitive
+/// it needs (ZStack, offset, scaleEffect, rotation3DEffect via Compose graphicsLayer,
+/// DragGesture with predictedEndTranslation, spring animation) exists in SkipSwiftUI's
+/// native Fuse API. Kept as a thin layer so the view-model wiring stays in one place if a
+/// platform ever needs to diverge again.
 struct CoverFlowCarousel: View {
   @Bindable var viewModel: RadioPlayerViewModel
   var coverSize: CGFloat = 260

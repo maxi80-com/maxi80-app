@@ -34,16 +34,11 @@ public enum SharedPlayer {
 
   public static let viewModel = RadioPlayerViewModel(coordinator: coordinator)
 
-  /// Handle a background→foreground transition. Both the coordinator and the view model survive the
-  /// Android activity recreation (they're process-wide), but nothing else re-syncs them on resume:
-  /// on Android, open the carousel-recreation guard so the recreated legacy carousel can't clobber
-  /// the browsed/live cover; on all platforms, reconcile the playback state with the real player so
-  /// a stale `.loading` spinner clears. See issue #9. Apple's state-driven carousel renders from
-  /// `CarouselModel.selectedID` and needs no recreation guard.
+  /// Handle a background→foreground transition: reconcile the playback state with the real player
+  /// so a stale `.loading` spinner clears (issue #9). The carousel needs no guard — CoverFlowStrip
+  /// re-derives the centered cover from `CarouselModel.selectedID`, which lives in the process-wide
+  /// view model and survives any view or Android activity recreation.
   public static func handleForeground() {
-    #if os(Android)
-      viewModel.beginForegroundTransition()
-    #endif
     coordinator.reconcileWithPlayer()
   }
 }

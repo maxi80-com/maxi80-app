@@ -38,15 +38,9 @@ public struct RadioPlayerView: View {
         // The branded default background is always dark, so force dark text/controls when
         // it's showing (no artwork color). With artwork, respect the device scheme.
         .environment(\.colorScheme, viewModel.dominantColor == nil ? .dark : colorScheme)
-        // Android only: a rotation recreates the legacy CoverFlowView; open a short window where
-        // its selection write-back is dropped so the browsed cover survives the recreation. The
-        // Apple renderer is state-driven and survives recreation with no guard.
-        #if os(Android)
-          .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
-        #endif
-        // Returning to the foreground recreates the view tree (esp. the Android activity) the same
-        // way; reconcile playback + guard the carousel. The Android activity's onResume also drives
-        // this via the app delegate, so both entry paths (icon and notification) are covered. #9
+        // Returning to the foreground still needs a playback reconcile (a stale .loading spinner
+        // clears, issue #9). The carousel needs nothing: CoverFlowStrip re-derives the centered
+        // cover from CarouselModel.selectedID, which survives any view/activity recreation.
         .onChange(of: scenePhase) { _, newPhase in
           if newPhase == .active { SharedPlayer.handleForeground() }
         }

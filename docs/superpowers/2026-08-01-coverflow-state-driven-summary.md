@@ -75,6 +75,23 @@ Deployment floor stayed **iOS 17 / macOS 14** (the iOS 18 bump on the dead branc
 - **Zero `dragTranslation` on width change** — a rotation mid-drag can cancel the gesture without
   `onEnded`, which would strand a permanent off-center offset.
 
+## Postscript: Android reuse (same day)
+
+The planned separate Compose renderer turned out to be unnecessary. An audit of SkipSwiftUI's
+native Fuse API showed every primitive the renderer needs exists there (`rotation3DEffect` maps
+to a Compose `graphicsLayer`; `DragGesture` carries `predictedEndTranslation`), so
+`AppleCoverFlow` was renamed **`CoverFlowStrip`** and now renders on ALL platforms, with four
+small `#if os(Android)` gates for APIs SkipSwiftUI marks unavailable (`withTransaction`,
+`contentShape`, `focusable`/`onKeyPress`, `accessibilityElement`). Android field test passed the
+full scenario table, including the historically 100%-repro resume-strand cases and rotation —
+which is now UNLOCKED in the manifest (the `nosensor` lock existed only for the old renderer).
+
+Consequently the legacy `CoverFlowView` and the entire view-model guard tower
+(`beginReorientation`, `beginForegroundTransition`, `setSelectionFromCarousel`,
+`isCarouselRecreating`, recreation window + backstop timer) are **deleted**. `coverPinToken` +
+`returnToLiveNonce` remain solely for the tvOS `TVHistoryRow`. Android TV and CarPlay/Android
+Auto are untouched (separate views / MediaSession surfaces; TV keeps its token-keyed row).
+
 ## Verification status
 
 - `swift build` zero warnings; `skip android build` (Xcode 26.6) green; full test suite green
