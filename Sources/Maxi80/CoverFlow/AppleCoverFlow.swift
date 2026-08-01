@@ -57,11 +57,31 @@
           .gesture(dragGesture(geometry: geometry, anchorIndex: anchor))
         #endif
         .focusable()
-        .onKeyPress(.leftArrow) { moveSelection(by: -1) }
-        .onKeyPress(.rightArrow) { moveSelection(by: 1) }
+        // Bare arrows only: modified arrows must pass through untouched. The simulator's
+        // rotate shortcuts (Cmd+←/→) are ALSO delivered to the app as arrow presses, so
+        // matching them here moved the selection one slot on every rotation — observed as
+        // "drift"/re-pin on rotation in the simulator (never on device, which has no keyboard).
+        .onKeyPress(keys: [.leftArrow, .rightArrow], phases: .down) { press in
+          guard press.modifiers.isEmpty else { return .ignored }
+          return moveSelection(by: press.key == .leftArrow ? -1 : 1)
+        }
+        // A rotation/resize mid-drag can cancel the gesture without `onEnded` ever firing,
+        // stranding a nonzero translation the math would faithfully render as a permanent
+        // off-center offset. The old width is meaningless at the new width anyway; drop it.
+        .onChange(of: proxy.size.width) { _, _ in
+          guard dragTranslation != 0 else { return }
+          var transaction = Transaction()
+          transaction.disablesAnimations = true
+          withTransaction(transaction) { dragTranslation = 0 }
+        }
       }
       .frame(maxWidth: .infinity)
       .frame(height: coverSize + verticalMargin * 2)
+      // The ZStack positions covers by pure math with no scroll viewport, so without an
+      // explicit clip the strip's side covers paint over neighboring layout (the title/controls
+      // column in landscape). The old ScrollView clipped for free; this is its replacement.
+      // `verticalMargin` keeps the focused cover's drop shadow inside the clip.
+      .clipped()
       .accessibilityElement(children: .contain)
     }
 
