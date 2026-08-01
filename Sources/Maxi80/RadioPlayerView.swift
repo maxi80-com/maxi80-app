@@ -142,6 +142,15 @@ public struct RadioPlayerView: View {
     return max(260, min(cap, carouselWidth * 0.58))
   }
 
+  /// Hero size for the compact (phone) landscape layout. The old fixed 260pt default filled the
+  /// carousel's whole cell, so the previous/next covers never peeked through. The HStack splits
+  /// the width roughly in half between the strip and the info/controls column; size the hero as
+  /// ~58% of the strip's share (same fraction as the expanded layouts) so ~21% shows on each side.
+  private func compactLandscapeCoverSize(containerWidth: CGFloat) -> CGFloat {
+    let carouselWidth = (containerWidth - expandedHSpacing) / 2
+    return max(160, min(260, carouselWidth * 0.58))
+  }
+
   // MARK: - Portrait Layout
 
   @ViewBuilder
@@ -212,7 +221,7 @@ public struct RadioPlayerView: View {
       .padding(.horizontal, expandedHPadding)
     } else {
       HStack(spacing: 24) {
-        coverFlow()
+        coverFlow(coverSize: compactLandscapeCoverSize(containerWidth: containerWidth))
 
         VStack(spacing: 16) {
           Spacer()
