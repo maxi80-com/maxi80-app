@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+// SkipFuse registers the @Observable with the bridge so mutations invalidate the Android
+// Compose UI — the view model's computed selection properties read through this model.
+import SkipFuse
 
 /// Canonical selection state for the Cover Flow carousel.
 ///

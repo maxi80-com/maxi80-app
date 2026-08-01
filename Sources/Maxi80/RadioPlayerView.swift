@@ -38,9 +38,12 @@ public struct RadioPlayerView: View {
         // The branded default background is always dark, so force dark text/controls when
         // it's showing (no artwork color). With artwork, respect the device scheme.
         .environment(\.colorScheme, viewModel.dominantColor == nil ? .dark : colorScheme)
-        // A rotation recreates the CoverFlowView; open a short window where its selection write-back
-        // is dropped so the browsed cover survives the recreation.
-        .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
+        // Android only: a rotation recreates the legacy CoverFlowView; open a short window where
+        // its selection write-back is dropped so the browsed cover survives the recreation. The
+        // Apple renderer is state-driven and survives recreation with no guard.
+        #if os(Android)
+          .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
+        #endif
         // Returning to the foreground recreates the view tree (esp. the Android activity) the same
         // way; reconcile playback + guard the carousel. The Android activity's onResume also drives
         // this via the app delegate, so both entry paths (icon and notification) are covered. #9
@@ -232,19 +235,8 @@ public struct RadioPlayerView: View {
   /// caller doesn't specify, fall back to a per-idiom default: enlarged on iPad, 260 elsewhere.
   @ViewBuilder
   private func coverFlow(coverSize: CGFloat? = nil) -> some View {
-    CoverFlowView(
-      covers: viewModel.covers,
-      // The carousel reads `selectedCoverID` but writes through the view model, which drops writes
-      // during a rotation so the recreated carousel's leftmost-cover relayout can't lose the
-      // browsed cover.
-      selection: Binding(
-        get: { viewModel.selectedCoverID },
-        set: { viewModel.setSelectionFromCarousel($0) }
-      ),
-      // Pin to the now slot unless the user is browsing history; re-pin whenever the
-      // cover set changes (history loads to the left, shifting the viewport).
-      pinTarget: viewModel.isBrowsingHistory ? nil : viewModel.liveCoverID,
-      pinToken: viewModel.coverPinToken,
+    CoverFlowCarousel(
+      viewModel: viewModel,
       coverSize: coverSize ?? (PlatformEnvironment.isPad ? 380 : 260)
     )
     .accessibilityLabel(

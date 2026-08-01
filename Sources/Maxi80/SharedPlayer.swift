@@ -36,11 +36,14 @@ public enum SharedPlayer {
 
   /// Handle a background→foreground transition. Both the coordinator and the view model survive the
   /// Android activity recreation (they're process-wide), but nothing else re-syncs them on resume:
-  /// open the carousel-recreation guard so the recreated carousel can't clobber the browsed/live
-  /// cover, and reconcile the playback state with the real player so a stale `.loading` spinner
-  /// clears. See issue #9.
+  /// on Android, open the carousel-recreation guard so the recreated legacy carousel can't clobber
+  /// the browsed/live cover; on all platforms, reconcile the playback state with the real player so
+  /// a stale `.loading` spinner clears. See issue #9. Apple's state-driven carousel renders from
+  /// `CarouselModel.selectedID` and needs no recreation guard.
   public static func handleForeground() {
-    viewModel.beginForegroundTransition()
+    #if os(Android)
+      viewModel.beginForegroundTransition()
+    #endif
     coordinator.reconcileWithPlayer()
   }
 }

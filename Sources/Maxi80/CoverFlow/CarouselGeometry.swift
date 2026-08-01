@@ -1,5 +1,10 @@
-import CoreGraphics
 import Foundation
+
+// CGFloat lives in CoreGraphics on Apple platforms but in Foundation on the Android Swift
+// SDK, where CoreGraphics does not exist.
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 /// Pure slot/snap/fan math for the state-driven Cover Flow renderer.
 ///

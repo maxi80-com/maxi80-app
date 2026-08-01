@@ -208,7 +208,12 @@ struct ResumeReconciliationTests {
     #expect(viewModel.selectedCoverID == AnyHashable(RadioPlayerViewModel.nowSlotID))
     #expect(!viewModel.isCarouselRecreating)
 
-    // After settling, normal user scrolls to history are honored again.
+    // After settling, normal user scrolls to history are honored again. Accepted writes now
+    // route through CarouselModel, which ignores ids not in the synced cover list — so the
+    // scrolled-to cover must exist in history and the model must have synced (computing
+    // `covers` does that, as the view does on every render pass).
+    coordinator.history = [HistoryEntry(artist: "Past", title: "Cover", timestamp: "some")]
+    _ = viewModel.covers
     viewModel.setSelectionFromCarousel(AnyHashable("some|Past|Cover"))
     #expect(viewModel.selectedCoverID == AnyHashable("some|Past|Cover"))
   }
@@ -219,7 +224,12 @@ struct ResumeReconciliationTests {
     let (coordinator, _) = makeCoordinator()
     let viewModel = RadioPlayerViewModel(coordinator: coordinator)
 
-    // User was browsing a past cover when they backgrounded the app.
+    // User was browsing a past cover when they backgrounded the app. Selection writes now
+    // route through CarouselModel, which only accepts ids in the synced cover list — so the
+    // browsed entry must exist in history and the model must have synced (computing `covers`
+    // does that, as the view does on every render pass).
+    coordinator.history = [HistoryEntry(artist: "Artist", title: "Song", timestamp: "browsed")]
+    _ = viewModel.covers
     viewModel.selectedCoverID = AnyHashable("browsed|Artist|Song")
 
     viewModel.beginForegroundTransition()

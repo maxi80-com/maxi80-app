@@ -80,6 +80,9 @@ struct ShareTextPropertyTests {
       artist: "A", title: "T", timestamp: "2026-01-01T00:00:00Z", artworkURL: "https://cdn/past.jpg"
     )
     coordinator.history = [past]
+    // Sync the carousel model's cover list (normally done by the view computing `covers`);
+    // selection writes are ignored for ids the model doesn't know about.
+    _ = vm.covers
     vm.selectedCoverID = AnyHashable(past.id)
 
     #expect(vm.shareArtworkURL == "https://cdn/past.jpg")
