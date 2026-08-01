@@ -112,7 +112,7 @@ public final class RadioPlayerViewModel {
   // MARK: - Cover Flow
   //
   // Consumed only by RadioPlayerView within this module, so these stay internal
-  // (CoverFlowView.Cover is an internal type).
+  // (Cover is an internal type).
 
   /// Stable id for the persistent rightmost "now" slot. It never changes between idle and
   /// playing, so the carousel stays put when the current artwork swaps in.
@@ -140,11 +140,11 @@ public final class RadioPlayerViewModel {
   /// Covers for the carousel, oldest → newest. Past history grows to the left; the rightmost
   /// cover is always the persistent "now" slot — the generic image when idle, or the current
   /// song's artwork while playing.
-  var covers: [CoverFlowView.Cover] {
+  var covers: [Cover] {
     let past = pastEntries.map { entry in
       // Fall back to the launch placeholder art for entries whose artwork
       // couldn't be resolved, so no cover is ever blank.
-      CoverFlowView.Cover(
+      Cover(
         id: entry.id,
         artworkURL: entry.artworkURL,
         assetName: entry.artworkURL == nil ? coordinator.placeholderCover.imageName : nil
@@ -153,7 +153,7 @@ public final class RadioPlayerViewModel {
 
     // The persistent "now" slot: current artwork while playing, generic cover otherwise.
     let nowArtworkURL = coordinator.currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
-    let nowSlot = CoverFlowView.Cover(
+    let nowSlot = Cover(
       id: Self.nowSlotID,
       artworkURL: nowArtworkURL,
       assetName: nowArtworkURL == nil ? coordinator.placeholderCover.imageName : nil
