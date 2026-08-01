@@ -189,7 +189,7 @@ public final class RadioPlayerViewModel {
   /// ANDROID LEGACY ONLY: incremented to force the legacy carousel to re-scroll to the now
   /// slot even when the cover set is unchanged (e.g. the user taps "Back to live" —
   /// `scrollPosition` is read-only, so setting `selectedCoverID` alone can't move the scroll).
-  /// Apple's state-driven `AppleCoverFlow` re-centers from `carousel.selectedID` alone.
+  /// Apple's state-driven `CoverFlowStrip` re-centers from `carousel.selectedID` alone.
   /// Deleted when the native Compose renderer lands.
   private var returnToLiveNonce = 0
 
@@ -200,7 +200,7 @@ public final class RadioPlayerViewModel {
     returnToLiveNonce += 1
   }
 
-  /// ANDROID LEGACY ONLY (Apple's state-driven `AppleCoverFlow` survives recreation with no
+  /// ANDROID LEGACY ONLY (Apple's state-driven `CoverFlowStrip` survives recreation with no
   /// guard; everything from here down to `setSelectionFromCarousel` is the legacy renderer's
   /// guard tower, deleted when the native Compose renderer lands).
   ///
