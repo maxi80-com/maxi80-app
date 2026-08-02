@@ -61,6 +61,10 @@ struct CoverFlowStrip: View {
       #endif
       #if !os(Android)
         .focusable()
+        // Keep focusability (for the arrow keys below) but suppress the system focus ring —
+        // on macOS it draws an ugly blue rectangle around the whole strip. The carousel shows
+        // focus through its centered cover, not a border.
+        .focusEffectDisabled()
         // Bare arrows only: modified arrows must pass through untouched. The simulator's
         // rotate shortcuts (Cmd+←/→) are ALSO delivered to the app as arrow presses, so
         // matching them here moved the selection one slot on every rotation — observed as
