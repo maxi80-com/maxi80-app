@@ -230,6 +230,28 @@ import Foundation
         am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
       }
 
+      /// Apply the sleep-timer fade via ExoPlayer's PRIVATE per-player volume (0…1), NOT
+      /// `androidSetVolume`. The user's volume is the system STREAM_MUSIC level (see above); ExoPlayer's
+      /// own `volume` normally sits at 1.0, so the fade is the only writer of it and the system volume
+      /// — and the `onVolumeChanged` observer that mirrors it into the UI — are never touched. On the
+      /// next play the coordinator resets attenuation to 1.0, restoring full private volume.
+      ///
+      /// NOTE: this shares the same private-volume channel that ExoPlayer's internal audio-focus
+      /// ducking writes (`setAudioAttributes(…, handleAudioFocusInternally: true)`). An overlapping
+      /// duck and fade would fight (last writer wins). The coordinator no longer cancels the sleep
+      /// timer on anything except an explicit user cancel or the timer firing (pause, interruption,
+      /// and disconnect all leave it running), so in principle a duck could now coincide with this
+      /// fade. In practice they don't overlap: this fade runs ONLY once, at fire time, inside
+      /// `fireSleepTimer()`, and it ends by calling `stopForDisconnect()` (which stops the player and
+      /// resets attenuation to 1.0). A transient focus loss suppresses/pauses playback (ExoPlayer
+      /// ducks toward silence and stops advancing) rather than starting a competing fade ramp, and if
+      /// the timer fires during that window the fade still drives to silence and stops — the intended
+      /// end state either way. If you make the fade repeatable or longer-lived, revisit this: an
+      /// active duck could then leave private volume mid-attenuated after the fade resets it.
+      func androidSetAttenuation(_ multiplier: Double) {
+        _exoPlayer?.volume = Float(multiplier)
+      }
+
       /// The current STREAM_MUSIC level as a 0.0–1.0 fraction of its maximum.
       func androidCurrentVolume() -> Double {
         let am = audioManager

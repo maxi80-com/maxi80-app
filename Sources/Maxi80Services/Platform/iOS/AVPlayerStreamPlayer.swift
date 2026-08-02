@@ -34,8 +34,9 @@ import Foundation
 
           observePlayerStatus()
 
-          // Apply the current in-app volume to the freshly-built player.
-          avPlayer?.volume = Float(volume)
+          // Apply the current in-app volume (composed with any active attenuation) to the freshly-
+          // built player.
+          avPlayer?.volume = Float(volume * attenuation)
 
           avPlayer?.play()
           isPlaying = true
@@ -59,7 +60,14 @@ import Foundation
         func platformSetVolume(_ newVolume: Double) {
           let clamped = max(0, min(1, newVolume))
           self.volume = clamped
-          avPlayer?.volume = Float(clamped)
+          avPlayer?.volume = Float(clamped * attenuation)
+        }
+
+        /// Apply the sleep-timer fade attenuation. `AVPlayer.volume` is per-app attenuation relative
+        /// to the system volume, so composing `volume * attenuation` fades the app's own output
+        /// without touching the system output level. `attenuation` is stored by the caller.
+        func platformSetAttenuation(_ multiplier: Double) {
+          avPlayer?.volume = Float(volume * multiplier)
         }
 
         // MARK: - Audio Session Configuration

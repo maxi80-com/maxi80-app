@@ -22,6 +22,7 @@ enum MaterialSymbol {
   case volumeDown
   case volumeUp
   case liveBroadcast
+  case bedtime
 
   /// Stable string key passed across the native→Compose bridge and matched in the composer.
   var iconKey: String {
@@ -33,6 +34,7 @@ enum MaterialSymbol {
     case .volumeDown: "volumeDown"
     case .volumeUp: "volumeUp"
     case .liveBroadcast: "liveBroadcast"
+    case .bedtime: "bedtime"
     }
   }
 }
@@ -86,6 +88,10 @@ enum MaterialSymbol {
           case "volumeDown": Icons.Filled.VolumeDown
           case "volumeUp": Icons.Filled.VolumeUp
           case "liveBroadcast": Icons.Filled.Sensors
+          // The sleep-timer glyph. `Bedtime` (a crescent moon) lives in material-icons-extended,
+          // already on the classpath. It has no idle/active variants, so the SF-Symbol side toggles
+          // `moon.zzz`/`moon.zzz.fill` while Android keeps this single filled crescent.
+          case "bedtime": Icons.Filled.Bedtime
           default: Icons.Filled.Warning
           }
         Icon(

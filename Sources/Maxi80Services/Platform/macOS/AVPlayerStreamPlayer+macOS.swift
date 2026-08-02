@@ -30,7 +30,7 @@ import Foundation
         }
 
         macObservePlayerStatus()
-        macPlayer?.volume = Float(volume)
+        macPlayer?.volume = Float(volume * attenuation)
         macPlayer?.play()
         isPlaying = true
         onPlaybackStateChanged?(true)
@@ -51,7 +51,13 @@ import Foundation
       func macSetVolume(_ newVolume: Double) {
         let clamped = max(0, min(1, newVolume))
         self.volume = clamped
-        macPlayer?.volume = Float(clamped)
+        macPlayer?.volume = Float(clamped * attenuation)
+      }
+
+      /// Apply the sleep-timer fade attenuation via the per-app player volume, composed with the
+      /// user volume so the system output level is untouched. `attenuation` is stored by the caller.
+      func macSetAttenuation(_ multiplier: Double) {
+        macPlayer?.volume = Float(volume * multiplier)
       }
 
       // MARK: - Metadata
