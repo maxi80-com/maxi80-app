@@ -130,14 +130,13 @@ struct CoverFlowStrip: View {
     var id: String { cover.id }
   }
 
-  /// Virtualization by math: only covers within the geometry's visible window are
-  /// instantiated, so a 100-entry history renders a handful of cells, not 100.
+  /// Virtualization by math: the geometry solves the visible window as a contiguous
+  /// index range in closed form, so a 100-entry history evaluates only the handful of
+  /// cells around the anchor — never the full array — keeping the render O(windowRadius).
   func visibleCovers(geometry: CarouselGeometry, anchorIndex: Int) -> [VisibleCover] {
-    covers.enumerated().compactMap { index, cover in
-      let relative = geometry.relativePosition(
-        index: index, anchorIndex: anchorIndex, dragTranslation: dragTranslation)
-      return geometry.isVisible(relative: relative) ? VisibleCover(index: index, cover: cover) : nil
-    }
+    let range = geometry.visibleIndexRange(
+      anchorIndex: anchorIndex, dragTranslation: dragTranslation, coverCount: covers.count)
+    return range.map { index in VisibleCover(index: index, cover: covers[index]) }
   }
 
   // MARK: - Cells

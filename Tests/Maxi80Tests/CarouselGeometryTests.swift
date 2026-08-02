@@ -145,4 +145,34 @@ struct CarouselGeometryTests {
     #expect(!geometry.isVisible(relative: radius + 1.5))
     #expect(!geometry.isVisible(relative: -(radius + 2)))
   }
+
+  @Test("visibleIndexRange returns exactly the indices isVisible would accept, clamped")
+  func visibleIndexRangeMatchesIsVisible() {
+    // The closed-form range must agree with a brute-force isVisible scan for every
+    // (anchor, drag) combination — this is what lets the renderer skip the full array.
+    let count = 100
+    for anchor in [0, 1, 50, 98, 99] {
+      for drag in [CGFloat(0), 73, -73, geometry.slotWidth * 2, -geometry.slotWidth * 2] {
+        let expected = (0..<count).filter { index in
+          geometry.isVisible(
+            relative: geometry.relativePosition(
+              index: index, anchorIndex: anchor, dragTranslation: drag))
+        }
+        let range = geometry.visibleIndexRange(
+          anchorIndex: anchor, dragTranslation: drag, coverCount: count)
+        #expect(Array(range) == expected, "mismatch for anchor \(anchor), drag \(drag)")
+      }
+    }
+  }
+
+  @Test("visibleIndexRange evaluates O(windowRadius) indices, not the whole history")
+  func visibleIndexRangeIsBounded() {
+    let range = geometry.visibleIndexRange(anchorIndex: 5000, dragTranslation: 0, coverCount: 10_000)
+    #expect(range.count <= 2 * (geometry.windowRadius + 1) + 1)
+  }
+
+  @Test("visibleIndexRange is empty for an empty strip")
+  func visibleIndexRangeEmptyStrip() {
+    #expect(geometry.visibleIndexRange(anchorIndex: 0, dragTranslation: 0, coverCount: 0).isEmpty)
+  }
 }

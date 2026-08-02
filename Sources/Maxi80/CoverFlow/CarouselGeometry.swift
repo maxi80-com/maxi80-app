@@ -90,6 +90,26 @@ public struct CarouselGeometry: Sendable, Equatable {
     abs(relative) <= CGFloat(windowRadius + 1)
   }
 
+  /// The index range whose covers satisfy `isVisible`, solved in closed form rather
+  /// than by scanning the cover list: `relative(i)` is monotonic in `i`, so the visible
+  /// set is a contiguous run and its bounds fall straight out of the `isVisible`
+  /// inequality. This keeps the renderer O(windowRadius) regardless of history length.
+  /// Clamped to `0..<coverCount`; empty when the strip has no covers.
+  public func visibleIndexRange(
+    anchorIndex: Int, dragTranslation: CGFloat, coverCount: Int
+  ) -> Range<Int> {
+    guard coverCount > 0 else { return 0..<0 }
+    // relative(i) = (i − anchorIndex) + dragTranslation/slotWidth, visible when |·| ≤ bound.
+    let bound = CGFloat(windowRadius + 1)
+    let dragProgress = dragTranslation / slotWidth
+    let lowest = (CGFloat(anchorIndex) - bound - dragProgress).rounded(.up)
+    let highest = (CGFloat(anchorIndex) + bound - dragProgress).rounded(.down)
+    let low = max(0, Int(lowest))
+    let high = min(coverCount - 1, Int(highest))
+    guard low <= high else { return 0..<0 }
+    return low..<(high + 1)
+  }
+
   /// Index the strip should spring to when the finger lifts: the nearest slot to the
   /// effective anchor at the *predicted* end translation, so a flick coasts past the
   /// adjacent cover. Clamped to valid indices; an empty strip pins to 0.
