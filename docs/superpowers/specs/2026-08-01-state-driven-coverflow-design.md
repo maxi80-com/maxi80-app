@@ -2,8 +2,10 @@
 
 **Date:** 2026-08-01
 **Branch:** `new-caroussel-fable` (worktree `maxi80-caroussel-fable`)
-**Scope:** Apple platforms (iPhone, iPad, macOS). Android keeps today's renderer unchanged.
-Apple TV / CarPlay / Android Auto out of scope.
+**Scope:** the phone/tablet/desktop Cover Flow strip on iPhone, iPad, macOS **and Android** — one
+shared `CoverFlowStrip` renderer serves them all (see §3; the planned separate Android renderer
+proved unnecessary once SkipSwiftUI's native Fuse API covered every primitive). Apple TV / CarPlay /
+Android Auto are out of scope and unchanged.
 
 ## 1. Problem
 
@@ -11,8 +13,9 @@ The Cover Flow carousel (session history + persistent rightmost "now" slot, id `
 keep the *selected* cover dead-center through: async history load (R1), swipe-to-browse with no
 recoil (R2), settle reporting only for user gestures (R3), back-to-live (R4), a new song arriving
 while live (R5) or while browsing (R6), rotation live/browsing/rapid (R7/R8/R9), start-play when
-the current title already exists in history (R10), and iPad/macOS resizes (R11). See
-`~/Desktop/coverflow-ios-spec.md` §2 for the authoritative acceptance list.
+the current title already exists in history (R10), and iPad/macOS resizes (R11). The R1–R11
+acceptance list is the manual field-test table exercised in the PR; it was never committed as a
+standalone doc.
 
 Two prior implementations failed the same way: they let SwiftUI's `ScrollView` own position as a
 pixel content offset and then tried to reconcile it with the model's selection after every
@@ -81,8 +84,8 @@ pure `CarouselGeometry` value type with no SwiftUI dependency, unit-tested exhau
 
 ### Canonical state: `CarouselModel`
 
-`@MainActor @Observable final class`, unchanged contract from the prior spec (the future Android
-Compose renderer will share it):
+`@MainActor @Observable final class`, unchanged contract from the prior spec (renderer-agnostic, so
+it also drives the shared `CoverFlowStrip` on Android):
 
 ```swift
 static let nowSlotID = "__now__"
@@ -100,20 +103,22 @@ calls `carousel.syncCoverIDs(ids)` at the end; `selectedCoverID` becomes a compu
 (`get` → `carousel.selectedID`, `set` → `userSettledOn`); `isBrowsingHistory` → `carousel.isBrowsing`;
 `returnToLive()` → `carousel.returnToLive()`. Public surface unchanged — TV files keep compiling.
 
-## 3. Platform split
+## 3. Platform split — none: one renderer, all platforms
 
-New thin dispatcher `CoverFlowCarousel` (the only carousel type `RadioPlayerView` references),
-with the `#if os(Android)` branch **inlined in `body`** (Skip Fuse rule):
+The plan anticipated a `#if os(Android)` branch keeping the legacy `CoverFlowView` until a separate
+Compose renderer landed. That branch proved unnecessary: SkipSwiftUI's native Fuse API supports
+every primitive `CoverFlowStrip` needs (`ZStack`, `offset`, `scaleEffect`, `rotation3DEffect` →
+Compose `graphicsLayer`, `DragGesture`), so **the same `CoverFlowStrip` renders on iOS, iPadOS,
+macOS, and Android**. The legacy `CoverFlowView` and the entire view-model guard tower
+(`beginReorientation`, `beginForegroundTransition`, `setSelectionFromCarousel`,
+`isCarouselRecreating`, backstop timers, pin tokens) were deleted rather than made Android-only.
 
-- `#if os(Android)` → today's `CoverFlowView`, byte-identical behavior, including its
-  `pinTarget`/`pinToken` plumbing and the view-model guard tower it depends on
-  (`beginReorientation`, `beginForegroundTransition`, `setSelectionFromCarousel`,
-  `isCarouselRecreating`) — all of which become Android-only: call sites in `RadioPlayerView` /
-  `SharedPlayer` are gated `#if os(Android)`, and the members are marked as Android-legacy.
-  They are deleted when the native Compose renderer lands (separate project).
-- `#else` → new `AppleCoverFlow(covers:selectedID:coverSize:onSettled:)`.
+`CoverFlowCarousel` remains as a thin entry point that wires the view model into `CoverFlowStrip`.
+Small `#if` gates cover the handful of APIs missing from SkipSwiftUI (e.g. `contentShape`,
+`.focusable`/`.onKeyPress`, `.accessibilityElement`, `withTransaction`) and platforms without the
+gesture (`tvOS` has no `DragGesture`, and the TV UI uses `TVRadioPlayerView`, not this renderer).
 
-Skip Fuse bridging rules that bind `AppleCoverFlow`/`CoverFlowCarousel`: no `private @State` on a
+Skip Fuse bridging rules that bind `CoverFlowStrip`/`CoverFlowCarousel`: no `private @State` on a
 bridged view type (use internal `@State var`); no `#if SKIP`-only stored properties; both build
 legs must pass.
 
@@ -134,10 +139,11 @@ Sources/Maxi80/CoverFlow/
 ├── CarouselGeometry.swift    — pure slot/snap/fan math (new)
 ├── Cover.swift               — value type (extracted)
 ├── CoverImage.swift          — artwork view + cache + crossfade (extracted)
-├── CoverFlowCarousel.swift   — dispatcher: Android → CoverFlowView, else AppleCoverFlow (new)
-└── AppleCoverFlow.swift      — state-driven renderer (new)
-Sources/Maxi80/CoverFlowView.swift — Android-only legacy renderer (kept, shrunk)
+├── CoverFlowCarousel.swift   — entry point: wires the view model into CoverFlowStrip (new)
+└── CoverFlowStrip.swift      — shared state-driven renderer, all platforms (new)
 ```
+
+`Sources/Maxi80/CoverFlowView.swift` (the legacy ScrollView renderer) is **deleted**.
 
 ## 5. Error handling / edge cases
 
@@ -167,4 +173,5 @@ Sources/Maxi80/CoverFlowView.swift — Android-only legacy renderer (kept, shrun
   UIScrollView's native deceleration feel. Tunable constants, unit-tested math.
 - macOS loses two-finger trackpad scrolling on the strip; click-drag, tap-to-focus, and arrow keys
   replace it.
-- Android intentionally unchanged (its real fix is the separate native Compose renderer).
+- Android shares the same `CoverFlowStrip` (the anticipated separate Compose renderer proved
+  unnecessary), so it inherits the same owned swipe physics and the same drift-immunity guarantee.

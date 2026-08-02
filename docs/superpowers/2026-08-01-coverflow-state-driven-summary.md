@@ -2,9 +2,9 @@
 
 **Date:** 2026-08-01 · **Branch:** `new-caroussel-fable` · **Commits:** `3807d19`…`bf3ce26`
 **Design spec:** `docs/superpowers/specs/2026-08-01-state-driven-coverflow-design.md`
-**Prior art:** `docs/superpowers/coverflow-ios-handoff.md` (bugs P0–P4 of the dead
-`redesign-coverflow-carousel` branch), `docs/superpowers/coverflow-ios-spec.md` (requirements
-R1–R11).
+**Prior art:** the dead `redesign-coverflow-carousel` branch (bugs P0–P4) and its requirements
+list R1–R11, summarized inline below and in the design spec — those working notes were never
+committed to this repo.
 
 ## Why the previous implementations kept failing
 
