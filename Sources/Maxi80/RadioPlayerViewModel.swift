@@ -22,9 +22,10 @@ public final class RadioPlayerViewModel {
 
   // MARK: - UI-Local State
   //
-  // `selectedCoverID` is the Cover Flow carousel's focused item (bound via
-  // `$viewModel.selectedCoverID` through `scrollPosition(id:)`). Everything else is a computed
-  // passthrough to the coordinator so Observation re-renders the view when coordinator state changes.
+  // Carousel selection is canonical in `carousel` (CarouselModel); `selectedCoverID` is a
+  // computed proxy over it so the public surface is unchanged (TV files, tests). Everything
+  // else is a computed passthrough to the coordinator so Observation re-renders the view when
+  // coordinator state changes.
 
   /// Output volume (0.0–1.0). Reads through to the coordinator so the slider tracks system-volume
   /// changes from the hardware buttons (Android); writing drives `setVolume`. On iOS/tvOS the volume
@@ -35,8 +36,14 @@ public final class RadioPlayerViewModel {
     set { setVolume(newValue) }
   }
   /// The Cover Flow carousel's focused item id. Typed `AnyHashable?` to match
-  /// `scrollPosition(id:)`'s binding on the transpiled Android path.
-  public var selectedCoverID: AnyHashable?
+  /// `scrollPosition(id:)`'s binding on the transpiled Android path. A computed proxy over
+  /// `carousel`: reads resolve through the model, and writes route through `userSettledOn`,
+  /// which ignores ids not currently in the cover list — strictly safer than the old stored
+  /// write (a stale id can no longer strand the selection).
+  public var selectedCoverID: AnyHashable? {
+    get { carousel.selectedID }
+    set { if let newValue { carousel.userSettledOn(newValue) } }
+  }
 
   // MARK: - Coordinator-Derived State (read-through, tracked by Observation)
 
@@ -112,11 +119,12 @@ public final class RadioPlayerViewModel {
   // MARK: - Cover Flow
   //
   // Consumed only by RadioPlayerView within this module, so these stay internal
-  // (CoverFlowView.Cover is an internal type).
+  // (Cover is an internal type).
 
   /// Stable id for the persistent rightmost "now" slot. It never changes between idle and
-  /// playing, so the carousel stays put when the current artwork swaps in.
-  static let nowSlotID = "__now__"
+  /// playing, so the carousel stays put when the current artwork swaps in. Aliased to the
+  /// model's sentinel so the two can never drift apart.
+  static let nowSlotID = CarouselModel.nowSlotID
 
   /// Past history entries shown to the left of the now slot, oldest → newest, with trailing
   /// copies of the current song removed. The current song lives only in the now slot, and both
@@ -140,11 +148,11 @@ public final class RadioPlayerViewModel {
   /// Covers for the carousel, oldest → newest. Past history grows to the left; the rightmost
   /// cover is always the persistent "now" slot — the generic image when idle, or the current
   /// song's artwork while playing.
-  var covers: [CoverFlowView.Cover] {
+  var covers: [Cover] {
     let past = pastEntries.map { entry in
       // Fall back to the launch placeholder art for entries whose artwork
       // couldn't be resolved, so no cover is ever blank.
-      CoverFlowView.Cover(
+      Cover(
         id: entry.id,
         artworkURL: entry.artworkURL,
         assetName: entry.artworkURL == nil ? coordinator.placeholderCover.imageName : nil
@@ -153,13 +161,17 @@ public final class RadioPlayerViewModel {
 
     // The persistent "now" slot: current artwork while playing, generic cover otherwise.
     let nowArtworkURL = coordinator.currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
-    let nowSlot = CoverFlowView.Cover(
+    let nowSlot = Cover(
       id: Self.nowSlotID,
       artworkURL: nowArtworkURL,
       assetName: nowArtworkURL == nil ? coordinator.placeholderCover.imageName : nil
     )
 
-    return past + [nowSlot]
+    let all = past + [nowSlot]
+    // Keep the canonical model in lockstep with what the renderer sees. Safe to call from a
+    // computed property: the model no-ops (touching no observable state) when unchanged.
+    carousel.syncCoverIDs(all.map(\.id))
+    return all
   }
 
   /// The id of the live cover — always the persistent rightmost "now" slot.
@@ -168,94 +180,21 @@ public final class RadioPlayerViewModel {
   }
 
   /// Whether the user has scrolled away from the now slot onto a past cover that exists.
+  /// The model consults its synced `coverIDs` (past entry ids + now slot) where the old check
+  /// consulted `pastEntries` directly — semantically identical.
   var isBrowsingHistory: Bool {
-    guard let selectedCoverID, selectedCoverID != AnyHashable(Self.nowSlotID),
-      let id = selectedCoverID.base as? String
-    else { return false }
-    return pastEntries.contains { $0.id == id }
+    carousel.isBrowsing
   }
 
-  /// Incremented to force the carousel to re-scroll to the now slot even when the cover set
-  /// is unchanged (e.g. the user taps "Back to live" — `scrollPosition` is read-only, so
-  /// setting `selectedCoverID` alone can't move the scroll).
+  /// Incremented so `coverPinToken` changes when the user taps "Back to live" even though the
+  /// cover set is unchanged. Only the TV UI still keys on the token (its focus-driven row
+  /// re-scrolls on token change); the phone carousel re-centers from `carousel.selectedID` alone.
   private var returnToLiveNonce = 0
 
   /// Jump the carousel back to the now slot.
   func returnToLive() {
-    selectedCoverID = liveCoverID
+    carousel.returnToLive()
     returnToLiveNonce += 1
-  }
-
-  /// True for a short window while the carousel is being recreated and its fresh layout would
-  /// otherwise report the leftmost (oldest) cover. Two events recreate the carousel:
-  ///   - an orientation change (portrait and landscape host it in different structural slots), and
-  ///   - a background→foreground resume on Android (the activity is destroyed and recreated).
-  /// This lock lives in the view model — which survives both recreations, being a process-wide
-  /// singleton — so the carousel's transient selection write-back can be dropped while set,
-  /// preserving the browsed/live cover.
-  public private(set) var isCarouselRecreating = false
-
-  @ObservationIgnored
-  private var carouselRecreateClearTask: Task<Void, Never>?
-
-  /// The selection to preserve across a carousel recreation, snapshotted when the window opens.
-  /// The recreated carousel sweeps through covers (starting at the leftmost/oldest) before it
-  /// settles on the re-pin target; the window closes only once the carousel reports THIS cover,
-  /// which is the signal that it has settled. See `setSelectionFromCarousel` and issue #44.
-  @ObservationIgnored
-  private var carouselSelectionToPreserve: AnyHashable?
-
-  /// Safety backstop for the recreation window: long enough that the carousel has always settled
-  /// by now. Only closes the window if the settle signal (a write-back matching the preserved
-  /// cover) never arrived, so a stuck flag can't drop later legitimate user scrolls forever. It
-  /// does not touch the selection — while the window is open no non-matching write can land, so
-  /// the preserved cover is already intact.
-  private static let carouselRecreateBackstopNanos: UInt64 = 2_500_000_000
-
-  /// Begin the recreation lock for an orientation change, auto-clearing once the recreated
-  /// carousel has settled.
-  func beginReorientation() {
-    beginCarouselRecreationWindow()
-  }
-
-  /// Begin the recreation lock for a background→foreground transition. The recreated carousel's
-  /// leftmost-cover write-back is dropped for the window, so the persisted selection survives the
-  /// resume — the same protection rotation already had, now covering the resume path too.
-  func beginForegroundTransition() {
-    beginCarouselRecreationWindow()
-  }
-
-  private func beginCarouselRecreationWindow() {
-    isCarouselRecreating = true
-    carouselSelectionToPreserve = selectedCoverID
-    carouselRecreateClearTask?.cancel()
-    carouselRecreateClearTask = Task { @MainActor [weak self] in
-      try? await Task.sleep(nanoseconds: Self.carouselRecreateBackstopNanos)
-      guard let self, self.isCarouselRecreating else { return }
-      // The carousel never reported the preserved cover within the backstop; just close the
-      // window so later legitimate user scrolls aren't dropped. The selection is untouched — no
-      // non-matching write could have landed while the window was open.
-      self.isCarouselRecreating = false
-    }
-  }
-
-  /// Route a carousel-reported selection through the recreation guard.
-  ///
-  /// Normally this just stores the value. But while a recreation is in flight (rotation or a
-  /// background→foreground resume), the freshly-laid-out carousel reports the leftmost (oldest)
-  /// cover repeatedly before its re-pin `.task` scrolls it back to the target. A blind timeout
-  /// guard expires mid-sweep and lets one of those transient reports land, stranding the carousel
-  /// on the oldest cover (issue #44, confirmed on-device). Instead, drop EVERY write that doesn't
-  /// match the cover we preserved when the window opened — however late it arrives — and treat a
-  /// write matching the preserved cover as the "settled" signal that closes the window.
-  func setSelectionFromCarousel(_ newValue: AnyHashable?) {
-    if isCarouselRecreating {
-      guard newValue == carouselSelectionToPreserve else { return }
-      // The carousel has settled back on the preserved cover: accept it and close the window.
-      isCarouselRecreating = false
-      carouselRecreateClearTask?.cancel()
-    }
-    selectedCoverID = newValue
   }
 
   public var station: Station? {
@@ -316,22 +255,36 @@ public final class RadioPlayerViewModel {
     return currentSong?.title ?? station?.shortDesc ?? ""
   }
 
+  /// When the browsed history entry was captured, or `nil` on the live slot (or if the backend
+  /// timestamp doesn't parse — the UI hides its air-time line in both cases).
+  public var focusedEntryDate: Date? {
+    guard let entry = focusedHistoryEntry else { return nil }
+    return Self.timestampParser.date(from: entry.timestamp)
+  }
+
+  private static let timestampParser = ISO8601DateFormatter()
+
   // MARK: - Dependencies
 
   @ObservationIgnored
   private let coordinator: RadioPlayerCoordinator
 
+  /// Canonical carousel selection state. `covers` stays computed (pull-based) and syncs the
+  /// model's cover ids on every build; the public surface (`selectedCoverID`,
+  /// `isBrowsingHistory`, `returnToLive`) is preserved as passthroughs over this model.
+  let carousel = CarouselModel()
+
   // MARK: - Initialization
 
   public init(coordinator: RadioPlayerCoordinator) {
     self.coordinator = coordinator
-    // Start focused on the persistent "now" slot (rightmost).
-    self.selectedCoverID = Self.nowSlotID
+    // The carousel model starts focused on the persistent "now" slot by default.
   }
 
-  /// Token that changes whenever the carousel's content changes — the full ordered list of
-  /// cover ids plus the now-slot artwork. The view re-pins the scroll to the now slot when it
-  /// changes, so the carousel re-centers after history loads or the current artwork swaps in.
+  /// TV ONLY: token that changes whenever the carousel's content changes — the full ordered
+  /// list of cover ids plus the now-slot artwork, and the back-to-live nonce. `TVHistoryRow`
+  /// keys its focus-driven re-scroll on it. The phone/tablet `CoverFlowStrip` doesn't use it:
+  /// it re-derives the centered cover from `carousel.selectedID` on every layout pass.
   var coverPinToken: String {
     let ids = pastEntries.map(\.id).joined(separator: ",")
     let nowURL = coordinator.currentArtwork.flatMap { $0.isDefault ? nil : $0.url } ?? "generic"

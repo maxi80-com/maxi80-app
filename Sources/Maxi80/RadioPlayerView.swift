@@ -41,12 +41,9 @@ public struct RadioPlayerView: View {
         // The branded default background is always dark, so force dark text/controls when
         // it's showing (no artwork color). With artwork, respect the device scheme.
         .environment(\.colorScheme, viewModel.dominantColor == nil ? .dark : colorScheme)
-        // A rotation recreates the CoverFlowView; open a short window where its selection write-back
-        // is dropped so the browsed cover survives the recreation.
-        .onChange(of: isPortrait) { _, _ in viewModel.beginReorientation() }
-        // Returning to the foreground recreates the view tree (esp. the Android activity) the same
-        // way; reconcile playback + guard the carousel. The Android activity's onResume also drives
-        // this via the app delegate, so both entry paths (icon and notification) are covered. #9
+        // Returning to the foreground still needs a playback reconcile (a stale .loading spinner
+        // clears, issue #9). The carousel needs nothing: CoverFlowStrip re-derives the centered
+        // cover from CarouselModel.selectedID, which survives any view/activity recreation.
         .onChange(of: scenePhase) { _, newPhase in
           if newPhase == .active { SharedPlayer.handleForeground() }
         }
@@ -175,6 +172,15 @@ public struct RadioPlayerView: View {
     return max(160, min(320, available))
   }
 
+  /// Hero size for the compact (phone) landscape layout. The old fixed 260pt default filled the
+  /// carousel's whole cell, so the previous/next covers never peeked through. The HStack splits
+  /// the width roughly in half between the strip and the info/controls column; size the hero as
+  /// ~58% of the strip's share (same fraction as the expanded layouts) so ~21% shows on each side.
+  private func compactLandscapeCoverSize(containerWidth: CGFloat) -> CGFloat {
+    let carouselWidth = (containerWidth - expandedHSpacing) / 2
+    return max(160, min(260, carouselWidth * 0.58))
+  }
+
   // MARK: - Portrait Layout
 
   @ViewBuilder
@@ -246,7 +252,7 @@ public struct RadioPlayerView: View {
       .padding(.horizontal, expandedHPadding)
     } else {
       HStack(spacing: 24) {
-        coverFlow()
+        coverFlow(coverSize: compactLandscapeCoverSize(containerWidth: containerWidth))
 
         VStack(spacing: 16) {
           Spacer()
@@ -269,19 +275,8 @@ public struct RadioPlayerView: View {
   /// caller doesn't specify, fall back to a per-idiom default: enlarged on iPad, 260 elsewhere.
   @ViewBuilder
   private func coverFlow(coverSize: CGFloat? = nil) -> some View {
-    CoverFlowView(
-      covers: viewModel.covers,
-      // The carousel reads `selectedCoverID` but writes through the view model, which drops writes
-      // during a rotation so the recreated carousel's leftmost-cover relayout can't lose the
-      // browsed cover.
-      selection: Binding(
-        get: { viewModel.selectedCoverID },
-        set: { viewModel.setSelectionFromCarousel($0) }
-      ),
-      // Pin to the now slot unless the user is browsing history; re-pin whenever the
-      // cover set changes (history loads to the left, shifting the viewport).
-      pinTarget: viewModel.isBrowsingHistory ? nil : viewModel.liveCoverID,
-      pinToken: viewModel.coverPinToken,
+    CoverFlowCarousel(
+      viewModel: viewModel,
       coverSize: coverSize ?? (PlatformEnvironment.isPad ? 380 : 260)
     )
     .accessibilityLabel(

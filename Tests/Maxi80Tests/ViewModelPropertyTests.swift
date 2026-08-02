@@ -42,6 +42,10 @@ struct ViewModelPropertyTests {
           ))
       }
       coordinator.history = entries
+      // Selection writes route through CarouselModel, which only accepts ids present in the
+      // synced cover list; computing `covers` performs that sync (the view does this on every
+      // render pass before any user gesture can settle).
+      _ = vm.covers
       vm.selectedCoverID = entries[index].id
 
       #expect(

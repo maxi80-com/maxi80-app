@@ -100,7 +100,7 @@ public struct TVRadioPlayerView: View {
 
   /// The cover currently in focus — the history cover being browsed, or the live "now" slot
   /// (rightmost) otherwise. Drives the hero art so it tracks the title/artist labels below it.
-  private var heroCoverModel: CoverFlowView.Cover? {
+  private var heroCoverModel: Cover? {
     let covers = viewModel.covers
     if let selectedCoverID = viewModel.selectedCoverID,
       let id = selectedCoverID.base as? String,
@@ -115,7 +115,7 @@ public struct TVRadioPlayerView: View {
   /// keeps the constant id `__now__` while its artwork swaps, so `cover.id` can't be used. Keying on
   /// the artwork (not the song title) makes the crossfade fire when the image changes — the title
   /// updates before the new artwork resolves, so the two are not simultaneous.
-  private func heroKey(_ cover: CoverFlowView.Cover) -> String {
+  private func heroKey(_ cover: Cover) -> String {
     cover.artworkURL ?? cover.assetName ?? cover.id
   }
 
@@ -250,6 +250,21 @@ public struct TVRadioPlayerView: View {
         .foregroundStyle(subtitleColor)
         .lineLimit(2)
         .minimumScaleFactor(0.5)
+      // Air time of the browsed history entry ("Diffusé à 14:30"), so the row below reads as
+      // history. Hidden on the live slot. Locale picks 24h vs AM-PM.
+      // `formatted(date:time:)` and `Bundle.localizedString` (not the `.hour().minute()`
+      // builder / `String(localized:)`) because those are the forms SkipFoundation provides.
+      if let date = viewModel.focusedEntryDate {
+        Text(
+          String(
+            format: Bundle.module.localizedString(forKey: "Played at %@", value: nil, table: nil),
+            date.formatted(date: .omitted, time: .shortened)
+          )
+        )
+        .font(.system(size: airTimeFontSize, weight: .regular))
+        .foregroundStyle(subtitleColor.opacity(0.6))
+        .lineLimit(1)
+      }
     }
     .multilineTextAlignment(alignment == .leading ? .leading : .center)
     .padding(.horizontal, alignment == .leading ? 0 : 80)
@@ -270,6 +285,14 @@ public struct TVRadioPlayerView: View {
       18
     #else
       36
+    #endif
+  }
+
+  private var airTimeFontSize: CGFloat {
+    #if os(Android)
+      14
+    #else
+      28
     #endif
   }
 

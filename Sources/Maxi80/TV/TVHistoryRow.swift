@@ -25,7 +25,7 @@ struct TVHistoryRow: View {
   }
 
   /// Past covers only — the trailing "now" slot from `viewModel.covers` is dropped (it's the hero).
-  private var orderedCovers: [CoverFlowView.Cover] {
+  private var orderedCovers: [Cover] {
     #if os(Android)
       // Reversed (newest first) to pair with the horizontal flip in `body`: the flip maps this
       // leading (newest) edge to the visual RIGHT, so the row shows oldest-left / newest-right and
@@ -39,6 +39,69 @@ struct TVHistoryRow: View {
 
   var body: some View {
     #if os(tvOS)
+      VStack(alignment: .leading, spacing: 4) {
+        // Names what the row IS — without it the covers read as decoration, not history.
+        // Plain Text (non-focusable), so D-pad navigation is unchanged.
+        Text("What was that song?", bundle: .module)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 60)
+        historyScrollView
+      }
+    #elseif os(Android)
+      // Same title-above-row shape as tvOS. The label sits OUTSIDE the mirrored ScrollView
+      // below (which is flipped with `scaleEffect(x: -1)`), so the text renders unmirrored.
+      VStack(alignment: .leading, spacing: 4) {
+        Text("What was that song?", bundle: .module)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 60)
+        // Android: `orderedCovers` is reversed (newest first). Flipping the whole ScrollView
+        // horizontally (`scaleEffect(x: -1)`) makes Compose's leading-edge rest position land on
+        // the visual RIGHT, so the row opens on the newest cover with no `scrollTo` (which the
+        // transpiled ScrollView ignores). Each cell is counter-flipped in `coverThumbnail` so
+        // artwork is not mirrored. Result: oldest at the left, newest at the right, opened on
+        // the right.
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 24) {
+            ForEach(orderedCovers, id: \.id) { cover in
+              coverThumbnail(cover)
+                .id(cover.id)
+            }
+          }
+          .padding(.horizontal, 60)
+        }
+        .scaleEffect(x: -1, y: 1, anchor: .center)
+        // "Back to live" (and a new song) bump `coverPinToken` — but NOT plain browsing. Keying
+        // the ScrollView's identity on it remounts the row on those events, so it rebuilds fresh
+        // and re-rests at its leading edge (= newest = visual right via the flip). This is
+        // deterministic where `scrollTo` isn't: the transpiled Android ScrollView ignores
+        // programmatic scrolls.
+        .id(viewModel.coverPinToken)
+        // As D-pad focus moves across covers, select the focused one so the hero + labels track
+        // it (mirrors tvOS). Moving focus off the row leaves the last selection in place until
+        // the user taps "Back to live".
+        .onChange(of: focusedID) { _, newValue in
+          if let newValue {
+            viewModel.selectedCoverID = newValue
+          }
+        }
+      }
+    #else
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 24) {
+          ForEach(orderedCovers, id: \.id) { cover in
+            coverThumbnail(cover)
+              .id(cover.id)
+          }
+        }
+        .padding(.horizontal, 60)
+      }
+    #endif
+  }
+
+  #if os(tvOS)
+    private var historyScrollView: some View {
       ScrollViewReader { proxy in
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 24) {
@@ -48,6 +111,9 @@ struct TVHistoryRow: View {
             }
           }
           .padding(.horizontal, 60)
+          // Headroom for the focused card's 1.12 scale-up (~11pt per side at 180pt), so the
+          // pop isn't clipped by the ScrollView's bounds.
+          .padding(.vertical, 16)
         }
         // Covers are oldest → newest L→R; open showing the newest (nearest "now") at the trailing
         // edge. `.defaultScrollAnchor` sets the initial offset without an `onAppear`/`scrollTo` race.
@@ -76,56 +142,19 @@ struct TVHistoryRow: View {
           proxy.scrollTo(target, anchor: .trailing)
         }
       }
-    #elseif os(Android)
-      // Android: `orderedCovers` is reversed (newest first). Flipping the whole ScrollView
-      // horizontally (`scaleEffect(x: -1)`) makes Compose's leading-edge rest position land on the
-      // visual RIGHT, so the row opens on the newest cover with no `scrollTo` (which the transpiled
-      // ScrollView ignores). Each cell is counter-flipped in `coverThumbnail` so artwork is not
-      // mirrored. Result: oldest at the left, newest at the right, opened on the right.
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 24) {
-          ForEach(orderedCovers, id: \.id) { cover in
-            coverThumbnail(cover)
-              .id(cover.id)
-          }
-        }
-        .padding(.horizontal, 60)
-      }
-      .scaleEffect(x: -1, y: 1, anchor: .center)
-      // "Back to live" (and a new song) bump `coverPinToken` — but NOT plain browsing. Keying the
-      // ScrollView's identity on it remounts the row on those events, so it rebuilds fresh and
-      // re-rests at its leading edge (= newest = visual right via the flip). This is deterministic
-      // where `scrollTo` isn't: the transpiled Android ScrollView ignores programmatic scrolls.
-      .id(viewModel.coverPinToken)
-      // As D-pad focus moves across covers, select the focused one so the hero + labels track it
-      // (mirrors tvOS). Moving focus off the row leaves the last selection in place until the user
-      // taps "Back to live".
-      .onChange(of: focusedID) { _, newValue in
-        if let newValue {
-          viewModel.selectedCoverID = newValue
-        }
-      }
-    #else
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 24) {
-          ForEach(orderedCovers, id: \.id) { cover in
-            coverThumbnail(cover)
-              .id(cover.id)
-          }
-        }
-        .padding(.horizontal, 60)
-      }
-    #endif
-  }
+    }
+  #endif
 
   @ViewBuilder
-  private func coverThumbnail(_ cover: CoverFlowView.Cover) -> some View {
+  private func coverThumbnail(_ cover: Cover) -> some View {
     #if os(Android)
       // On Android the Button label doesn't inherit the image's `.frame`, so the Coil-backed cover
       // stretches to its intrinsic (non-square) ratio. Constrain + clip the image, then also pin the
       // Button itself to the square so the label can't expand it. ~20% smaller than tvOS to fit.
-      let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
+      // `.fit` + dim backing letterboxes non-square artwork instead of cropping it (mirrors tvOS).
+      let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName, contentMode: .fit)
         .frame(width: 144, height: 144)
+        .background(Color.black.opacity(0.35))
         .clipShape(RoundedRectangle(cornerRadius: 12))
 
       // Counter-flip: the row's ScrollView is mirrored (`scaleEffect(x: -1)`) to rest on the newest
@@ -136,27 +165,43 @@ struct TVHistoryRow: View {
         viewModel.selectedCoverID = cover.id
       } label: {
         image.overlay(
+          // Constant stroke width faded in/out: animating `lineWidth` from 0 makes the border
+          // pop; animating opacity keeps the focus sweep smooth.
           RoundedRectangle(cornerRadius: 12)
-            .stroke(Color.orange, lineWidth: isFocused ? 4 : 0)
+            .stroke(Color.orange, lineWidth: 4)
+            .opacity(isFocused ? 1 : 0)
         )
       }
       .buttonStyle(.plain)
       .frame(width: 144, height: 144)
       .scaleEffect(x: isFocused ? -1.12 : -1, y: isFocused ? 1.12 : 1, anchor: .center)
       .focused($focusedID, equals: cover.id)
-      .animation(.easeInOut(duration: 0.15), value: isFocused)
+      // A slow, fully damped spring: Compose's bring-into-view scroll (which we can't retime —
+      // the transpiled ScrollView owns it) glides for ~0.4s per D-pad step, so the card pop must
+      // be at least that slow or the two motions read as a jerk. No bounce: overshoot on top of
+      // the row glide looks like stutter, not physics.
+      .animation(.spring(response: 0.5, dampingFraction: 1.0), value: isFocused)
     #elseif os(tvOS)
-      let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
-        .frame(width: 180, height: 180)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-
+      // Full artwork, never cropped: `.fit` letterboxes non-square art inside the square cell,
+      // over a dim backing so every cell still reads as the same square card. Focus feedback is a
+      // spring scale of the WHOLE card (a dock-style pop) via the bare style below — not `.card`
+      // (whose motion effect enlarges the image inside the clip, cropping it further) and not
+      // `.plain` (which paints a white platter behind the focused label).
+      let isFocused = focusedID == cover.id
       Button {
         viewModel.selectedCoverID = cover.id
       } label: {
-        image
+        CoverImage(url: cover.artworkURL, assetName: cover.assetName, contentMode: .fit)
+          .frame(width: 180, height: 180)
+          .background(Color.black.opacity(0.35))
+          .clipShape(RoundedRectangle(cornerRadius: 12))
       }
-      .buttonStyle(.card)
+      .buttonStyle(BareButtonStyle())
       .focused($focusedID, equals: cover.id)
+      .scaleEffect(isFocused ? 1.12 : 1.0)
+      .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: 16, y: 8)
+      .zIndex(isFocused ? 1 : 0)
+      .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isFocused)
     #else
       let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
         .frame(width: 180, height: 180)
@@ -171,3 +216,14 @@ struct TVHistoryRow: View {
     #endif
   }
 }
+
+#if os(tvOS)
+  /// Renders exactly the label and nothing else. tvOS's `.plain` style paints a white platter
+  /// behind the focused label (visible as a white halo around letterboxed artwork); the row draws
+  /// its own focus feedback (scale + shadow), so the style must add none of its own.
+  private struct BareButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+      configuration.label
+    }
+  }
+#endif
