@@ -109,15 +109,17 @@ object MediaControllerHolder {
      * placeholder because onAddMediaItems then had no currentMediaItem metadata to carry forward, and
      * no fresh ICY follows a same-song reload to restore it (issue #49). This is the same true-stop
      * semantics StopOnPausePlayer applies to the notification/lock-screen/Auto pause buttons.
+     *
+     * Connects on first use, exactly like play(): playback can be RUNNING with this holder never
+     * having connected — Android Auto starting the stream on a cold start drives the session
+     * directly, no in-app play ever runs. The previous "not connected → just cancel the queued
+     * action" behavior made the first in-app pause after a car cold start a silent no-op (the app
+     * flipped to paused over a still-live stream, and the car icon never changed). Queueing the stop
+     * through runWhenConnected also preserves the old cancel semantics: a stop that lands while a
+     * play is still queued OVERWRITES it, so a late connect stops instead of starting audio.
      */
-    fun stop() {
-        val c = controller
-        if (c != null && c.isConnected) {
-            c.stop()
-        } else {
-            // Not yet connected: cancel any queued play so a late connect doesn't start audio.
-            pendingAction = null
-        }
+    fun stop(context: Context) {
+        runWhenConnected(context.applicationContext) { c -> c.stop() }
     }
 
     private fun runWhenConnected(context: Context, action: (MediaController) -> Unit) {
@@ -198,21 +200,41 @@ object MediaControllerHolder {
  * requires playWhenReady == true). The app's own state is unaffected: the coordinator's listeners are
  * attached to the raw ExoPlayer, not this wrapper, so they still observe the true `STATE_IDLE`.
  *
- * The remap is gated on a NON-EMPTY timeline: `SimpleBasePlayer.State` forbids `STATE_READY` with an
- * empty playlist ("Empty playlist only allowed in STATE_IDLE or STATE_ENDED") and would throw. A
- * genuine idle with a retained media item (after true-stop) is non-empty; cold start and post-teardown
- * are empty and correctly fall through as `STATE_IDLE`. Player errors also fall through so a real
- * failure still surfaces as an error, not a spurious paused-ready.
+ * COLD START (Android Auto with the app closed): the same IDLE→STATE_NONE legacy mapping also made
+ * the car's transport DEAD on a cold connect — the service binds with the player `STATE_IDLE` and an
+ * EMPTY timeline, Auto rendered a stale pause glyph, and taps never reached the session (verified
+ * via on-device logging: zero session callbacks on tap). `SimpleBasePlayer.State` forbids presenting
+ * `STATE_READY` with an empty playlist ("Empty playlist only allowed in STATE_IDLE or STATE_ENDED"),
+ * so the empty case cannot reuse the retained-item remap as-is: instead we present a one-item
+ * PLACEHOLDER playlist (the station stream item, passed in by the service) together with the
+ * READY + paused remap. The real ExoPlayer stays untouched (idle, empty); the placeholder exists
+ * only in the presented state so Auto shows an ENABLED play button. When the play tap then arrives
+ * in `handleSetPlayWhenReady(true)`, the wrapped player is still empty, so the resume path loads the
+ * stream item into it before preparing — the same live-edge connect the in-app play performs.
+ * Player errors always fall through so a real failure still surfaces as an error, not a spurious
+ * paused-ready.
  */
 @OptIn(UnstableApi::class)
-class StopOnPausePlayer(player: Player) : ForwardingSimpleBasePlayer(player) {
+class StopOnPausePlayer(
+    player: Player,
+    private val placeholderItem: MediaItem,
+) : ForwardingSimpleBasePlayer(player) {
     override fun getState(): SimpleBasePlayer.State {
         val state = super.getState()
-        if (state.playbackState == Player.STATE_IDLE &&
-            state.playerError == null &&
-            !state.timeline.isEmpty()
-        ) {
-            return state.buildUpon()
+        if (state.playbackState == Player.STATE_IDLE && state.playerError == null) {
+            val remapped = state.buildUpon()
+            if (state.timeline.isEmpty()) {
+                // Cold start / post-teardown: nothing loaded yet. Present the station item as a
+                // placeholder playlist so the READY remap below is legal and Auto enables play.
+                remapped.setPlaylist(
+                    listOf(
+                        SimpleBasePlayer.MediaItemData.Builder(/* uid = */ placeholderItem.mediaId)
+                            .setMediaItem(placeholderItem)
+                            .build()
+                    )
+                )
+            }
+            return remapped
                 .setPlaybackState(Player.STATE_READY)
                 .setPlayWhenReady(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
                 .build()
@@ -232,6 +254,12 @@ class StopOnPausePlayer(player: Player) : ForwardingSimpleBasePlayer(player) {
         // before playing. (A play that follows an explicit setMediaItem+prepare — the in-app path —
         // is already past STATE_IDLE, so this doesn't double-prepare.)
         if (getPlayer().playbackState == Player.STATE_IDLE) {
+            // Cold start from the car: the presented playlist was the getState() placeholder, but
+            // the real player has nothing loaded — prepare() alone would no-op. Load the stream item
+            // for real before connecting to the live edge.
+            if (getPlayer().mediaItemCount == 0) {
+                getPlayer().setMediaItem(placeholderItem)
+            }
             getPlayer().prepare()
         }
         return super.handleSetPlayWhenReady(true)
@@ -463,7 +491,7 @@ class Maxi80MediaService : MediaLibraryService() {
         // Wrap the shared player so every transport "pause" (notification, lock screen, Android Auto,
         // media button) becomes a true STOP + live-edge reconnect on the next play — matching the
         // in-app button. See StopOnPausePlayer.
-        val player = StopOnPausePlayer(SharedAudioPlayer.shared(applicationContext))
+        val player = StopOnPausePlayer(SharedAudioPlayer.shared(applicationContext), buildStreamItem())
         session = MediaLibrarySession.Builder(this, player, libraryCallback)
             .apply {
                 // Tapping the notification / lock-screen card returns the user to the app — this was

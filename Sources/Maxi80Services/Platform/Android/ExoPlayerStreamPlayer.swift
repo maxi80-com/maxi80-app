@@ -186,6 +186,29 @@ import Foundation
         onPlaybackStateChanged?(true)
       }
 
+      /// Reconcile this wrapper with playback that was started EXTERNALLY through the media session
+      /// (Android Auto auto-resume / car play tap on a cold start), where `androidPlay` never ran:
+      /// adopt the shared ExoPlayer, attach the ICY metadata listener (so song changes reach the
+      /// coordinator), and report whether audio is actually playing right now. Without this the
+      /// app UI opens showing a play button over a live stream — `isPlaying` is a plain flag that
+      /// only `androidPlay`/`androidStop` or an attached listener ever set.
+      func androidSyncWithExternalPlayback() -> Bool {
+        guard let exoPlayer = SharedAudioPlayer.current else { return isPlaying }
+        if _exoPlayer !== exoPlayer {
+          _metadataListener = nil
+        }
+        self._exoPlayer = exoPlayer
+        if _metadataListener == nil {
+          let listener = MetadataPlayerListener(player: self)
+          self._metadataListener = listener
+          exoPlayer.addListener(listener)
+        }
+        // Listener attachment is not retroactive — read the live state for the initial sync;
+        // subsequent transitions flow through the listener callbacks as usual.
+        isPlaying = exoPlayer.isPlaying
+        return isPlaying
+      }
+
       func androidStop() {
         // Live radio: a "stop" must truly STOP, not pause. Route through the MediaController
         // (MediaControllerHolder.stop) so the command flows through the session the same way play
@@ -194,7 +217,9 @@ import Foundation
         // to resume. The next androidPlay() therefore reloads and reconnects to the live edge instead
         // of resuming a now-stale buffer. media3 drops the service out of the foreground (removing the
         // notification) when playback stops. ExoPlayer internally abandons audio focus.
-        MediaControllerHolder.stop()
+        // Connects on first use (context needed): after an Android Auto cold start the stream is
+        // playing without this holder ever having connected, and the stop must still land.
+        MediaControllerHolder.stop(context: context)
 
         // Defensive local-state reconciliation for the released-player case (static player nil, or
         // rebuilt to a DIFFERENT instance by a later shared() call). Not reachable in the current
