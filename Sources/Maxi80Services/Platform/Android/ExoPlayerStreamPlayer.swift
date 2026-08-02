@@ -212,11 +212,13 @@ import Foundation
       func androidStop() {
         // Live radio: a "stop" must truly STOP, not pause. Route through the MediaController
         // (MediaControllerHolder.stop) so the command flows through the session the same way play
-        // does — the holder calls stop() + clearMediaItems() on the controller, halting loading,
-        // releasing the buffer, and dropping the player to STATE_IDLE so there is no retained stream
-        // to resume. The next androidPlay() therefore reloads and reconnects to the live edge instead
-        // of resuming a now-stale buffer. media3 drops the service out of the foreground (removing the
-        // notification) when playback stops. ExoPlayer internally abandons audio focus.
+        // does — the holder calls stop() on the controller, halting loading, releasing the buffer,
+        // and dropping the player to STATE_IDLE so there is no retained stream to resume. It
+        // deliberately does NOT clear the media items (issue #49): the retained item keeps the
+        // notification/lock-screen card visible with the current song's metadata. The next
+        // androidPlay() therefore reloads and reconnects to the live edge instead of resuming a
+        // now-stale buffer. media3 drops the service out of the foreground when playback stops.
+        // ExoPlayer internally abandons audio focus.
         // Connects on first use (context needed): after an Android Auto cold start the stream is
         // playing without this holder ever having connected, and the stop must still land.
         MediaControllerHolder.stop(context: context)
