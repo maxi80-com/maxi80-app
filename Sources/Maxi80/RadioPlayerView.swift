@@ -166,10 +166,19 @@ public struct RadioPlayerView: View {
   /// at `coverSize + 80` tall (its internal vertical margins). Capped at 320 so very tall phones
   /// don't inflate it past a sensible hero, floored at 160 so shorter phones still show a usable
   /// carousel rather than clipping.
-  private func phonePortraitCoverSize(containerHeight: CGFloat) -> CGFloat {
+  ///
+  /// ALSO capped by width: tall-aspect Android phones have enough vertical slack to hit the 320
+  /// height cap, but 320 on a ~411dp-wide screen fills it edge-to-edge and the previous/next
+  /// covers can't peek through. ~62% of the width leaves ~19% per side for the neighbors (same
+  /// idea as the 58% used by the landscape/expanded layouts, slightly roomier because portrait
+  /// has no second column). On iPhones the height term is already the binding cap, so this
+  /// doesn't change the iOS layout.
+  private func phonePortraitCoverSize(
+    containerWidth: CGFloat, containerHeight: CGFloat
+  ) -> CGFloat {
     let heroChrome: CGFloat = 80  // CoverFlowView's verticalMargin * 2
     let available = containerHeight - Self.phonePortraitChromeHeight - heroChrome
-    return max(160, min(320, available))
+    return max(160, min(320, min(available, containerWidth * 0.62)))
   }
 
   /// Hero size for the compact (phone) landscape layout. The old fixed 260pt default filled the
@@ -210,7 +219,9 @@ public struct RadioPlayerView: View {
       // column always fills the screen precisely: nothing clips, and the coverflow (the app's key
       // element) is as large as the device allows.
       VStack(spacing: Self.phonePortraitVSpacing) {
-        coverFlow(coverSize: phonePortraitCoverSize(containerHeight: containerHeight))
+        coverFlow(
+          coverSize: phonePortraitCoverSize(
+            containerWidth: containerWidth, containerHeight: containerHeight))
 
         songLabel()
 
