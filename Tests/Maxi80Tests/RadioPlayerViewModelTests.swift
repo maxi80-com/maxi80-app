@@ -144,6 +144,10 @@ struct RadioPlayerViewModelTests {
     ]
     coordinator.history = entries
     coordinator.currentSong = SongMetadata(artist: "Current", title: "Live Song")
+    // Selection writes route through CarouselModel, which only accepts ids present in the
+    // synced cover list; computing `covers` performs that sync (see
+    // `displayedMetadataSwitchesOnSelection`).
+    _ = vm.covers
 
     vm.selectedCoverID = entries[0].id
     #expect(vm.focusedEntryDate == Date(timeIntervalSince1970: 1_736_951_400))

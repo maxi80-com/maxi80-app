@@ -165,15 +165,22 @@ struct TVHistoryRow: View {
         viewModel.selectedCoverID = cover.id
       } label: {
         image.overlay(
+          // Constant stroke width faded in/out: animating `lineWidth` from 0 makes the border
+          // pop; animating opacity keeps the focus sweep smooth.
           RoundedRectangle(cornerRadius: 12)
-            .stroke(Color.orange, lineWidth: isFocused ? 4 : 0)
+            .stroke(Color.orange, lineWidth: 4)
+            .opacity(isFocused ? 1 : 0)
         )
       }
       .buttonStyle(.plain)
       .frame(width: 144, height: 144)
       .scaleEffect(x: isFocused ? -1.12 : -1, y: isFocused ? 1.12 : 1, anchor: .center)
       .focused($focusedID, equals: cover.id)
-      .animation(.easeInOut(duration: 0.15), value: isFocused)
+      // A slow, fully damped spring: Compose's bring-into-view scroll (which we can't retime —
+      // the transpiled ScrollView owns it) glides for ~0.4s per D-pad step, so the card pop must
+      // be at least that slow or the two motions read as a jerk. No bounce: overshoot on top of
+      // the row glide looks like stutter, not physics.
+      .animation(.spring(response: 0.5, dampingFraction: 1.0), value: isFocused)
     #elseif os(tvOS)
       // Full artwork, never cropped: `.fit` letterboxes non-square art inside the square cell,
       // over a dim backing so every cell still reads as the same square card. Focus feedback is a
