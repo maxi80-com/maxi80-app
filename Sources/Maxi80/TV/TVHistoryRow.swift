@@ -25,7 +25,7 @@ struct TVHistoryRow: View {
   }
 
   /// Past covers only — the trailing "now" slot from `viewModel.covers` is dropped (it's the hero).
-  private var orderedCovers: [CoverFlowView.Cover] {
+  private var orderedCovers: [Cover] {
     #if os(Android)
       // Reversed (newest first) to pair with the horizontal flip in `body`: the flip maps this
       // leading (newest) edge to the visual RIGHT, so the row shows oldest-left / newest-right and
@@ -119,7 +119,7 @@ struct TVHistoryRow: View {
   }
 
   @ViewBuilder
-  private func coverThumbnail(_ cover: CoverFlowView.Cover) -> some View {
+  private func coverThumbnail(_ cover: Cover) -> some View {
     #if os(Android)
       // On Android the Button label doesn't inherit the image's `.frame`, so the Coil-backed cover
       // stretches to its intrinsic (non-square) ratio. Constrain + clip the image, then also pin the

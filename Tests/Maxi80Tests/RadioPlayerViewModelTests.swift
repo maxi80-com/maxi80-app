@@ -110,6 +110,10 @@ struct RadioPlayerViewModelTests {
     ]
     coordinator.history = entries
     coordinator.currentSong = SongMetadata(artist: "Current", title: "Live Song")
+    // Selection writes now route through CarouselModel, which only accepts ids present in the
+    // synced cover list; computing `covers` performs that sync (in the app the view does this
+    // on every render pass before any user gesture can settle).
+    _ = vm.covers
 
     // Select first cover (historical)
     vm.selectedCoverID = entries[0].id
@@ -121,8 +125,10 @@ struct RadioPlayerViewModelTests {
     #expect(vm.displayedArtist == "Second Artist")
     #expect(vm.displayedTitle == "Second Song")
 
-    // Switch to the live (last) cover — falls back to currentSong
-    vm.selectedCoverID = entries[2].id
+    // Switch to the live cover — falls back to currentSong. entries[2] duplicates the current
+    // song, so it is never a past cover (it lives only in the now slot); under the model's
+    // stricter semantics its id would be ignored, so select the now slot directly.
+    vm.selectedCoverID = RadioPlayerViewModel.nowSlotID
     #expect(vm.displayedArtist == "Current")
     #expect(vm.displayedTitle == "Live Song")
   }
