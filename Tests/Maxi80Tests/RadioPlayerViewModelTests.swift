@@ -133,6 +133,28 @@ struct RadioPlayerViewModelTests {
     #expect(vm.displayedTitle == "Live Song")
   }
 
+  @Test("focusedEntryDate is the parsed timestamp when browsing, nil on the live slot")
+  @MainActor
+  func focusedEntryDateFollowsSelection() {
+    let (vm, coordinator) = makeViewModel()
+    let entries = [
+      HistoryEntry(artist: "Past Artist", title: "Past Song", timestamp: "2025-01-15T14:30:00Z"),
+      HistoryEntry(artist: "Broken", title: "Bad Timestamp", timestamp: "not-a-date"),
+      HistoryEntry(artist: "Current", title: "Live Song", timestamp: "2025-01-15T15:00:00Z"),
+    ]
+    coordinator.history = entries
+    coordinator.currentSong = SongMetadata(artist: "Current", title: "Live Song")
+
+    vm.selectedCoverID = entries[0].id
+    #expect(vm.focusedEntryDate == Date(timeIntervalSince1970: 1_736_951_400))
+
+    vm.selectedCoverID = entries[1].id
+    #expect(vm.focusedEntryDate == nil)
+
+    vm.selectedCoverID = RadioPlayerViewModel.nowSlotID
+    #expect(vm.focusedEntryDate == nil)
+  }
+
   @Test("Displayed metadata falls back to station when at live position with no currentSong")
   @MainActor
   func displayedMetadataFallbackAtLivePosition() {

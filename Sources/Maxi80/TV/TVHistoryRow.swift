@@ -39,42 +39,14 @@ struct TVHistoryRow: View {
 
   var body: some View {
     #if os(tvOS)
-      ScrollViewReader { proxy in
-        ScrollView(.horizontal, showsIndicators: false) {
-          HStack(spacing: 24) {
-            ForEach(orderedCovers, id: \.id) { cover in
-              coverThumbnail(cover)
-                .id(cover.id)
-            }
-          }
+      VStack(alignment: .leading, spacing: 4) {
+        // Names what the row IS — without it the covers read as decoration, not history.
+        // Plain Text (non-focusable), so D-pad navigation is unchanged.
+        Text("What was that song?", bundle: .module)
+          .font(.caption)
+          .foregroundStyle(.secondary)
           .padding(.horizontal, 60)
-        }
-        // Covers are oldest → newest L→R; open showing the newest (nearest "now") at the trailing
-        // edge. `.defaultScrollAnchor` sets the initial offset without an `onAppear`/`scrollTo` race.
-        .defaultScrollAnchor(.trailing)
-        // `.focusSection()` makes the whole row one focus target: a D-pad *up* from ANY cover
-        // routes to the control section above (and *down* returns here), instead of tvOS's
-        // geometric default where only the covers directly beneath the play button can move up.
-        .focusSection()
-        // Focusing a history cover selects it (updating the hero + labels). Leaving the row
-        // (moving up to the controls) must NOT reset to live — otherwise `isBrowsingHistory`
-        // flips false and the "Back to live" pill disappears before it can be reached. The
-        // selection persists until the user explicitly taps "Back to live".
-        .onChange(of: focusedID) { _, newValue in
-          if let newValue {
-            viewModel.selectedCoverID = newValue
-          }
-        }
-        // Re-pin the row to the newest (rightmost) cover, matching the phone's Cover Flow: key
-        // on `coverPinToken` (which folds in `returnToLiveNonce`, so tapping "Back to live"
-        // re-fires this) and, while not browsing, jump to the newest cover. Non-animated after a
-        // short settle — an animated scrollTo sweeps the row through intermediate cells and
-        // cancels their AsyncImage loads, leaving older covers stuck on placeholders.
-        .task(id: viewModel.coverPinToken) {
-          guard !viewModel.isBrowsingHistory, let target = orderedCovers.last?.id else { return }
-          try? await Task.sleep(nanoseconds: 60_000_000)
-          proxy.scrollTo(target, anchor: .trailing)
-        }
+        historyScrollView
       }
     #elseif os(Android)
       // Android: `orderedCovers` is reversed (newest first). Flipping the whole ScrollView
@@ -118,6 +90,51 @@ struct TVHistoryRow: View {
     #endif
   }
 
+  #if os(tvOS)
+    private var historyScrollView: some View {
+      ScrollViewReader { proxy in
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 24) {
+            ForEach(orderedCovers, id: \.id) { cover in
+              coverThumbnail(cover)
+                .id(cover.id)
+            }
+          }
+          .padding(.horizontal, 60)
+          // Headroom for the focused card's 1.12 scale-up (~11pt per side at 180pt), so the
+          // pop isn't clipped by the ScrollView's bounds.
+          .padding(.vertical, 16)
+        }
+        // Covers are oldest → newest L→R; open showing the newest (nearest "now") at the trailing
+        // edge. `.defaultScrollAnchor` sets the initial offset without an `onAppear`/`scrollTo` race.
+        .defaultScrollAnchor(.trailing)
+        // `.focusSection()` makes the whole row one focus target: a D-pad *up* from ANY cover
+        // routes to the control section above (and *down* returns here), instead of tvOS's
+        // geometric default where only the covers directly beneath the play button can move up.
+        .focusSection()
+        // Focusing a history cover selects it (updating the hero + labels). Leaving the row
+        // (moving up to the controls) must NOT reset to live — otherwise `isBrowsingHistory`
+        // flips false and the "Back to live" pill disappears before it can be reached. The
+        // selection persists until the user explicitly taps "Back to live".
+        .onChange(of: focusedID) { _, newValue in
+          if let newValue {
+            viewModel.selectedCoverID = newValue
+          }
+        }
+        // Re-pin the row to the newest (rightmost) cover, matching the phone's Cover Flow: key
+        // on `coverPinToken` (which folds in `returnToLiveNonce`, so tapping "Back to live"
+        // re-fires this) and, while not browsing, jump to the newest cover. Non-animated after a
+        // short settle — an animated scrollTo sweeps the row through intermediate cells and
+        // cancels their AsyncImage loads, leaving older covers stuck on placeholders.
+        .task(id: viewModel.coverPinToken) {
+          guard !viewModel.isBrowsingHistory, let target = orderedCovers.last?.id else { return }
+          try? await Task.sleep(nanoseconds: 60_000_000)
+          proxy.scrollTo(target, anchor: .trailing)
+        }
+      }
+    }
+  #endif
+
   @ViewBuilder
   private func coverThumbnail(_ cover: Cover) -> some View {
     #if os(Android)
@@ -146,17 +163,26 @@ struct TVHistoryRow: View {
       .focused($focusedID, equals: cover.id)
       .animation(.easeInOut(duration: 0.15), value: isFocused)
     #elseif os(tvOS)
-      let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
-        .frame(width: 180, height: 180)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-
+      // Full artwork, never cropped: `.fit` letterboxes non-square art inside the square cell,
+      // over a dim backing so every cell still reads as the same square card. Focus feedback is a
+      // spring scale of the WHOLE card (a dock-style pop) via the bare style below — not `.card`
+      // (whose motion effect enlarges the image inside the clip, cropping it further) and not
+      // `.plain` (which paints a white platter behind the focused label).
+      let isFocused = focusedID == cover.id
       Button {
         viewModel.selectedCoverID = cover.id
       } label: {
-        image
+        CoverImage(url: cover.artworkURL, assetName: cover.assetName, contentMode: .fit)
+          .frame(width: 180, height: 180)
+          .background(Color.black.opacity(0.35))
+          .clipShape(RoundedRectangle(cornerRadius: 12))
       }
-      .buttonStyle(.card)
+      .buttonStyle(BareButtonStyle())
       .focused($focusedID, equals: cover.id)
+      .scaleEffect(isFocused ? 1.12 : 1.0)
+      .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: 16, y: 8)
+      .zIndex(isFocused ? 1 : 0)
+      .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isFocused)
     #else
       let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
         .frame(width: 180, height: 180)
@@ -171,3 +197,14 @@ struct TVHistoryRow: View {
     #endif
   }
 }
+
+#if os(tvOS)
+  /// Renders exactly the label and nothing else. tvOS's `.plain` style paints a white platter
+  /// behind the focused label (visible as a white halo around letterboxed artwork); the row draws
+  /// its own focus feedback (scale + shadow), so the style must add none of its own.
+  private struct BareButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+      configuration.label
+    }
+  }
+#endif

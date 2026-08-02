@@ -242,6 +242,15 @@ public final class RadioPlayerViewModel {
     return currentSong?.title ?? station?.shortDesc ?? ""
   }
 
+  /// When the browsed history entry was captured, or `nil` on the live slot (or if the backend
+  /// timestamp doesn't parse — the UI hides its air-time line in both cases).
+  public var focusedEntryDate: Date? {
+    guard let entry = focusedHistoryEntry else { return nil }
+    return Self.timestampParser.date(from: entry.timestamp)
+  }
+
+  private static let timestampParser = ISO8601DateFormatter()
+
   // MARK: - Dependencies
 
   @ObservationIgnored
