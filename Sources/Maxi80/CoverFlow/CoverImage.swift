@@ -10,17 +10,20 @@ import SwiftUI
 struct CoverImage: View {
   var url: String? = nil
   var assetName: String? = nil
+  /// `.fill` crops non-square artwork to the frame (the phone Cover Flow look). The TV history
+  /// rows pass `.fit` so the full artwork is always visible, letterboxed inside its square cell.
+  var contentMode: ContentMode = .fill
 
   var body: some View {
     if let url, let imageURL = URL(string: url) {
       #if canImport(UIKit) || canImport(AppKit)
         if let cached = CoverImageCache.shared.image(for: url) {
-          cached.resizable().scaledToFill()
+          cached.resizable().aspectRatio(contentMode: contentMode)
         } else {
           AsyncImage(url: imageURL) { phase in
             switch phase {
             case .success(let image):
-              image.resizable().scaledToFill()
+              image.resizable().aspectRatio(contentMode: contentMode)
                 // Cache the SwiftUI Image keyed by URL so the next appearance is instant.
                 .task(id: url) { CoverImageCache.shared.store(image, for: url) }
             case .empty:
@@ -36,7 +39,7 @@ struct CoverImage: View {
         AsyncImage(url: imageURL) { phase in
           switch phase {
           case .success(let image):
-            image.resizable().scaledToFill()
+            image.resizable().aspectRatio(contentMode: contentMode)
           case .empty:
             placeholder.overlay { ProgressView().tint(.white) }
           case .failure:
