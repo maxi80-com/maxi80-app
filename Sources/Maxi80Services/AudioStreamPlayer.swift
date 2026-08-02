@@ -66,6 +66,20 @@ import Foundation
       #endif
     }
 
+    /// Reconcile with playback started EXTERNALLY through the platform media session — e.g.
+    /// Android Auto auto-resuming or the car's play button on a cold start, where `play(url:)`
+    /// never ran in this process. On Android this adopts the shared ExoPlayer, attaches the ICY
+    /// metadata listener, and refreshes `isPlaying` from the real player; returns whether audio is
+    /// actually playing. On Apple platforms external transport always routes through
+    /// MPRemoteCommandCenter into `play(url:)`, so there is nothing to adopt — returns `isPlaying`.
+    public func syncWithExternalPlayback() -> Bool {
+      #if SKIP
+        return androidSyncWithExternalPlayback()
+      #else
+        return isPlaying
+      #endif
+    }
+
     /// Stop streaming and release resources.
     /// Implementation provided by platform extension files.
     public func stop() {

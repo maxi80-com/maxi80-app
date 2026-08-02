@@ -216,8 +216,14 @@ public final class RadioPlayerCoordinator {
   /// means playback was started externally (e.g. Android Auto / the car auto-resuming) while the
   /// app was in the background — the button must reflect that on return (issue #41). It never
   /// fabricates playback from a stopped player (the `guard`), so a genuine user pause is untouched.
+  ///
+  /// `syncWithExternalPlayback()` (not the plain `isPlaying` flag) is the ground truth here: when
+  /// Android Auto starts playback on a COLD start — the service session drives the shared ExoPlayer
+  /// directly and `play(url:)` never runs in this process — the flag is stale-false and the ICY
+  /// metadata listener was never attached. The sync adopts the running player, attaches the
+  /// listener (so song metadata starts flowing), and returns whether audio is really playing.
   public func reconcileWithPlayer() {
-    guard player.isPlaying else { return }
+    guard player.syncWithExternalPlayback() else { return }
     switch playbackState {
     case .playing:
       break
