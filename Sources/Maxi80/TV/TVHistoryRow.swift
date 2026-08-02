@@ -49,32 +49,42 @@ struct TVHistoryRow: View {
         historyScrollView
       }
     #elseif os(Android)
-      // Android: `orderedCovers` is reversed (newest first). Flipping the whole ScrollView
-      // horizontally (`scaleEffect(x: -1)`) makes Compose's leading-edge rest position land on the
-      // visual RIGHT, so the row opens on the newest cover with no `scrollTo` (which the transpiled
-      // ScrollView ignores). Each cell is counter-flipped in `coverThumbnail` so artwork is not
-      // mirrored. Result: oldest at the left, newest at the right, opened on the right.
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 24) {
-          ForEach(orderedCovers, id: \.id) { cover in
-            coverThumbnail(cover)
-              .id(cover.id)
+      // Same title-above-row shape as tvOS. The label sits OUTSIDE the mirrored ScrollView
+      // below (which is flipped with `scaleEffect(x: -1)`), so the text renders unmirrored.
+      VStack(alignment: .leading, spacing: 4) {
+        Text("What was that song?", bundle: .module)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 60)
+        // Android: `orderedCovers` is reversed (newest first). Flipping the whole ScrollView
+        // horizontally (`scaleEffect(x: -1)`) makes Compose's leading-edge rest position land on
+        // the visual RIGHT, so the row opens on the newest cover with no `scrollTo` (which the
+        // transpiled ScrollView ignores). Each cell is counter-flipped in `coverThumbnail` so
+        // artwork is not mirrored. Result: oldest at the left, newest at the right, opened on
+        // the right.
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 24) {
+            ForEach(orderedCovers, id: \.id) { cover in
+              coverThumbnail(cover)
+                .id(cover.id)
+            }
           }
+          .padding(.horizontal, 60)
         }
-        .padding(.horizontal, 60)
-      }
-      .scaleEffect(x: -1, y: 1, anchor: .center)
-      // "Back to live" (and a new song) bump `coverPinToken` — but NOT plain browsing. Keying the
-      // ScrollView's identity on it remounts the row on those events, so it rebuilds fresh and
-      // re-rests at its leading edge (= newest = visual right via the flip). This is deterministic
-      // where `scrollTo` isn't: the transpiled Android ScrollView ignores programmatic scrolls.
-      .id(viewModel.coverPinToken)
-      // As D-pad focus moves across covers, select the focused one so the hero + labels track it
-      // (mirrors tvOS). Moving focus off the row leaves the last selection in place until the user
-      // taps "Back to live".
-      .onChange(of: focusedID) { _, newValue in
-        if let newValue {
-          viewModel.selectedCoverID = newValue
+        .scaleEffect(x: -1, y: 1, anchor: .center)
+        // "Back to live" (and a new song) bump `coverPinToken` — but NOT plain browsing. Keying
+        // the ScrollView's identity on it remounts the row on those events, so it rebuilds fresh
+        // and re-rests at its leading edge (= newest = visual right via the flip). This is
+        // deterministic where `scrollTo` isn't: the transpiled Android ScrollView ignores
+        // programmatic scrolls.
+        .id(viewModel.coverPinToken)
+        // As D-pad focus moves across covers, select the focused one so the hero + labels track
+        // it (mirrors tvOS). Moving focus off the row leaves the last selection in place until
+        // the user taps "Back to live".
+        .onChange(of: focusedID) { _, newValue in
+          if let newValue {
+            viewModel.selectedCoverID = newValue
+          }
         }
       }
     #else
@@ -141,8 +151,10 @@ struct TVHistoryRow: View {
       // On Android the Button label doesn't inherit the image's `.frame`, so the Coil-backed cover
       // stretches to its intrinsic (non-square) ratio. Constrain + clip the image, then also pin the
       // Button itself to the square so the label can't expand it. ~20% smaller than tvOS to fit.
-      let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName)
+      // `.fit` + dim backing letterboxes non-square artwork instead of cropping it (mirrors tvOS).
+      let image = CoverImage(url: cover.artworkURL, assetName: cover.assetName, contentMode: .fit)
         .frame(width: 144, height: 144)
+        .background(Color.black.opacity(0.35))
         .clipShape(RoundedRectangle(cornerRadius: 12))
 
       // Counter-flip: the row's ScrollView is mirrored (`scaleEffect(x: -1)`) to rest on the newest

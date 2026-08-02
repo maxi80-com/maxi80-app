@@ -250,21 +250,21 @@ public struct TVRadioPlayerView: View {
         .foregroundStyle(subtitleColor)
         .lineLimit(2)
         .minimumScaleFactor(0.5)
-      #if os(tvOS)
-        // Air time of the browsed history entry ("Diffusé à 14:30"), so the row below reads as
-        // history. Hidden on the live slot. Locale picks 24h vs AM-PM.
-        if let date = viewModel.focusedEntryDate {
-          Text(
-            String(
-              format: String(localized: "Played at %@", bundle: .module),
-              date.formatted(Date.FormatStyle().hour().minute())
-            )
+      // Air time of the browsed history entry ("Diffusé à 14:30"), so the row below reads as
+      // history. Hidden on the live slot. Locale picks 24h vs AM-PM.
+      // `formatted(date:time:)` and `Bundle.localizedString` (not the `.hour().minute()`
+      // builder / `String(localized:)`) because those are the forms SkipFoundation provides.
+      if let date = viewModel.focusedEntryDate {
+        Text(
+          String(
+            format: Bundle.module.localizedString(forKey: "Played at %@", value: nil, table: nil),
+            date.formatted(date: .omitted, time: .shortened)
           )
-          .font(.system(size: airTimeFontSize, weight: .regular))
-          .foregroundStyle(subtitleColor.opacity(0.6))
-          .lineLimit(1)
-        }
-      #endif
+        )
+        .font(.system(size: airTimeFontSize, weight: .regular))
+        .foregroundStyle(subtitleColor.opacity(0.6))
+        .lineLimit(1)
+      }
     }
     .multilineTextAlignment(alignment == .leading ? .leading : .center)
     .padding(.horizontal, alignment == .leading ? 0 : 80)
@@ -288,9 +288,13 @@ public struct TVRadioPlayerView: View {
     #endif
   }
 
-  #if os(tvOS)
-    private var airTimeFontSize: CGFloat { 28 }
-  #endif
+  private var airTimeFontSize: CGFloat {
+    #if os(Android)
+      14
+    #else
+      28
+    #endif
+  }
 
   @ViewBuilder
   private func playButton() -> some View {
