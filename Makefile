@@ -634,15 +634,5 @@ start-android-auto: ## Launch the Android Auto Desktop Head Unit (DHU) against a
 			echo "Install 'Android Auto Desktop Head Unit Emulator' via Android Studio → SDK Manager → SDK Tools"; \
 			exit 1; \
 	fi; \
-	echo "==> forwarding tcp:5277"; \
-	adb forward tcp:5277 tcp:5277; \
-			echo "Install 'Android Auto Desktop Head Unit Emulator' via Android Studio → SDK Manager → SDK Tools"; \
-			exit 1; \
-	fi; \
-	echo "==> forwarding tcp:5277"; \
-	adb forward tcp:5277 tcp:5277; \
-	echo "==> launching DHU (close the DHU window to stop)"; \
-	"$$DHU"
-	adb forward tcp:5277 tcp:5277; \
-	echo "==> launching DHU (close the DHU window to stop)"; \
-	"$$DHU"
+	echo "==> launching DHU over USB (close the DHU window to stop)"; \
+	"$$DHU" -u
