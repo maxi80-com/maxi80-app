@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // CGFloat lives in CoreGraphics on Apple platforms but in Foundation on the Android Swift
 // SDK, where CoreGraphics does not exist.
@@ -8,12 +9,13 @@ import Foundation
 
 /// Pure slot/snap/fan math for the state-driven Cover Flow renderer.
 ///
-/// Lives outside SwiftUI so every number the renderer draws — offsets, scales, tilts,
-/// snap targets, rubber-band resistance — is deterministic and unit-testable. The
-/// renderer contributes no geometry of its own; it only evaluates these functions
-/// against `(index, anchorIndex, dragTranslation)`, which is what makes insertion and
-/// rotation drift structurally impossible (see CarouselGeometryTests for the
-/// left-insertion invariance proof).
+/// Every number the renderer draws — offsets, scales, tilts, snap targets, rubber-band
+/// resistance, inertial coast reach and duration — is a deterministic, unit-testable
+/// function here rather than SwiftUI state. The renderer contributes no geometry of its
+/// own; it only evaluates these functions against `(index, anchorIndex, dragTranslation)`,
+/// which is what makes insertion and rotation drift structurally impossible (see
+/// CarouselGeometryTests for the left-insertion invariance proof). The lone SwiftUI touch
+/// is `coastAnimation`, which wraps the pure `coastDuration` in an ease-out curve.
 public struct CarouselGeometry: Sendable, Equatable {
   /// Rendered edge length of a cover cell.
   public var coverSize: CGFloat
@@ -120,6 +122,54 @@ public struct CarouselGeometry: Sendable, Equatable {
     let effectiveAnchor = CGFloat(anchorIndex) - predictedEndTranslation / slotWidth
     let nearest = Int((effectiveAnchor).rounded())
     return min(max(nearest, 0), coverCount - 1)
+  }
+
+  /// Seconds-equivalent factor turning release velocity (points/sec) into coast distance
+  /// (points), i.e. the standard exponential-deceleration approximation UIScrollView /
+  /// Compose fling physics use: a faster flick throws proportionally farther. Named tunable;
+  /// feel-driven, expected to want one on-device pass (A07 phone + Android Auto DHU).
+  public static let decelerationRate: CGFloat = 0.35
+
+  /// Where the strip would come to rest if its release velocity decelerated to zero:
+  /// the raw finger translation plus a velocity-scaled throw. Fed to `snapTarget` in place
+  /// of the platform's `predictedEndTranslation`, which is the whole point — Android's
+  /// prediction carries no velocity, so a self-computed projection is what gives every
+  /// platform the same velocity-scaled reach. Monotonic in `velocity`; at `velocity == 0`
+  /// it is exactly `translation`, so a slow drag lands identically to the pre-inertia
+  /// behavior.
+  public func projectedTranslation(translation: CGFloat, velocity: CGFloat) -> CGFloat {
+    translation + velocity * Self.decelerationRate
+  }
+
+  /// Base coast duration (seconds) for a settle that travels a fraction of one slot — the
+  /// snappy floor a near move keeps.
+  public static let coastBaseDuration: Double = 0.28
+  /// Extra coast seconds added per slot traversed, so farther throws visibly take longer to
+  /// ease to rest (the "flywheel spinning down" sensation).
+  public static let coastPerSlotDuration: Double = 0.09
+  /// Slot count past which extra duration stops accruing; beyond it the curve is at its
+  /// longest so a huge flick never coasts absurdly long.
+  public static let coastSlotCap: Double = 7
+  /// Hard ceiling on coast duration (seconds), independent of the per-slot arithmetic.
+  public static let coastMaxDuration: Double = 0.9
+
+  /// Coast duration (seconds) for a settle spanning `slots` slots: `base + perSlot *
+  /// min(slots, cap)`, clamped to `coastMaxDuration`. Monotonically non-decreasing in
+  /// `slots` and capped — a near move stays snappy while a far throw eases in over a longer
+  /// glide. Pure so it can be pinned by tests; `coastAnimation` wraps it in the ease-out
+  /// curve the renderer applies.
+  public func coastDuration(slots: Int) -> Double {
+    let bounded = min(Double(abs(slots)), Self.coastSlotCap)
+    let raw = Self.coastBaseDuration + Self.coastPerSlotDuration * bounded
+    return min(raw, Self.coastMaxDuration)
+  }
+
+  /// Ease-out coast curve whose duration scales with the `slots` traversed. Every
+  /// intermediate cover flips through center over this single decelerating offset animation,
+  /// reproducing the old ScrollView flywheel without a per-frame physics driver. Ease-out so
+  /// the strip arrives gently pinned rather than snapping to a halt.
+  public func coastAnimation(slots: Int) -> Animation {
+    .easeOut(duration: coastDuration(slots: slots))
   }
 
   /// Fraction of the overshoot that survives rubber-banding. Linear resistance keeps

@@ -25,6 +25,28 @@ struct CoverFlowStrip: View {
   /// on a bridged view type.
   @State var dragTranslation: CGFloat = 0
 
+  /// Recent drag samples, oldest → newest, used to compute release velocity ourselves
+  /// rather than trusting the platform's `predictedEndTranslation` (Android carries no
+  /// velocity in it — that is the inertia defect this replaces). A short fixed-capacity ring:
+  /// each `.onChanged` appends and drops the front past `velocitySampleCapacity`, `.onEnded`
+  /// reads the ~`velocityWindow`-second tail, and release clears it. Internal (not private)
+  /// per the Skip bridge rule for `@State` on a bridged view type.
+  @State var dragSamples: [DragSample] = []
+
+  /// One timestamped finger position for velocity estimation. `Date()` ticks sub-frame on
+  /// both platforms (unrelated to the workflow-script `Date.now()` restriction).
+  struct DragSample {
+    let translation: CGFloat
+    let time: Date
+  }
+
+  /// Ring-buffer depth: enough to span the velocity window at Compose's sparser `onChanged`
+  /// cadence without unbounded growth on a long slow drag.
+  private static let velocitySampleCapacity = 12
+  /// Trailing window (seconds) over which release velocity is measured. Short enough to
+  /// reflect the fingertip's final motion, long enough to survive sparse sample delivery.
+  private static let velocityWindow: TimeInterval = 0.1
+
   /// Vertical breathing room so the cover's drop shadow is never clipped into a hard edge.
   private let verticalMargin: CGFloat = 40
 
@@ -196,31 +218,69 @@ struct CoverFlowStrip: View {
 
   #if !os(tvOS)
     /// Whole-strip drag. `minimumDistance: 10` lets cell taps pass through. Finger tracking
-    /// writes through a transaction with animations disabled so it is 1:1, never animated.
-    /// On release, ONE `withAnimation` block zeroes the translation and (if the snap target
-    /// differs) reports the settle — a single spring from wherever the finger left the
-    /// strip, so there is no recoil (R2).
+    /// writes through a transaction with animations disabled so it is 1:1, never animated,
+    /// while each move is timestamped into `dragSamples` for release-velocity estimation.
+    ///
+    /// On release we project a coast target from our own velocity (not the platform's
+    /// velocity-free `predictedEndTranslation`) and settle with ONE `withAnimation` block
+    /// that zeroes the translation and (if the target differs) reports the settle. A flick
+    /// that coasts more than a neighbor rides the distance-scaled ease-out coast curve for
+    /// the flywheel feel; a small drag or tap keeps the snappy `settleSpring`. Either way it
+    /// is a single animation from wherever the finger left the strip, so there is no recoil.
     private func dragGesture(geometry: CarouselGeometry, anchorIndex: Int) -> some Gesture {
       DragGesture(minimumDistance: 10)
         .onChanged { value in
-          setDragTranslationUnanimated(
-            geometry.rubberBanded(
-              translation: value.translation.width,
-              anchorIndex: anchorIndex,
-              coverCount: covers.count))
+          let translation = geometry.rubberBanded(
+            translation: value.translation.width,
+            anchorIndex: anchorIndex,
+            coverCount: covers.count)
+          appendDragSample(translation: translation)
+          setDragTranslationUnanimated(translation)
         }
         .onEnded { value in
+          let velocity = releaseVelocity(latest: value.translation.width)
+          dragSamples.removeAll()
+          let projected = geometry.projectedTranslation(
+            translation: value.translation.width, velocity: velocity)
           let target = geometry.snapTarget(
             anchorIndex: anchorIndex,
-            predictedEndTranslation: value.predictedEndTranslation.width,
+            predictedEndTranslation: projected,
             coverCount: covers.count)
-          withAnimation(Self.settleSpring) {
+          // Flick vs. small drag: a target more than one slot away rode real momentum, so it
+          // gets the distance-scaled coast; everything else keeps the snappy settle spring.
+          let slots = abs(target - anchorIndex)
+          let animation = slots > 1
+            ? geometry.coastAnimation(slots: slots) : Self.settleSpring
+          withAnimation(animation) {
             dragTranslation = 0
             if target != anchorIndex, covers.indices.contains(target) {
               onSettled(AnyHashable(covers[target].id))
             }
           }
         }
+    }
+
+    /// Append a timestamped drag sample, dropping the oldest once the ring is full so the
+    /// buffer stays bounded on a long slow drag.
+    private func appendDragSample(translation: CGFloat) {
+      dragSamples.append(DragSample(translation: translation, time: Date()))
+      if dragSamples.count > Self.velocitySampleCapacity {
+        dragSamples.removeFirst(dragSamples.count - Self.velocitySampleCapacity)
+      }
+    }
+
+    /// Release velocity in points/sec over the most recent `velocityWindow`, computed as
+    /// Δtranslation / Δt between the oldest in-window sample and now. `latest` is the final
+    /// `onEnded` translation, timestamped now so the estimate reflects the fingertip's last
+    /// motion even when Compose delivered no `onChanged` for it. Falls back to `0` when there
+    /// are too few samples or Δt ≈ 0 (a hold-then-lift, which should not coast).
+    private func releaseVelocity(latest: CGFloat) -> CGFloat {
+      let now = Date()
+      let recent = dragSamples.filter { now.timeIntervalSince($0.time) <= Self.velocityWindow }
+      guard let oldest = recent.first else { return 0 }
+      let dt = now.timeIntervalSince(oldest.time)
+      guard dt > 0.0001 else { return 0 }
+      return (latest - oldest.translation) / CGFloat(dt)
     }
   #endif
 
