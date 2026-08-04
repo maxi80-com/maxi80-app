@@ -17,6 +17,51 @@ public struct RadioPlayerView: View {
   // Internal, not private: Skip's bridge requires @State properties to be non-private.
   @State var showSleepTimerSheet = false
 
+  // Android background wash (see `dynamicBackground`): two persistent ping-pong layers.
+  // The flash-proofing rule, distilled from repeated on-device measurement: a layer's COLOR
+  // may only be written while that layer's opacity is exactly 0 (Compose can render new
+  // gradient content a frame before an opacity change that should hide it — so any color
+  // write on a visible layer can flash), and visible opacities may only ever be ANIMATED,
+  // never jumped. At rest one layer is front (fade 1) and one is back (fade 0); a color
+  // change writes the back layer (invisible → safe), then one crossfade animates front→0,
+  // back→1 — direct old→new dissolve, no dip through the brand background. Unused on Apple
+  // platforms, which keep the native `.animation` gradient interpolation (never flashed).
+  // Internal per the Skip bridge rule for `@State`.
+  @State var washAColor: Color?
+  @State var washBColor: Color?
+  @State var washAFade: Double = 0
+  @State var washBFade: Double = 0
+  /// Android text-contrast fade: 0 = light (white) text, 1 = dark text. Animated inside the
+  /// wash driver's `withAnimation` so the glyph color dissolves in lockstep with the
+  /// background wash it must contrast against (see `contrastFadingText`).
+  @State var textDarkFade: Double = 0
+
+  /// The contrast fade handed to the utility tray so its icons dissolve in the same
+  /// transaction as the song label. Apple platforms pass 0 (unused there — the tray keeps
+  /// semantic `.secondary`).
+  private var playbackControlsContrastFade: Double {
+    #if os(Android)
+      textDarkFade
+    #else
+      0
+    #endif
+  }
+
+  /// In-flight deferred crossfade (see the `onChange(of: dominantColorKey)` driver) plus the
+  /// driver's non-rendering bookkeeping: which layer is front, and when the running crossfade
+  /// ends (a new color must not be written to a layer still animating toward 0 — its RENDERED
+  /// opacity is nonzero even though its @State target is 0). A reference box, not observable
+  /// state — none of it affects rendering, and a new change must cancel/supersede a pending
+  /// one without invalidating the view.
+  @State var washDriver = WashDriver()
+
+  /// Plain (non-observable) holder for the wash driver's task + bookkeeping.
+  final class WashDriver {
+    var task: Task<Void, Never>?
+    var frontIsA = false
+    var settleUntil = Date.distantPast
+  }
+
   public init(viewModel: RadioPlayerViewModel) {
     self.viewModel = viewModel
   }
@@ -47,6 +92,69 @@ public struct RadioPlayerView: View {
         .onChange(of: scenePhase) { _, newPhase in
           if newPhase == .active { SharedPlayer.handleForeground() }
         }
+        // Background crossfade driver. Lives HERE, not inside `.background {}`: on
+        // SkipUI/Android, onAppear/onChange attached to background content never fire (the
+        // wash silently stayed on the brand layer — measured on the A07), while this level
+        // provably works (see scenePhase above). Rolls the double buffer and animates the
+        // fade; `dynamicBackground` below is purely presentational.
+        // Android wash driver: ping-pong crossfade (see the `washAColor` block for the
+        // flash-proofing rules). All writes happen inside the task, in a quiet frame — this
+        // onChange fires inside the display-sync recomposition storm, which stalls rendering
+        // ~300ms on the A07 and would swallow a fade started here. Rapid changes queue
+        // behind the running crossfade's settle window rather than tearing it: a layer that
+        // is still animating toward 0 has nonzero RENDERED opacity even though its @State
+        // target is 0, so writing a color to it early would flash. A newer change cancels
+        // and supersedes a pending one. Apple platforms need none of this: their native
+        // `.animation` in `dynamicBackground` interpolates the gradient directly.
+        #if os(Android)
+          .onAppear {
+            washBColor = viewModel.dominantColor
+            washBFade = washBColor == nil ? 0 : 1
+            washDriver.frontIsA = false
+            textDarkFade = viewModel.isBackgroundDark ? 0 : 1
+          }
+          .onChange(of: dominantColorKey) { _, _ in
+            let newColor = viewModel.dominantColor
+            washDriver.task?.cancel()
+            washDriver.task = Task { @MainActor in
+              // Only wait if a crossfade is still settling: a layer animating toward 0 has
+              // nonzero RENDERED opacity, and rewriting its color while visible can flash.
+              // Otherwise start immediately — the song label swaps its text+color in this
+              // same update, and any dead time here shows final-contrast text on the OLD
+              // wash (reported as "text appears in the wrong color, then fades").
+              let remaining = washDriver.settleUntil.timeIntervalSinceNow
+              if remaining > 0 {
+                try? await Task.sleep(for: .seconds(remaining))
+              }
+              guard !Task.isCancelled else { return }
+              // One plain commit: color to the INVISIBLE back layer + retarget the fades.
+              // The layers' implicit `.animation(_, value:)` (see `dynamicBackground`)
+              // tweens the opacities Compose-side, starting when the next frame renders —
+              // immune to the recomposition-storm wall-clock loss that `withAnimation`
+              // suffered here (the reason this driver used to defer 120ms). The back layer
+              // fades up FROM 0, so its fresh color first renders invisible: no flash.
+              // A nil color is the generic/live slot: fade the incoming layer to 0 so BOTH
+              // the wash and the neutral base clear, revealing the brand gradient (matching
+              // iOS, which shows brandBackground() when dominantColor is nil). Fading up an
+              // empty-color layer would leave the neutral base covering the brand → a blank
+              // white/black background.
+              let show: Double = newColor == nil ? 0 : 1
+              let toA = !washDriver.frontIsA
+              if toA {
+                washAColor = newColor
+              } else {
+                washBColor = newColor
+              }
+              washAFade = toA ? show : 0
+              washBFade = toA ? 0 : show
+              // Snaps in this commit; the tray/play-button carry their own matching tween.
+              textDarkFade = viewModel.isBackgroundDark ? 0 : 1
+              washDriver.frontIsA = toA
+              // Rendered opacity needs the full tween plus stall slack to truly reach 0.
+              washDriver.settleUntil = Date().addingTimeInterval(0.8)
+            }
+          }
+        #endif
         .overlay(alignment: .bottom) { versionFooter }
       }
     }
@@ -59,22 +167,81 @@ public struct RadioPlayerView: View {
 
   // MARK: - Background
 
+  /// Background wash with a fade between artwork colors — per-platform mechanisms because
+  /// their animation systems fail in opposite ways:
+  ///
+  /// - **Apple**: the native implicit `.animation(_, value:)` over the branch interpolates
+  ///   gradient colors smoothly (this is the pre-crossfade original — it never flashed).
+  /// - **Android**: SkipUI renders that same modifier as a single-frame swap, so Android
+  ///   runs two persistent ping-pong wash layers whose colors are only ever written while
+  ///   invisible and whose opacities are only ever animated (the flash-proofing rules — see
+  ///   the `washAColor` declaration). The crossfade dissolves old→new directly, no dip
+  ///   through the brand base. Purely presentational here; the driver lives on the MAIN view
+  ///   tree in `body`, because on SkipUI/Android lifecycle modifiers attached to
+  ///   `.background {}` content never fire.
+  ///
+  ///   A scheme-neutral base sits UNDER the washes so a shown wash composites over the same
+  ///   light/dark system background iOS uses — NOT over the dark neon-dusk brand, which
+  ///   multiplied every color darker than iOS. Its opacity tracks how much wash is showing
+  ///   (`max(washAFade, washBFade)`), so it covers the brand exactly while a color is
+  ///   present and fades away with the wash to reveal the brand on the live slot. During a
+  ///   color→color crossfade one fade rises as the other falls, so the max stays high and
+  ///   the neutral base never dips (no mid-fade darkening).
   @ViewBuilder
   private func dynamicBackground(isPortrait: Bool) -> some View {
-    Group {
-      if let color = viewModel.dominantColor {
-        // Artwork-driven: a soft wash of the cover's dominant color.
-        LinearGradient(
-          gradient: Gradient(colors: [color, color.opacity(0.9)]),
-          startPoint: isPortrait ? .top : .leading,
-          endPoint: isPortrait ? .bottom : .trailing
-        )
-        .opacity(colorScheme == .dark ? 0.9 : 0.4)
-      } else {
+    #if os(Android)
+      ZStack {
         brandBackground()
+        (colorScheme == .dark ? Color.black : Color.white)
+          .opacity(max(washAFade, washBFade))
+          .animation(.easeInOut(duration: 0.5), value: washAFade)
+          .animation(.easeInOut(duration: 0.5), value: washBFade)
+        if let a = washAColor {
+          washGradient(a, isPortrait: isPortrait)
+            .opacity(washAFade * washMaxOpacity)
+            // Implicit tween per layer: the driver writes fade targets in a plain commit
+            // and this animates the rendered opacity Compose-side (same mechanism as the
+            // tray/play-button; must match their curve+duration so all dissolve as one).
+            .animation(.easeInOut(duration: 0.5), value: washAFade)
+        }
+        if let b = washBColor {
+          washGradient(b, isPortrait: isPortrait)
+            .opacity(washBFade * washMaxOpacity)
+            .animation(.easeInOut(duration: 0.5), value: washBFade)
+        }
       }
-    }
-    .animation(.easeInOut(duration: 0.6), value: viewModel.dominantColor)
+    #else
+      Group {
+        if let color = viewModel.dominantColor {
+          washGradient(color, isPortrait: isPortrait)
+            .opacity(washMaxOpacity)
+        } else {
+          brandBackground()
+        }
+      }
+      .animation(.easeInOut(duration: 0.5), value: viewModel.dominantColor)
+    #endif
+  }
+
+  /// Artwork-driven soft wash of a cover's dominant color.
+  private func washGradient(_ color: Color, isPortrait: Bool) -> some View {
+    LinearGradient(
+      gradient: Gradient(colors: [color, color.opacity(0.9)]),
+      startPoint: isPortrait ? .top : .leading,
+      endPoint: isPortrait ? .bottom : .trailing
+    )
+  }
+
+  /// Peak wash opacity over the brand base (the pre-crossfade constant, unchanged).
+  private var washMaxOpacity: Double {
+    colorScheme == .dark ? 0.9 : 0.4
+  }
+
+  /// Stable identity for the current artwork color, `nil` on the brand background. `Color`
+  /// equality is unreliable across the Skip bridge; the raw RGB is not.
+  private var dominantColorKey: String? {
+    guard let rgb = viewModel.dominantRGB else { return nil }
+    return "\(rgb.red)-\(rgb.green)-\(rgb.blue)"
   }
 
   /// Default on-brand background when no artwork color is available: a dark neon-dusk drawn
@@ -204,7 +371,8 @@ public struct RadioPlayerView: View {
         songLabel()
         liveIndicator()
         Spacer()
-        PlaybackControlsView(viewModel: viewModel)
+        PlaybackControlsView(
+          viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
         Spacer().frame(height: 32)
         // The volume row would otherwise stretch edge-to-edge on iPad's wide portrait canvas;
         // cap it so it sits as a centered cluster with generous side insets.
@@ -227,7 +395,8 @@ public struct RadioPlayerView: View {
 
         liveIndicator()
 
-        PlaybackControlsView(viewModel: viewModel)
+        PlaybackControlsView(
+          viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
 
         volumeControl()
       }
@@ -250,7 +419,8 @@ public struct RadioPlayerView: View {
           songLabel()
           liveIndicator()
           Spacer().frame(height: 32)
-          PlaybackControlsView(viewModel: viewModel)
+          PlaybackControlsView(
+          viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
           Spacer().frame(height: 32)
           volumeControl()
           Spacer()
@@ -270,7 +440,8 @@ public struct RadioPlayerView: View {
           songLabel()
           liveIndicator()
           Spacer()
-          PlaybackControlsView(viewModel: viewModel)
+          PlaybackControlsView(
+          viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
           volumeControl()
           Spacer()
         }
@@ -298,6 +469,17 @@ public struct RadioPlayerView: View {
 
   @ViewBuilder
   private func songLabel() -> some View {
+    // Both platforms render the label's color INSTANTLY (no fade): the title/artist STRING
+    // changes in the same view update as the contrast decision, so the new text appears in
+    // its final color from its first frame — matching iOS. Fading is reserved for elements
+    // that persist across the change (wash, icons, play glyph — see `textDarkFade`).
+    //
+    // REVERT-OPTION(text-contrast-fade): if instant-correct-color proves unachievable on
+    // Android, restore the two-layer fade that shipped briefly on 2026-08-04: a
+    // `contrastFadingText(_:size:weight:light:dark:)` helper rendering each line as TWO
+    // pixel-aligned Text layers (light tint under, dark over, identical font/lineLimit/
+    // minimumScaleFactor) cross-faded by `.opacity(1 - textDarkFade)` / `.opacity(textDarkFade)`
+    // — accepting that a new string then appears in the outgoing color and dissolves.
     let label = VStack(alignment: .center, spacing: 12) {
       Text(viewModel.displayedTitle)
         .foregroundStyle(titleColor)
@@ -315,7 +497,13 @@ public struct RadioPlayerView: View {
     .padding(.horizontal, 20)
 
     #if os(Android)
-      label
+      // The string and its color are computed together but reach Compose as SEPARATE updates
+      // to an existing node, and the bridge can render one a frame before the other (the
+      // measured tear class) — briefly showing the new title in the old color. Structural
+      // replacement, by contrast, lands in a single frame on SkipUI (measured: it's why
+      // `.transition` snaps). Exploit that: key the label on the contrast decision, so a
+      // flip REPLACES the whole label — new string and new color born together, no tear.
+      label.id(viewModel.isBackgroundDark)
     #else
       label.accessibilityElement(children: .combine)
     #endif
@@ -358,10 +546,14 @@ public struct RadioPlayerView: View {
 
   /// Title color. On Apple platforms the semantic `.primary` already tracks the forced scheme.
   /// On Android the forced `colorScheme` environment override does not recolor semantic text
-  /// styles, so resolve an explicit high-contrast color against the effective scheme.
+  /// styles, so resolve an explicit high-contrast color — from the BACKGROUND's actual
+  /// luminance (`isBackgroundDark`), not the device scheme: the Android wash composites over
+  /// the always-dark brand base, so what's behind the text is governed by the dominant
+  /// color's brightness (dark artwork → white text, light artwork → dark text), regardless
+  /// of the device's light/dark setting.
   private var titleColor: Color {
     #if os(Android)
-      effectiveColorScheme == .dark ? .white : .black
+      viewModel.isBackgroundDark ? .white : .black
     #else
       .primary
     #endif
@@ -370,7 +562,7 @@ public struct RadioPlayerView: View {
   /// Subtitle color — a dimmed counterpart to `titleColor`, matching `.secondary` on Apple.
   private var subtitleColor: Color {
     #if os(Android)
-      effectiveColorScheme == .dark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
+      viewModel.isBackgroundDark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
     #else
       .secondary
     #endif

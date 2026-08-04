@@ -24,13 +24,35 @@ struct PlaybackControlsView: View {
   // Presents the sleep-timer preset picker. A `.sheet` works on all platforms (unlike the share
   // sheet), so this state is not platform-gated.
   @State var showSleepTimerSheet = false
-  @Environment(\.colorScheme) var colorScheme
+  /// 0 = light glyphs, 1 = dark glyphs. RadioPlayerView passes its animated `textDarkFade`
+  /// here so the tray dissolves in lockstep with the song label and the background wash —
+  /// icons and text flipping at different moments read as a glitch ("Christmas tree").
+  /// Only Android renders from it (Apple uses semantic `.secondary`); declared on all
+  /// platforms so call sites stay uniform.
+  var contrastDarkFade: Double = 0
+  #if os(Android)
+    /// The two fixed contrast tints the crossfade dissolves between (colors are never
+    /// animated directly — SkipUI renders color changes as single-frame snaps; only opacity
+    /// is proven to fade cleanly).
+    private static let lightControl = Color.white.opacity(0.7)
+    private static let darkControl = Color.black.opacity(0.6)
+  #endif
 
   var body: some View {
     VStack(spacing: tierSpacing) {
       playButton
       utilityTray
     }
+    // The wash driver's `withAnimation` transaction does not propagate across the bridged
+    // view boundary on Android — `contrastDarkFade` arrives as a plain parameter and the
+    // contrast opacities would snap while the song label (inside the parent's transaction)
+    // tweened. Re-create the tween locally with the explicit `.animation(_, value:)` SkipUI
+    // honors (the carousel strip's proven layoutKey mechanism), covering BOTH tiers so the
+    // play button's backing disc and the utility tray dissolve together. Curve and duration
+    // MUST match the wash driver's crossfade so everything moves as one.
+    #if os(Android)
+      .animation(.easeInOut(duration: 0.5), value: contrastDarkFade)
+    #endif
     #if os(macOS)
       // macOS gives buttons a default bezel/background; .plain keeps them transparent like iOS.
       .buttonStyle(.plain)
@@ -73,16 +95,14 @@ struct PlaybackControlsView: View {
   /// Gap between the hero tier and the utility tray.
   private var tierSpacing: CGFloat { usesExpandedLayout ? 28 : 20 }
 
-  /// Tint for the utility glyphs and their ghost-circle backgrounds. On Apple `.secondary` already
-  /// tracks the forced color scheme. On Android that override doesn't recolor `.secondary`, so
-  /// resolve an explicit adaptive gray — same effective-scheme rule as `RadioPlayerView`'s song label.
+  /// Tint for the utility glyphs and their ghost-circle backgrounds on Apple platforms, where
+  /// `.secondary` already tracks the forced color scheme. Android doesn't use a single color:
+  /// its contrast is an animated crossfade between fixed light/dark layers driven by
+  /// `contrastDarkFade` (see `secondaryIcon`/`secondaryControl`) — computing a Color from the
+  /// animated state here would snap, because animation interpolates animatable modifier data
+  /// (opacity), not body re-evaluation.
   private var secondaryControlColor: Color {
-    #if os(Android)
-      let dark = viewModel.dominantColor == nil ? true : (colorScheme == .dark)
-      return dark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
-    #else
-      return Color.secondary
-    #endif
+    Color.secondary
   }
 
   // MARK: - Hero tier
@@ -99,8 +119,25 @@ struct PlaybackControlsView: View {
         } else {
           #if os(Android)
             // SF Symbols don't exist on Android and `pause.*`/`play.circle.*` aren't in
-            // SkipUI's core-icon map, so draw the extended Material icons directly.
-            AndroidIcon(symbol: viewModel.isPlaying ? .pause : .play, size: heroSize, tint: .orange)
+            // SkipUI's core-icon map, so draw the extended Material icons directly. The
+            // glyph is knocked out of the orange disc, so a small backing disc BEHIND the
+            // icon shows through only the knockout, coloring the central play/pause shape —
+            // white while the text/icons are white, black while they are dark, cross-faded
+            // by the same `contrastDarkFade` (see the `.animation` on the VStack). The
+            // backing circle is well inside the orange disc (the Material glyph occupies the
+            // icon's center) so no ring ever shows around the button.
+            ZStack {
+              Circle()
+                .fill(Color.white)
+                .frame(width: heroSize * 0.5, height: heroSize * 0.5)
+                .opacity(1 - contrastDarkFade)
+              Circle()
+                .fill(Color.black)
+                .frame(width: heroSize * 0.5, height: heroSize * 0.5)
+                .opacity(contrastDarkFade)
+              AndroidIcon(
+                symbol: viewModel.isPlaying ? .pause : .play, size: heroSize, tint: .orange)
+            }
           #else
             Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
               .font(.system(size: heroSize))
@@ -127,6 +164,7 @@ struct PlaybackControlsView: View {
       sleepControl
       donateControl
     }
+    // Contrast tween lives on the body's VStack (covers this tray AND the play button).
   }
 
   @ViewBuilder
@@ -141,7 +179,7 @@ struct PlaybackControlsView: View {
       secondaryControl {
         secondaryIcon(
           "square.and.arrow.up", android: .share,
-          tint: secondaryControlColor.opacity(viewModel.canShare ? 1.0 : 0.5))
+          dim: viewModel.canShare ? 1.0 : 0.5)
       }
     }
     .disabled(!viewModel.canShare)
@@ -163,9 +201,8 @@ struct PlaybackControlsView: View {
         secondaryIcon(
           viewModel.isSleepTimerActive ? "moon.zzz.fill" : "moon.zzz",
           android: .bedtime,
-          tint: viewModel.isSleepTimerActive
-            ? .orange
-            : secondaryControlColor.opacity(isEnabled ? 1.0 : 0.5))
+          fixedTint: viewModel.isSleepTimerActive ? .orange : nil,
+          dim: isEnabled || viewModel.isSleepTimerActive ? 1.0 : 0.5)
       }
     }
     .disabled(!isEnabled)
@@ -185,16 +222,17 @@ struct PlaybackControlsView: View {
     {
       Link(destination: url) {
         secondaryControl {
-          secondaryIcon("heart.circle", android: .favorite, tint: secondaryControlColor)
+          secondaryIcon("heart.circle", android: .favorite)
         }
       }
       // Link tints its label with the app accent (orange) by default; force the concrete
-      // secondary gray so donate matches the share button.
+      // secondary gray so donate matches the share button. (Android's glyph carries its own
+      // explicit two-layer tint, so the Link tint only matters on Apple platforms.)
       .tint(secondaryControlColor)
       .accessibilityLabel(Text("Support Maxi 80", bundle: .module))
     } else {
       secondaryControl {
-        secondaryIcon("heart.circle", android: .favorite, tint: secondaryControlColor.opacity(0.5))
+        secondaryIcon("heart.circle", android: .favorite, dim: 0.5)
       }
       .accessibilityHidden(true)
     }
@@ -203,12 +241,24 @@ struct PlaybackControlsView: View {
   // MARK: - Ghost-circle wrapper
 
   /// Wrap a utility glyph in a subtle circular background so the three read as deliberate peer
-  /// buttons rather than bare glyphs, preserving a ≥44pt hit target.
+  /// buttons rather than bare glyphs, preserving a ≥44pt hit target. On Android the circle is
+  /// two fixed-tint layers cross-faded by `contrastDarkFade`, matching the glyphs.
   @ViewBuilder
   private func secondaryControl<Label: View>(@ViewBuilder label: () -> Label) -> some View {
-    label()
-      .frame(width: secondaryFrame, height: secondaryFrame)
-      .background(Circle().fill(secondaryControlColor.opacity(0.12)))
+    #if os(Android)
+      label()
+        .frame(width: secondaryFrame, height: secondaryFrame)
+        .background(
+          ZStack {
+            Circle().fill(Self.lightControl.opacity(0.12)).opacity(1 - contrastDarkFade)
+            Circle().fill(Self.darkControl.opacity(0.12)).opacity(contrastDarkFade)
+          }
+        )
+    #else
+      label()
+        .frame(width: secondaryFrame, height: secondaryFrame)
+        .background(Circle().fill(secondaryControlColor.opacity(0.12)))
+    #endif
   }
 
   /// A secondary control glyph normalized to a fixed size and square frame so the tray buttons
@@ -216,20 +266,33 @@ struct PlaybackControlsView: View {
   ///
   /// On Apple platforms this renders the SF Symbol tinted via `.foregroundStyle`. On Android SF
   /// Symbols don't exist (and several of these aren't in SkipUI's core-icon map), so it draws the
-  /// matching extended Material icon, which must be tinted directly rather than through the
-  /// foreground style — hence the explicit `tint` parameter.
+  /// matching extended Material icon — as TWO fixed-tint layers (light under, dark over)
+  /// cross-faded by `contrastDarkFade`, so the glyph dissolves in lockstep with the song label
+  /// and wash. `fixedTint` (the sleep timer's active orange) bypasses the contrast crossfade;
+  /// `dim` carries the disabled/placeholder attenuation that call sites previously baked into
+  /// the tint's opacity.
   @ViewBuilder
-  private func secondaryIcon(_ systemName: String, android: MaterialSymbol, tint: Color)
-    -> some View
-  {
+  private func secondaryIcon(
+    _ systemName: String, android: MaterialSymbol, fixedTint: Color? = nil, dim: Double = 1
+  ) -> some View {
     #if os(Android)
-      AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: tint)
+      if let fixedTint {
+        AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: fixedTint)
+          .frame(width: secondaryGlyphSize, height: secondaryGlyphSize)
+      } else {
+        ZStack {
+          AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: Self.lightControl)
+            .opacity((1 - contrastDarkFade) * dim)
+          AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: Self.darkControl)
+            .opacity(contrastDarkFade * dim)
+        }
         .frame(width: secondaryGlyphSize, height: secondaryGlyphSize)
+      }
     #else
       Image(systemName: systemName)
         .font(.system(size: secondaryGlyphSize))
         .frame(width: secondaryGlyphSize, height: secondaryGlyphSize)
-        .foregroundStyle(tint)
+        .foregroundStyle((fixedTint ?? secondaryControlColor).opacity(dim))
     #endif
   }
 }

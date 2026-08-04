@@ -227,11 +227,12 @@ public final class RadioPlayerViewModel {
 
   // MARK: - Computed Display Properties
 
-  /// The history entry the carousel is focused on, if the user is browsing an older song.
+  /// The history entry the display surfaces are focused on, if the user is browsing an older
+  /// song. Reads the model's display-deferred id (NOT `selectedCoverID`): on Android the
+  /// label/background/button recomposition follows the settle glide instead of landing in the
+  /// middle of it — see `CarouselModel.displaySelectedID`.
   private var focusedHistoryEntry: HistoryEntry? {
-    guard let selectedCoverID, selectedCoverID != liveCoverID,
-      let id = selectedCoverID.base as? String
-    else { return nil }
+    guard let id = carousel.focusedEntryID else { return nil }
     return coordinator.history.first { $0.id == id }
   }
 

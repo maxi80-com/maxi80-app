@@ -25,12 +25,60 @@ struct CoverFlowStrip: View {
   /// on a bridged view type.
   @State var dragTranslation: CGFloat = 0
 
+  /// Recent drag samples, oldest → newest, used to compute release velocity ourselves
+  /// rather than trusting the platform's `predictedEndTranslation` (Android carries no
+  /// velocity in it — that is the inertia defect this replaces). A short fixed-capacity ring:
+  /// each `.onChanged` appends and drops the front past `velocitySampleCapacity`, `.onEnded`
+  /// reads the ~`velocityWindow`-second tail, and release clears it.
+  ///
+  /// Deliberately a reference-type box, NOT observable state: the samples never drive any
+  /// rendering (they are only read at release), and appending to a `@State` array here meant
+  /// every pointer move invalidated the view and re-shipped the whole array across the
+  /// Swift↔Kotlin bridge — measured on the A07 as per-drag-frame overhead and GC pressure.
+  /// `@State` holds only the box's identity; its contents mutate invisibly to the renderer.
+  /// Internal (not private) per the Skip bridge rule for `@State` on a bridged view type.
+  @State var dragSamples = DragSampleRing()
+
+  /// One timestamped finger position for velocity estimation. `Date()` ticks sub-frame on
+  /// both platforms (unrelated to the workflow-script `Date.now()` restriction).
+  struct DragSample {
+    let translation: CGFloat
+    let time: Date
+  }
+
+  /// Plain (non-observable) storage for the drag-sample ring — see `dragSamples`.
+  final class DragSampleRing {
+    var samples: [DragSample] = []
+  }
+
+  /// Ring-buffer depth: enough to span the velocity window at Compose's sparser `onChanged`
+  /// cadence without unbounded growth on a long slow drag.
+  private static let velocitySampleCapacity = 12
+  /// Trailing window (seconds) over which release velocity is measured. Short enough to
+  /// reflect the fingertip's final motion, long enough to survive sparse sample delivery.
+  private static let velocityWindow: TimeInterval = 0.1
+
   /// Vertical breathing room so the cover's drop shadow is never clipped into a hard edge.
   private let verticalMargin: CGFloat = 40
 
-  /// The single spring every settle path shares, so a drag release, a tap, an arrow key,
-  /// and an external cover-set change all land with the same feel.
-  private static let settleSpring: Animation = .spring(response: 0.35, dampingFraction: 0.86)
+  /// The single spring EVERY settle path shares — drag release, tap, arrow key, and the
+  /// external cover-set change modifier below all animate on this exact curve. That shared
+  /// curve is load-bearing: a cover's on-screen offset is driven by BOTH `dragTranslation`
+  /// (zeroed here) and `anchorIndex` (shifted via `onSettled` → `layoutKey`). If those two
+  /// drivers animated on different curves they would fight mid-settle — the "shaggy" glide.
+  /// A flick still coasts far because the *target* is farther (velocity projection), not
+  /// because the curve differs; a spring sweeping many slots decelerates and carries every
+  /// intermediate cover through center, which is the flywheel itself.
+  ///
+  /// Damping differs by platform. 0.85 overshoots a few percent and swings back — a pleasant
+  /// landing bounce at 60fps, but the A07 renders the settle at single-digit fps, so the
+  /// overshoot+return collapses into 2–3 frames and reads as a sloppy wobble. Android runs
+  /// near-critically damped instead: same glide, lands dead-on with no bump.
+  #if os(Android)
+    private static let settleSpring: Animation = .spring(response: 0.4, dampingFraction: 0.99)
+  #else
+    private static let settleSpring: Animation = .spring(response: 0.4, dampingFraction: 0.85)
+  #endif
 
   var body: some View {
     GeometryReader { proxy in
@@ -155,7 +203,15 @@ struct CoverFlowStrip: View {
     coverContent(cover)
       .frame(width: coverSize, height: coverSize)
       .clipShape(.rect(cornerRadius: 12))
-      .shadow(color: .black.opacity(0.45), radius: 18, x: 0, y: 12)
+      // Shadow cost differs wildly by platform. The blur is re-rendered EVERY animation frame
+      // (scale/rotation invalidate it), and on the A07's low-end Mali GPU the 18px blur across
+      // ~9 covers measured ~115ms/frame during the settle glide — single-digit fps, felt as
+      // mid-animation freezes. Android gets a tight, cheap shadow; Apple keeps the deep one.
+      #if os(Android)
+        .shadow(color: .black.opacity(0.35), radius: 6, x: 0, y: 4)
+      #else
+        .shadow(color: .black.opacity(0.45), radius: 18, x: 0, y: 12)
+      #endif
       .scaleEffect(geometry.scale(relative: relative))
       .rotation3DEffect(
         .degrees(geometry.rotationDegrees(relative: relative)),
@@ -195,25 +251,58 @@ struct CoverFlowStrip: View {
   // MARK: - Interaction
 
   #if !os(tvOS)
-    /// Whole-strip drag. `minimumDistance: 10` lets cell taps pass through. Finger tracking
-    /// writes through a transaction with animations disabled so it is 1:1, never animated.
-    /// On release, ONE `withAnimation` block zeroes the translation and (if the snap target
-    /// differs) reports the settle — a single spring from wherever the finger left the
-    /// strip, so there is no recoil (R2).
+    /// Whole-strip drag. Finger tracking writes through a transaction with animations disabled
+    /// so it is 1:1, never animated, while each move is timestamped into `dragSamples` for
+    /// release-velocity estimation.
+    ///
+    /// `minimumDistance` differs by platform. On Android a nonzero distance makes SkipUI take
+    /// the `awaitPointerSlopOrCancellation` branch of Compose's drag detector — `onChanged`
+    /// stays silent until the finger crosses the system touch-slop (~8–16dp), so the strip
+    /// visibly refuses to move at the very start of a swipe ("glued"). `0` takes the
+    /// track-from-touch-down branch instead, giving immediate 1:1 response. The trade is that a
+    /// 0-distance drag consumes the initial touch, which can suppress tap-to-focus on a side
+    /// cover; browsing on Android is by swipe/flick. Apple platforms keep `10` so cell taps and
+    /// arrow keys pass through as before.
+    ///
+    /// On release, `settleTarget` picks the landing slot and ONE `withAnimation(settleSpring)`
+    /// block zeroes the translation and (if it differs) reports the settle — a single spring
+    /// from wherever the finger left the strip, so there is no recoil.
     private func dragGesture(geometry: CarouselGeometry, anchorIndex: Int) -> some Gesture {
-      DragGesture(minimumDistance: 10)
+      #if os(Android)
+        let minimumDragDistance: CGFloat = 0
+      #else
+        let minimumDragDistance: CGFloat = 10
+      #endif
+      return DragGesture(minimumDistance: minimumDragDistance)
         .onChanged { value in
-          setDragTranslationUnanimated(
-            geometry.rubberBanded(
-              translation: value.translation.width,
-              anchorIndex: anchorIndex,
-              coverCount: covers.count))
+          let translation = geometry.rubberBanded(
+            translation: value.translation.width,
+            anchorIndex: anchorIndex,
+            coverCount: covers.count)
+          appendDragSample(translation: translation)
+          setDragTranslationUnanimated(translation)
         }
         .onEnded { value in
-          let target = geometry.snapTarget(
+          // The SAME rubber-banded coordinate space as the samples and the on-screen strip:
+          // within bounds `rubberBanded` is the identity, so this only matters at the ends,
+          // where mixing raw with banded values would inflate the velocity estimate and
+          // settle the strip somewhere the user never saw.
+          let translation = geometry.rubberBanded(
+            translation: value.translation.width,
             anchorIndex: anchorIndex,
-            predictedEndTranslation: value.predictedEndTranslation.width,
             coverCount: covers.count)
+          let velocity = releaseVelocity(latest: translation)
+          dragSamples.samples.removeAll()
+          let target = geometry.settleTarget(
+            anchorIndex: anchorIndex,
+            translation: translation,
+            velocity: velocity,
+            coverCount: covers.count)
+          // ONE spring for every settle — see `settleSpring`. A far target (from a fast flick's
+          // velocity projection) makes this exact spring sweep across many covers and decelerate
+          // into place, which is the flywheel; a slow drag projects ~0 extra and lands one slot
+          // away. Never a second curve, so the translation glide and the anchor shift stay in
+          // lockstep (no "shaggy" fight between the two position drivers).
           withAnimation(Self.settleSpring) {
             dragTranslation = 0
             if target != anchorIndex, covers.indices.contains(target) {
@@ -221,6 +310,32 @@ struct CoverFlowStrip: View {
             }
           }
         }
+    }
+
+    /// Append a timestamped drag sample, dropping the oldest once the ring is full so the
+    /// buffer stays bounded on a long slow drag. Mutates the ring box in place — no observable
+    /// state changes, so finger moves never invalidate the view for sampling (see `dragSamples`).
+    private func appendDragSample(translation: CGFloat) {
+      dragSamples.samples.append(DragSample(translation: translation, time: Date()))
+      if dragSamples.samples.count > Self.velocitySampleCapacity {
+        dragSamples.samples.removeFirst(dragSamples.samples.count - Self.velocitySampleCapacity)
+      }
+    }
+
+    /// Release velocity in points/sec over the most recent `velocityWindow`, computed as
+    /// Δtranslation / Δt between the oldest in-window sample and now. `latest` is the final
+    /// `onEnded` translation, timestamped now so the estimate reflects the fingertip's last
+    /// motion even when Compose delivered no `onChanged` for it. Falls back to `0` when there
+    /// are too few samples or Δt ≈ 0 (a hold-then-lift, which should not coast).
+    private func releaseVelocity(latest: CGFloat) -> CGFloat {
+      let now = Date()
+      let recent = dragSamples.samples.filter {
+        now.timeIntervalSince($0.time) <= Self.velocityWindow
+      }
+      guard let oldest = recent.first else { return 0 }
+      let dt = now.timeIntervalSince(oldest.time)
+      guard dt > 0.0001 else { return 0 }
+      return (latest - oldest.translation) / CGFloat(dt)
     }
   #endif
 
