@@ -53,8 +53,9 @@ Android/fastlane/report.xml
 **/fastlane/screenshots/screenshots.html
 
 # Claude 
-.claude 
-worktrees
+.claude/settings.local.json
+.claude/worktrees
+
 # fastlane sigh-downloaded provisioning profiles
 *.mobileprovision
 **/*.mobileprovision

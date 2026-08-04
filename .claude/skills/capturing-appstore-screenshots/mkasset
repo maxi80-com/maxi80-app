@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# mkasset <src> <W> <H> <out> [scale]
+# Scale-to-fit <src> onto an exact WxH black canvas, preserving aspect (contain).
+# Used by fastlane/capture_screenshots.sh for the macOS path, which needs an
+# App-Store-exact size (2560x1600). Referenced there as /tmp/mkasset — symlink or
+# copy this file there before capturing mac shots:
+#     cp .claude/skills/capturing-appstore-screenshots/mkasset /tmp/mkasset
+set -euo pipefail
+SRC="$1"; W="$2"; H="$3"; OUT="$4"
+cp "$SRC" "$OUT"
+read SW SH < <(sips -g pixelWidth -g pixelHeight "$SRC" \
+  | awk '/pixelWidth/{w=$2}/pixelHeight/{h=$2}END{print w, h}')
+# contain-fit dimensions (largest that fits inside WxH at source aspect)
+read FW FH < <(python3 -c "sw,sh,W,H=$SW,$SH,$W,$H; r=min(W/sw,H/sh); print(int(sw*r),int(sh*r))")
+sips --resampleHeightWidth "$FH" "$FW" "$OUT" >/dev/null
+# pad to exact WxH with black, centering the fitted image
+sips --padToHeightWidth "$H" "$W" --padColor 000000 "$OUT" >/dev/null
+sips -g pixelWidth -g pixelHeight "$OUT" \
+  | awk '/pixelWidth/{w=$2}/pixelHeight/{h=$2}END{print "mkasset ->", w"x"h}'
