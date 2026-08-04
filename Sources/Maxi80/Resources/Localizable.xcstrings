@@ -263,7 +263,7 @@
       }
     },
     "Played at %@": {
-      "comment": "Air time of the browsed history entry under the artist name on TV. %@ is a localized clock time like 14:30.",
+      "comment": "Air time of the browsed history entry, shown under the artist name on phone, tablet, and TV. %@ is a localized clock time like 14:30.",
       "localizations": {
         "fr": {
           "stringUnit": {
