@@ -95,15 +95,31 @@ struct CarouselGeometryTests {
     #expect(geometry.snapTarget(anchorIndex: 0, predictedEndTranslation: 500, coverCount: 0) == 0)
   }
 
-  @Test("projectedTranslation is monotonically increasing in velocity")
+  @Test("projectedTranslation is non-decreasing in velocity (flat inside the dead-zone)")
   func projectionMonotonicInVelocity() {
     let translation = geometry.slotWidth * 0.3
     var previous = -CGFloat.greatestFiniteMagnitude
     for v in stride(from: -4000.0, through: 4000.0, by: 200.0) {
       let projected = geometry.projectedTranslation(translation: translation, velocity: CGFloat(v))
-      #expect(projected > previous)
+      // Non-decreasing overall: the velocity term only ever adds reach in the flick's
+      // direction, and inside the sub-threshold dead-zone every sample collapses to the raw
+      // translation (equal, not greater), so the guard is ≥ rather than >.
+      #expect(projected >= previous)
       previous = projected
     }
+  }
+
+  @Test("sub-threshold speed is a deliberate drag: velocity term dropped, lands by translation")
+  func projectionDeadZoneIgnoresSlowVelocity() {
+    let t = geometry.slotWidth * 0.4
+    // Just under the flick threshold, in both directions: projection is exactly the raw
+    // translation, so a slow deliberate drag can never be nudged an extra slot by velocity.
+    let justUnder = CarouselGeometry.flickVelocityThreshold - 1
+    #expect(geometry.projectedTranslation(translation: t, velocity: justUnder) == t)
+    #expect(geometry.projectedTranslation(translation: t, velocity: -justUnder) == t)
+    // At/over the threshold the velocity term engages and carries the projection past t.
+    let atThreshold = CarouselGeometry.flickVelocityThreshold
+    #expect(geometry.projectedTranslation(translation: t, velocity: atThreshold) > t)
   }
 
   @Test("zero velocity ⇒ projection is the raw translation and snapTarget is unchanged")
@@ -138,23 +154,53 @@ struct CarouselGeometryTests {
     #expect(targetRight == 0)
   }
 
-  @Test("coastDuration is monotonic in distance and capped at the max")
-  func coastDurationMonotonicAndCapped() {
-    var previous = -Double.greatestFiniteMagnitude
-    for slots in 0...40 {
-      let duration = geometry.coastDuration(slots: slots)
-      #expect(duration >= previous)
-      #expect(duration <= CarouselGeometry.coastMaxDuration)
-      previous = duration
-    }
-    // A near move is the snappy base; a far throw saturates at the ceiling implied by the cap.
-    #expect(geometry.coastDuration(slots: 0) == CarouselGeometry.coastBaseDuration)
-    #expect(geometry.coastDuration(slots: 1) > geometry.coastDuration(slots: 0))
-    // Beyond the slot cap the duration stops growing.
-    let atCap = geometry.coastDuration(slots: Int(CarouselGeometry.coastSlotCap))
-    #expect(geometry.coastDuration(slots: Int(CarouselGeometry.coastSlotCap) + 20) == atCap)
-    // Magnitude only: a negative slot count coasts the same as its positive twin.
-    #expect(geometry.coastDuration(slots: -4) == geometry.coastDuration(slots: 4))
+  @Test("a moderate one-slot flick lands one slot away, not several (single-cover control)")
+  func moderateFlickAdvancesOneSlot() {
+    // A deliberate one-cover flick: dragged ~0.6 slot with a modest over-threshold speed.
+    // The tamed decelerationRate must keep this to a single-slot advance — the regression was
+    // that a normal flick jumped three or more, making one-at-a-time browsing impossible.
+    let translation = -geometry.slotWidth * 0.6
+    let velocity: CGFloat = -600  // clears the flick threshold but is not a hard fling
+    let projected = geometry.projectedTranslation(translation: translation, velocity: velocity)
+    let target = geometry.snapTarget(anchorIndex: 5, predictedEndTranslation: projected, coverCount: 20)
+    #expect(target == 6)
+  }
+
+  @Test("settleTarget: a brief flick still advances one slot instead of staying glued")
+  func settleTargetFlickFloorUnglues() {
+    // A quick light flick whose finger barely moved: raw projection would round back to the
+    // anchor ("glued"), but a flick must always leave the current cover by at least one slot.
+    let tinyTranslation = -geometry.slotWidth * 0.1
+    let flickSpeed = CarouselGeometry.flickVelocityThreshold  // just a flick, low momentum
+    let leftward = geometry.settleTarget(
+      anchorIndex: 5, translation: tinyTranslation, velocity: -flickSpeed, coverCount: 20)
+    #expect(leftward == 6)  // leftward finger flick → one NEWER (higher) index
+    let rightward = geometry.settleTarget(
+      anchorIndex: 5, translation: geometry.slotWidth * 0.1, velocity: flickSpeed, coverCount: 20)
+    #expect(rightward == 4)  // rightward finger flick → one OLDER (lower) index
+  }
+
+  @Test("settleTarget: a deliberate sub-threshold drag lands by translation, no floor")
+  func settleTargetDeliberateDragNoFloor() {
+    // Slow drag not quite reaching the next slot, below the flick threshold: it stays on the
+    // current cover — the floor must NOT force a move for a deliberate positioning drag.
+    let target = geometry.settleTarget(
+      anchorIndex: 5, translation: -geometry.slotWidth * 0.3,
+      velocity: CarouselGeometry.flickVelocityThreshold - 1, coverCount: 20)
+    #expect(target == 5)
+    // A slow drag that DOES carry past the slot midpoint lands one over, by translation alone.
+    let moved = geometry.settleTarget(
+      anchorIndex: 5, translation: -geometry.slotWidth * 0.7, velocity: 0, coverCount: 20)
+    #expect(moved == 6)
+  }
+
+  @Test("settleTarget: a fast flick clears the floor and coasts several slots")
+  func settleTargetFastFlickCoastsPastFloor() {
+    // A hard flick moves well past the one-slot floor via momentum; the floor is a minimum,
+    // never a cap.
+    let target = geometry.settleTarget(
+      anchorIndex: 5, translation: -geometry.slotWidth * 0.4, velocity: -6000, coverCount: 40)
+    #expect(target > 6)
   }
 
   @Test("a hard flick from the last cover lands on a valid pinned slot")
@@ -217,16 +263,20 @@ struct CarouselGeometryTests {
     }
   }
 
-  @Test("isVisible window spans anchor±radius (plus drag slack) and excludes far indices")
+  @Test("isVisible window spans anchor±radius (plus one slot of slack) and excludes far indices")
   func visibleWindow() {
-    let radius = CGFloat(geometry.windowRadius)
-    #expect(geometry.isVisible(relative: 0))
-    #expect(geometry.isVisible(relative: radius))
-    #expect(geometry.isVisible(relative: -radius))
+    let radius = geometry.windowRadius
+    let count = 100
+    func visible(_ index: Int) -> Bool {
+      geometry.isVisible(index: index, anchorIndex: 10, dragTranslation: 0, coverCount: count)
+    }
+    #expect(visible(10))
+    #expect(visible(10 + radius))
+    #expect(visible(10 - radius))
     // One slot of slack avoids pop-in while a drag carries a cover across the edge.
-    #expect(geometry.isVisible(relative: radius + 1))
-    #expect(!geometry.isVisible(relative: radius + 1.5))
-    #expect(!geometry.isVisible(relative: -(radius + 2)))
+    #expect(visible(10 + radius + 1))
+    #expect(!visible(10 + radius + 2))
+    #expect(!visible(10 - radius - 2))
   }
 
   @Test("visibleIndexRange returns exactly the indices isVisible would accept, clamped")
@@ -238,12 +288,32 @@ struct CarouselGeometryTests {
       for drag in [CGFloat(0), 73, -73, geometry.slotWidth * 2, -geometry.slotWidth * 2] {
         let expected = (0..<count).filter { index in
           geometry.isVisible(
-            relative: geometry.relativePosition(
-              index: index, anchorIndex: anchor, dragTranslation: drag))
+            index: index, anchorIndex: anchor, dragTranslation: drag, coverCount: count)
         }
         let range = geometry.visibleIndexRange(
           anchorIndex: anchor, dragTranslation: drag, coverCount: count)
         #expect(Array(range) == expected, "mismatch for anchor \(anchor), drag \(drag)")
+      }
+    }
+  }
+
+  @Test("alive window is invariant across a drag release (no cell churn on the settle frame)")
+  func visibleIndexRangeStableAcrossRelease() {
+    // Releasing a drag jumps the state pair from (anchor, translation) to (snapTarget, 0).
+    // The alive set must be IDENTICAL at that instant, otherwise the renderer instantiates a
+    // fresh cell (AsyncImage + shadow) on the first settle frame — the measured ~160ms A07
+    // freeze felt as a mid-move hesitation.
+    let count = 60
+    for anchor in [0, 5, 30, 58, 59] {
+      for fraction in stride(from: -2.5, through: 2.5, by: 0.25) {
+        let drag = geometry.slotWidth * CGFloat(fraction)
+        let during = geometry.visibleIndexRange(
+          anchorIndex: anchor, dragTranslation: drag, coverCount: count)
+        let landed = geometry.snapTarget(
+          anchorIndex: anchor, predictedEndTranslation: drag, coverCount: count)
+        let after = geometry.visibleIndexRange(
+          anchorIndex: landed, dragTranslation: 0, coverCount: count)
+        #expect(during == after, "churn for anchor \(anchor), drag fraction \(fraction)")
       }
     }
   }

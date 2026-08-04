@@ -1,149 +1,162 @@
-# Cover Flow inertial "wheel" coast — design
+# Cover Flow inertial "wheel" coast — design (as built)
 
-**Date:** 2026-08-03
-**Status:** Approved, ready for implementation
+**Date:** 2026-08-03 (original design) · 2026-08-04 (updated to as-built after on-device iteration)
+**Status:** Implemented on `feat/coverflow-inertial-coast`; verified on iPhone 15 Pro + Samsung A07
 
 ## Problem
 
 The 5.x Cover Flow redesign replaced the old `ScrollView`-based carousel with a
 stateless-math renderer (`CoverFlowStrip` + `CarouselGeometry`, selection owned by
-`CarouselModel`). Users report the browsing feel regressed:
+`CarouselModel`). Users reported the browsing feel regressed:
 
-- **Android phone + Android Auto:** one swipe moves exactly one position. No momentum,
-  no "wheel with inertia" flywheel sensation the old ScrollView had.
-- **iOS:** less severe but still wrong — a small swipe moves one slot, a large swipe two.
+- **Android phone:** one swipe moves exactly one position; no momentum, no "wheel with
+  inertia" flywheel sensation the old ScrollView had.
+- **iOS:** less severe but present — a small swipe moves one slot, a large swipe two.
 
 ### Root cause
 
-On release, `CarouselGeometry.snapTarget` lands on the rounded *effective anchor* at
-SwiftUI's **predicted** end translation:
-
-```
-effectiveAnchor = anchorIndex − predictedEndTranslation / slotWidth
-target          = round(effectiveAnchor)          // clamped to valid indices
-```
-
-- On **Android**, Skip/Compose's `DragGesture.predictedEndTranslation` ≈ the raw
-  `translation` (no velocity projection), so a ~1-slot swipe rounds to 1 slot. No
-  momentum signal ever reaches the math.
-- On **iOS**, Apple projects a modest, capped velocity into `predictedEndTranslation`,
-  hence the occasional 2-slot move.
-- Either way the coast is a single fixed `settleSpring` (response 0.35) to a near
-  neighbor — there is no velocity-scaled coasting through intermediate covers.
-
-The old ScrollView had real inertia because UIScrollView / Compose scroll physics
-project release velocity into a long decelerating fling.
+`snapTarget` landed on the rounded effective anchor at the platform's **predicted** end
+translation. On Android, Skip/Compose's `predictedEndTranslation` ≈ the raw translation
+(no velocity), so no momentum signal ever reached the math; on iOS Apple projects only a
+modest, capped velocity. Either way the settle was a short fixed spring — no
+velocity-scaled coasting.
 
 ## Goal
 
-Reproduce the old flywheel feel — a flick coasts across many covers and decelerates to
-rest — while preserving the invariant that a cover is always **pinned at center on
-settle**. Identical behavior on iOS, Android, and Android Auto, independent of
-`predictedEndTranslation`.
+Reproduce the old flywheel feel — a flick coasts across covers and decelerates to rest —
+while preserving the invariant that a cover always lands **pinned at center**. Identical
+behavior on iOS and Android, independent of `predictedEndTranslation`.
 
-### Decisions locked during brainstorming
+## As-built design
 
-1. **Inertia reach:** unbounded, decelerating (like the old ScrollView). A hard flick
-   can traverse many covers.
-2. **Velocity source:** compute it ourselves from drag samples — do **not** rely on
-   `predictedEndTranslation` (that is the Android defect). Cross-platform-identical.
-3. **Coast animation:** a single velocity-parameterized decelerating (ease-out) curve
-   whose duration scales with distance traversed — **not** a per-frame physics tick
-   loop. Rationale below.
-4. **Code placement:** projection + duration are pure functions on `CarouselGeometry`
-   (like `snapTarget` / `rubberBanded`); the drag-sample ring buffer is `@State` in
-   `CoverFlowStrip`. Maximizes unit coverage; matches existing separation.
+The stateless renderer, snap-to-slot guarantee, and the "renderer follows `selectedID`,
+reports settled gestures via one `onSettled`" contract are all preserved. What was added,
+by subsystem:
 
-### Why a decelerating curve, not a physics loop
+### 1. Inertia (`CarouselGeometry.settleTarget` — pure, unit-tested)
 
-The "wheel" sensation is three effects; only one would need a physics loop:
+One entry point composes three feel rules on release, from the finger `translation` and a
+**self-computed** release `velocity`:
 
-1. **Throw distance scales with velocity** — handled entirely by the projection math.
-2. **Covers visibly sweep past center during the coast** — free from a single
-   continuous offset animation over a multi-slot distance: every intermediate cover
-   flips through center as the strip travels.
-3. **Decelerating motion, longer for farther throws** — an ease-out curve whose
-   *duration grows with distance* gives exactly this.
+1. **Deliberate drag** (speed < `flickVelocityThreshold` = 220 pt/s): lands purely by
+   translation — precise one-cover-at-a-time control, immune to noisy low-speed velocity
+   estimates from the A07's sparse `onChanged` delivery.
+2. **Flick floor** (speed ≥ threshold): a flick ALWAYS advances at least one slot in its
+   direction, even if the projection would round back — kills the "glued" brief-flick feel.
+3. **Momentum:** `projectedTranslation = translation + velocity × decelerationRate`
+   (`decelerationRate` = 0.13) carries a hard flick several covers; the existing
+   `snapTarget` rounding/clamping keeps the landing pinned.
 
-A frame-by-frame driver adds only marginal friction *feel* on top, while introducing a
-timer/animation driver that must behave identically across SwiftUI and Compose-via-Skip.
-Given this codebase's history with cross-bridge animation subtleties (the very reason
-the renderer was rewritten to be stateless math), we avoid a per-frame driver. The
-decelerating curve reuses the existing single-`withAnimation` settle path — the
-architecture that made the drift/recoil bug class structurally impossible.
+Velocity capture: a fixed-capacity ring of `(translation, Date)` samples appended per
+`onChanged`; release velocity = Δtranslation/Δt over the trailing ~100 ms. The ring is a
+**non-observable reference box** — appending must not invalidate the view or cross the
+bridge per drag frame (measured overhead + GC pressure when it was `@State`-observable).
 
-## Design
+### 2. Drag start (Android `minimumDistance: 0`)
 
-Inertia only changes *which slot* we land on and *how we travel there*. The stateless
-renderer, snap-to-slot guarantee, and the "renderer follows `selectedID`, reports
-settled gestures via one `onSettled`" contract all stay intact.
+`DragGesture(minimumDistance: 10)` makes SkipUI take Compose's
+`awaitPointerSlopOrCancellation` branch: `onChanged` stays silent until the system
+touch-slop (~8–16 dp), felt as a dead zone at the start of every swipe ("glued at
+start"). `0` takes the track-from-touch-down branch → immediate 1:1 response. Apple
+platforms keep `10` (preserves tap-to-focus pass-through; no slop problem there).
+Accepted trade-off: tap-to-focus on side covers may not work on Android (browse by swipe).
 
-### Component 1 — Velocity capture (`CoverFlowStrip`, new `@State`)
+### 3. Settle animation — ONE spring, one driver
 
-A small fixed-size ring buffer of recent drag samples `(translationWidth, timestamp)`,
-timestamped with `Date()` (available in app code on both platforms; unrelated to the
-workflow-script `Date.now()` restriction).
+- A single `settleSpring` shared by every settle path (drag release, tap, arrow key,
+  external cover-set change). A cover's offset is driven by BOTH `dragTranslation` and
+  `anchorIndex`; two curves — or two spring instances — fight mid-settle (measured as
+  "shaggy" glide / mid-move stall on Compose). A flick coasts far because the *target* is
+  farther, not because the curve differs.
+- Android runs the spring near-critically damped (`dampingFraction` 0.99 vs 0.85 on
+  Apple): at the A07's settle framerate the 0.85 overshoot collapses into 2–3 frames and
+  reads as a sloppy landing bump.
 
-- `dragGesture.onChanged` appends a sample.
-- `dragGesture.onEnded` computes `v = Δtranslation / Δt` (points/sec) over the most
-  recent ~100 ms window, falling back to `0` if too few samples or `Δt ≈ 0`.
-- Buffer cleared on release.
+### 4. Alive-window invariance (`visibleIndexRange` centered on the ROUNDED anchor)
 
-This is the only new view state. `Date()` timestamps must be confirmed to tick
-sub-frame on Skip/Android during implementation; the ~100 ms window + clamping mitigate
-sparse `onChanged` delivery from Compose.
+The instantiated-cell window is centered on the nearest slot to the effective anchor
+(= `snapTarget`'s rounding, clamped), not the fractional anchor. This makes the alive set
+**identical before and after a release** — previously the window shifted one slot at the
+settle instant, instantiating a fresh off-screen cell (AsyncImage + shadow + re-diff) that
+froze the A07's UI thread ~160 ms mid-glide. Pinned by a dedicated unit test
+(`window(during drag) == window(after landing)` for all anchor × drag-fraction combos).
 
-### Component 2 — Projection (`CarouselGeometry`, new pure func)
+### 5. Render cost (Android shadow)
 
-```
-projectedTranslation(translation, velocity) = translation + velocity * decelerationRate
-```
+The 18 px shadow blur re-renders every animation frame for ~9 covers; on the A07's Mali
+GPU that measured ~115 ms/frame (~9 fps) during any strip motion. Android draws a tight
+radius-6 shadow; Apple keeps the deep radius-18 look.
 
-`decelerationRate` is a seconds-equivalent constant (~0.30–0.40 s to start) converting
-velocity into coast distance via the standard exponential-deceleration approximation
-UIScrollView / Compose use. The **existing** `snapTarget` then consumes this projected
-value instead of `predictedEndTranslation`. Its rounding + clamping already guarantee a
-pinned landing; the unbounded/decelerating reach falls straight out of a large
-`velocity`.
+### 6. Deferred display sync (`CarouselModel.displaySelectedID`, Android-only lag)
 
-### Component 3 — Coast animation (duration helper + release path)
+Flipping the selection recomposes most of the screen (labels, background, back-to-live
+button); doing that at the release instant landed a 200 ms+ recomposition mid-glide (the
+measured "mid-animation freeze" remnant). Display surfaces follow a second id that lags
+~450 ms on Android (Apple: synchronous), letting the cover glide and pin first. Rapid
+settles coalesce; back-to-live and sync-fallback snap immediately.
 
-A new pure helper on `CarouselGeometry` returns an ease-out `Animation` whose **duration
-scales with slots traversed**, e.g. `base + perSlot * min(slots, cap)` clamped to a sane
-max (~0.9 s), so a far throw coasts long and eases in while a near move stays snappy.
+### 7. Background wash crossfade (per-platform)
 
-- Small drags / taps / arrow keys keep today's `settleSpring`.
-- On a flick release: one `withAnimation(coastCurve) { dragTranslation = 0; onSettled(target) }`
-  — the same single-animation settle path, no per-frame driver, no new bridge-sensitive
-  code.
+- **Apple:** the original native implicit `.animation(_, value:)` over the
+  wash/brand branch — interpolates gradient colors smoothly, never flashed.
+- **Android:** SkipUI renders that modifier as a single-frame swap, and every naive
+  crossfade flashed intermittently. As-built: **two persistent ping-pong layers** under
+  these flash-proofing rules (distilled from repeated pixel-level measurement):
+  1. A layer's COLOR may only be written while its rendered opacity is exactly 0
+     (Compose can render new content a frame before the opacity meant to hide it).
+  2. Visible opacities are only ever ANIMATED, never jumped — via per-layer implicit
+     `.animation(_, value: fade)` tweens (wall-clock `withAnimation` started inside the
+     recomposition storm loses most of its duration before the first rendered frame).
+  3. A settle window guards rewriting a layer still fading out (its rendered opacity is
+     nonzero even when its state target is 0).
+  Result: direct old→new dissolve (0.5 s easeInOut), no dip through the brand base,
+  verified monotonic (no flash frames) by frame-by-frame pixel measurement.
+- The driver lives on the MAIN view tree — on SkipUI/Android, lifecycle modifiers
+  attached to `.background {}` content never fire.
 
-## What does NOT change
+### 8. Contrast (text, tray, play glyph) — Android
 
-- `CarouselModel` (selection state), the callback/settle contract, `relativePosition`,
-  `xOffset`, `scale`, `rotationDegrees`, `zIndex`, `rubberBanded`, `visibleIndexRange`
-  (virtualization) — all untouched.
-- The "renderer follows `selectedID`, reports settled gestures" architecture — untouched.
-  A coast still ends in exactly one `onSettled`.
+`isBackgroundDark` (Rec. 601 luminance of the displayed dominant color) decides
+light-vs-dark foregrounds; the forced `colorScheme` environment doesn't recolor anything
+on Android and the device scheme is irrelevant to what's behind the text.
+
+- **Song label:** instant color, no fade — the string and color flip in the same update,
+  and the label is `.id(isBackgroundDark)`-keyed on Android so a contrast flip
+  structurally REPLACES the label (string + color born in one frame; in-place updates to
+  a visible Text tear on the bridge — string can render a frame before its color).
+  `REVERT-OPTION(text-contrast-fade)` in `RadioPlayerView.songLabel` documents the
+  two-layer fade alternative if this ever proves insufficient.
+- **Utility tray + play button center:** two fixed-tint layers cross-faded by
+  `textDarkFade` (colors never animated, never changed while visible), tweened by an
+  explicit `.animation(_, value:)` on the controls' root — the parent's `withAnimation`
+  transaction does not propagate across the bridged view boundary, which had the icons
+  snapping while the wash tweened. Curve/duration match the wash so everything dissolves
+  as one. The play glyph's contrast disc sits behind the Material icon's knocked-out
+  center (half the hero size — no ring outside the orange disc); the sleep timer's
+  active orange bypasses the crossfade.
+
+## What did NOT change
+
+`CarouselModel`'s settle contract, `relativePosition` / `xOffset` / `scale` /
+`rotationDegrees` / `zIndex` / `rubberBanded`, virtualization-by-math, and the iOS text
+styling (semantic `.primary`/`.secondary`).
 
 ## Testing
 
-Pure-function unit tests in `CarouselGeometryTests` (Swift Testing, `#expect`):
+- `CarouselGeometryTests` (24 tests): projection monotonicity + dead-zone; zero-velocity
+  regression guard; clamping at both ends; flick floor (un-glue, no-floor-on-drag,
+  floor-is-a-minimum); alive-window release invariance; the pre-existing fan/rubber-band
+  suites.
+- Full suite: 155 tests, 27 suites, green.
+- On-device verification (Samsung A07): frame-gap analysis via `screenrecord` +
+  `gfxinfo framestats` for the freezes; pixel-sampling of recorded swipes for the wash
+  (monotonic fade curves, no flash frames, no brand dip).
 
-- Projection is monotonic in velocity.
-- **Zero velocity ⇒ current behavior** (regression guard: matches `snapTarget` on raw
-  translation).
-- High velocity ⇒ far target, still clamped to valid indices.
-- Duration is monotonic in distance and capped at the max.
-- A hard flick from the last cover lands on a valid pinned slot (boundary + clamp).
+## Known limitations / follow-ups
 
-Feel constants (`decelerationRate`, duration `base`/`perSlot`/`cap`/`max`) are named
-tunables validated by these tests.
-
-## Risks / open items
-
-- **Clock:** confirm `Date()` timestamps tick sub-frame on Skip/Android. If not, find a
-  monotonic clock Skip surfaces.
-- **Sample rate:** sparse Compose `onChanged` delivery → noisy velocity; the ~100 ms
-  window + clamping mitigate; tunable.
-- **Constants are feel-driven:** `decelerationRate` and the duration curve need one
-  on-device tuning pass (A07 phone + Android Auto DHU) after the math is in.
+- Sub-cover-flow render rate on the A07 is bounded by the device GPU; residual ~100 ms
+  hitches can still appear under memory pressure.
+- Tap-to-focus on side covers is unavailable on Android (`minimumDistance: 0` trade).
+- **Separate issue to file:** iOS and Android disagree on the LIVE song's dominant color
+  (local artwork sampling vs backend/fallback), e.g. "La vie est cadeau" — dark on
+  Android, light on iOS. Consider preferring the backend palette on both platforms.
