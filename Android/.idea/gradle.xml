@@ -12,20 +12,20 @@
                   <project path="$PROJECT_DIR$/../.build/Android/skip-gradle" />
                 </projects>
               </build>
-              <build path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone" name="maxi80.module">
+              <build path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone" name="maxi80.module">
                 <projects>
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/Maxi80" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/Maxi80Model" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/Maxi80Services" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipAndroidBridge" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipBridge" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipFoundation" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipLib" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipModel" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipSwiftUI" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipUI" />
-                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipUnit" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80Model" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80Services" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipAndroidBridge" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipBridge" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipFoundation" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipLib" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipModel" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipSwiftUI" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipUI" />
+                  <project path="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipUnit" />
                 </projects>
               </build>
             </builds>
@@ -36,18 +36,18 @@
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$/../.build/Android/skip-gradle" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/Maxi80" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/Maxi80Model" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/Maxi80Services" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipAndroidBridge" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipBridge" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipFoundation" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipLib" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipModel" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipSwiftUI" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipUI" />
-            <option value="$PROJECT_DIR$/../.build/plugins/outputs/feat+mobile-played-at-time/Maxi80/destination/skipstone/SkipUnit" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80Model" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/Maxi80Services" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipAndroidBridge" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipBridge" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipFoundation" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipLib" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipModel" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipSwiftUI" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipUI" />
+            <option value="$PROJECT_DIR$/../.build/plugins/outputs/maxi80/Maxi80/destination/skipstone/SkipUnit" />
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/app" />
           </set>
