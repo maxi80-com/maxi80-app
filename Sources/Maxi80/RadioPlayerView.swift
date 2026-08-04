@@ -310,6 +310,24 @@ public struct RadioPlayerView: View {
         .foregroundStyle(subtitleColor)
         .lineLimit(2)
         .minimumScaleFactor(0.5)
+
+      // Air time of the browsed history entry ("Diffusé à 14:30"), so the block reads as history.
+      // `focusedEntryDate` is nil on the live slot, so this line only appears while browsing.
+      // Locale picks 24h vs AM-PM. `formatted(date:time:)` and `Bundle.localizedString` (not the
+      // `.hour().minute()` builder / `String(localized:)`) because those are the forms
+      // SkipFoundation provides. Colored from `subtitleColor` so it tracks the background exactly
+      // like the title/artist above it, just dimmer. Mirrors the TV view's treatment.
+      if let date = viewModel.focusedEntryDate {
+        Text(
+          String(
+            format: Bundle.module.localizedString(forKey: "Played at %@", value: nil, table: nil),
+            date.formatted(date: .omitted, time: .shortened)
+          )
+        )
+        .font(.system(size: airTimeFontSize, weight: .regular))
+        .foregroundStyle(subtitleColor.opacity(0.6))
+        .lineLimit(1)
+      }
     }
     .multilineTextAlignment(.center)
     .padding(.horizontal, 20)
@@ -346,6 +364,16 @@ public struct RadioPlayerView: View {
       } else {
         19  // iPhone
       }
+    #endif
+  }
+
+  /// Point size for the discreet "Played at …" air-time line. A step smaller than the artist so it
+  /// reads as secondary metadata; larger on the roomy iPad/macOS canvas to match the bigger title.
+  private var airTimeFontSize: CGFloat {
+    #if os(Android)
+      13
+    #else
+      usesExpandedLayout ? 16 : 13  // iPad and macOS : iPhone
     #endif
   }
 
