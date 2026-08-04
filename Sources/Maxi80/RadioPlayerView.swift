@@ -298,13 +298,13 @@ public struct RadioPlayerView: View {
 
   /// The title/artist block, with the browsed history entry's air time.
   ///
-  /// Two arrangements, chosen by `inlineHistoryTime`, because the two orientations have opposite
-  /// budgets. Portrait has vertical room, so it stacks title → artist → a discreet "Played at 14:30"
-  /// third line. Landscape's info column is short (it shares the height with the controls), and a
-  /// third line forced the title/artist to shrink via `minimumScaleFactor`; so landscape instead
-  /// puts artist on top and inlines the bare time in parentheses after the title — no third line,
-  /// title stays full size. Landscape keeps the artist-first order even on the live slot (where no
-  /// time shows) rather than reordering title/artist when the user swipes into history.
+  /// Both arrangements are artist-first (artist above title) so the two orientations read
+  /// consistently. They differ only in where the air time goes, because the orientations have
+  /// opposite vertical budgets. Portrait has room, so it stacks artist → title → a discreet
+  /// "Played at 14:30" third line. Landscape's info column is short (it shares the height with the
+  /// controls), and a third line forced the title/artist to shrink via `minimumScaleFactor`; so
+  /// landscape instead inlines the bare time in parentheses after the title — no third line, title
+  /// stays full size. Neither reorders on the live slot (where no time shows).
   @ViewBuilder
   private func songLabel(inlineHistoryTime: Bool = false) -> some View {
     let label = VStack(alignment: .center, spacing: 12) {
@@ -335,15 +335,17 @@ public struct RadioPlayerView: View {
           }
         }
       } else {
-        Text(viewModel.displayedTitle)
-          .foregroundStyle(titleColor)
-          .font(.system(size: titleFontSize, weight: .bold))
-          .lineLimit(2)
-          .minimumScaleFactor(0.5)
-
+        // Artist above the title, matching the landscape arrangement so the two orientations read
+        // consistently (artist-first everywhere).
         Text(viewModel.displayedArtist)
           .font(.system(size: subtitleFontSize, weight: .semibold))
           .foregroundStyle(subtitleColor)
+          .lineLimit(2)
+          .minimumScaleFactor(0.5)
+
+        Text(viewModel.displayedTitle)
+          .foregroundStyle(titleColor)
+          .font(.system(size: titleFontSize, weight: .bold))
           .lineLimit(2)
           .minimumScaleFactor(0.5)
 
