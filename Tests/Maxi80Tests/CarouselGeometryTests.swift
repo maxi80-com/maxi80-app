@@ -194,6 +194,17 @@ struct CarouselGeometryTests {
     #expect(moved == 6)
   }
 
+  @Test("settleTarget: floor follows the VELOCITY direction on a last-moment reversal")
+  func settleTargetFloorFollowsVelocityOnReversal() {
+    // Drag right (positive net translation, not far enough to move a slot), then flick left
+    // at lift: the release velocity is the flick signal, so the floor must advance one slot
+    // in the VELOCITY's direction (leftward → higher index), not the stale translation's.
+    let target = geometry.settleTarget(
+      anchorIndex: 5, translation: geometry.slotWidth * 0.2,
+      velocity: -CarouselGeometry.flickVelocityThreshold, coverCount: 20)
+    #expect(target == 6)
+  }
+
   @Test("settleTarget: a fast flick clears the floor and coasts several slots")
   func settleTargetFastFlickCoastsPastFloor() {
     // A hard flick moves well past the one-slot floor via momentum; the floor is a minimum,

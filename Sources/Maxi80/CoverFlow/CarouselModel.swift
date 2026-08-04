@@ -72,7 +72,11 @@ public final class CarouselModel {
     displaySyncTask?.cancel()
     #if os(Android)
       let target = selectedID
-      displaySyncTask = Task { [weak self] in
+      // Explicitly @MainActor: `Task {}` from a @MainActor context inherits the actor, but
+      // the annotation makes the isolation locally checkable rather than inherited-by-context
+      // (this model is observable UI state; a silent inheritance change must not move the
+      // write off the main actor).
+      displaySyncTask = Task { @MainActor [weak self] in
         try? await Task.sleep(for: Self.displaySyncDelay)
         guard !Task.isCancelled else { return }
         self?.displaySelectedID = target

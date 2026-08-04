@@ -283,11 +283,19 @@ struct CoverFlowStrip: View {
           setDragTranslationUnanimated(translation)
         }
         .onEnded { value in
-          let velocity = releaseVelocity(latest: value.translation.width)
+          // The SAME rubber-banded coordinate space as the samples and the on-screen strip:
+          // within bounds `rubberBanded` is the identity, so this only matters at the ends,
+          // where mixing raw with banded values would inflate the velocity estimate and
+          // settle the strip somewhere the user never saw.
+          let translation = geometry.rubberBanded(
+            translation: value.translation.width,
+            anchorIndex: anchorIndex,
+            coverCount: covers.count)
+          let velocity = releaseVelocity(latest: translation)
           dragSamples.samples.removeAll()
           let target = geometry.settleTarget(
             anchorIndex: anchorIndex,
-            translation: value.translation.width,
+            translation: translation,
             velocity: velocity,
             coverCount: covers.count)
           // ONE spring for every settle — see `settleSpring`. A far target (from a fast flick's

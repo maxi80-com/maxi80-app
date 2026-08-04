@@ -198,10 +198,13 @@ public struct CarouselGeometry: Sendable, Equatable {
     let snapped = snapTarget(
       anchorIndex: anchorIndex, predictedEndTranslation: projected, coverCount: coverCount)
     guard abs(velocity) >= Self.flickVelocityThreshold else { return snapped }
-    // Flick floor: a rightward finger flick (positive translation) reveals OLDER, lower-index
-    // covers, so it must land at least one index BELOW the anchor; a leftward flick at least
-    // one above. `snapTarget` already clamps, so re-clamp the floored index the same way.
-    let direction = translation >= 0 ? -1 : 1
+    // Flick floor: a rightward flick reveals OLDER, lower-index covers, so it must land at
+    // least one index BELOW the anchor; a leftward flick at least one above. Direction comes
+    // from the VELOCITY sign — in this branch |velocity| ≥ threshold, so it is the reliable
+    // flick signal, whereas the net translation can still carry the opposite sign after a
+    // last-moment reversal (drag right, flick left) and would floor AGAINST the momentum.
+    // `snapTarget` already clamps, so re-clamp the floored index the same way.
+    let direction = velocity >= 0 ? -1 : 1
     let floored = anchorIndex + direction
     let clampedFloor = min(max(floored, 0), coverCount - 1)
     return direction < 0 ? min(snapped, clampedFloor) : max(snapped, clampedFloor)
