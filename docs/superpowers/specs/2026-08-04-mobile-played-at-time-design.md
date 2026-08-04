@@ -44,7 +44,11 @@ New `airTimeFontSize` computed property, one step below the subtitle: **13pt on 
 
 ### Layout
 
-Conditional, **no height reservation**. The phone-portrait chrome-height budget (`phonePortraitSubviewsHeight`) is left untouched; the line simply adds ~24pt while browsing, exactly as the TV view behaves. This keeps the live-slot layout (the common case) unchanged and the hero as large as possible. On the smallest phones the column may shift slightly while browsing — an accepted trade-off per the design decision.
+Two arrangements, selected by a `songLabel(inlineHistoryTime:)` flag, because the orientations have opposite vertical budgets:
+
+- **Portrait** (`inlineHistoryTime: false`) — title → artist → discreet "Played at 14:30" **third line**, dim (`subtitleColor.opacity(0.6)`). No height reservation: the `phonePortraitSubviewsHeight` budget is untouched; the line only adds ~24pt while browsing. The live-slot layout (common case) is unchanged and the hero stays as large as possible.
+
+- **Landscape** (`inlineHistoryTime: true`) — the info column is short (it shares its height with the controls), so a third line shrank the title/artist via `minimumScaleFactor`. Instead: **artist on top, title below with the time inlined** in parentheses (`(14:02)`) baseline-aligned after it. No third line → title stays full size. The time uses the **brand orange** (distinct from portrait's dim color, matching the Back-to-live pill tint) to read as a history accent. Bare parenthesized locale time, no "Played at" prefix, to keep the line short. Applies to both phone and iPad landscape for consistency. Landscape keeps artist-first order even on the live slot (no time there) rather than reordering title/artist when the user swipes into history.
 
 ## Testing
 
