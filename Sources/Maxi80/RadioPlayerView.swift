@@ -296,65 +296,58 @@ public struct RadioPlayerView: View {
 
   // MARK: - Song Label
 
-  /// The title/artist block, with the browsed history entry's air time.
+  /// The song-info block for the browsed/live track.
   ///
-  /// Both arrangements are artist-first (artist above title) so the two orientations read
-  /// consistently. They differ only in where the air time goes, because the orientations have
-  /// opposite vertical budgets. Portrait has room, so it stacks artist → title → a discreet
-  /// "Played at 14:30" third line. Landscape's info column is short (it shares the height with the
-  /// controls), and a third line forced the title/artist to shrink via `minimumScaleFactor`; so
-  /// landscape instead inlines the bare time in parentheses after the title — no third line, title
-  /// stays full size. Neither reorders on the live slot (where no time shows).
+  /// Line 1 is the artist, rendered in the big primary style (`titleFontSize`/`titleColor`/bold);
+  /// line 2 is the song name in the smaller secondary style (`subtitleFontSize`/`subtitleColor`).
+  /// The browsed history entry's air time appears in the dim `subtitleColor.opacity(0.6)` in both
+  /// orientations — the only difference is placement, because they have opposite vertical budgets:
+  /// portrait has room for a discreet "Played at 14:30" third line, while landscape's info column
+  /// is short (a third line shrank the lines via `minimumScaleFactor`), so it inlines the bare time
+  /// in parentheses beside the song name instead. `focusedEntryDate` is nil on the live slot, so
+  /// the time is hidden there in both.
   @ViewBuilder
   private func songLabel(inlineHistoryTime: Bool = false) -> some View {
     let label = VStack(alignment: .center, spacing: 12) {
-      if inlineHistoryTime {
-        Text(viewModel.displayedArtist)
-          .font(.system(size: subtitleFontSize, weight: .semibold))
-          .foregroundStyle(subtitleColor)
-          .lineLimit(2)
-          .minimumScaleFactor(0.5)
+      // Line 1 — artist, the primary (big/bold) line.
+      Text(viewModel.displayedArtist)
+        .foregroundStyle(titleColor)
+        .font(.system(size: titleFontSize, weight: .bold))
+        .lineLimit(2)
+        .minimumScaleFactor(0.5)
 
-        // Title with the air time inlined after it (baseline-aligned so the smaller time sits on
-        // the title's baseline). The time uses the brand orange — deliberately distinct from the
-        // portrait treatment's dim color — to read as a history accent, matching the tint used by
-        // the Back-to-live pill. Bare parenthesized locale time (no "Played at" prefix) keeps the
-        // line short; `formatted(date:time:)` is the SkipFoundation-safe form and picks 24h vs AM-PM.
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+      if inlineHistoryTime {
+        // Line 2 — song name with the air time inlined after it (baseline-aligned so the smaller
+        // time sits on the name's baseline). Same dim `subtitleColor.opacity(0.6)` as the portrait
+        // third line. Bare parenthesized locale time (no "Played at" prefix) keeps the line short;
+        // `formatted(date:time:)` is the SkipFoundation-safe form and picks 24h vs AM-PM.
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
           Text(viewModel.displayedTitle)
-            .foregroundStyle(titleColor)
-            .font(.system(size: titleFontSize, weight: .bold))
+            .font(.system(size: subtitleFontSize, weight: .semibold))
+            .foregroundStyle(subtitleColor)
             .lineLimit(2)
             .minimumScaleFactor(0.5)
 
           if let date = viewModel.focusedEntryDate {
             Text(verbatim: "(\(date.formatted(date: .omitted, time: .shortened)))")
               .font(.system(size: airTimeFontSize, weight: .regular))
-              .foregroundStyle(.orange)
+              .foregroundStyle(subtitleColor.opacity(0.6))
               .lineLimit(1)
           }
         }
       } else {
-        // Artist above the title, matching the landscape arrangement so the two orientations read
-        // consistently (artist-first everywhere).
-        Text(viewModel.displayedArtist)
+        // Line 2 — song name.
+        Text(viewModel.displayedTitle)
           .font(.system(size: subtitleFontSize, weight: .semibold))
           .foregroundStyle(subtitleColor)
           .lineLimit(2)
           .minimumScaleFactor(0.5)
 
-        Text(viewModel.displayedTitle)
-          .foregroundStyle(titleColor)
-          .font(.system(size: titleFontSize, weight: .bold))
-          .lineLimit(2)
-          .minimumScaleFactor(0.5)
-
-        // Air time of the browsed history entry ("Diffusé à 14:30"), so the block reads as history.
-        // `focusedEntryDate` is nil on the live slot, so this line only appears while browsing.
-        // Locale picks 24h vs AM-PM. `formatted(date:time:)` and `Bundle.localizedString` (not the
-        // `.hour().minute()` builder / `String(localized:)`) because those are the forms
-        // SkipFoundation provides. Colored from `subtitleColor` so it tracks the background exactly
-        // like the title/artist above it, just dimmer. Mirrors the TV view's treatment.
+        // Line 3 (portrait only) — air time of the browsed history entry ("Diffusé à 14:30"), so
+        // the block reads as history. Locale picks 24h vs AM-PM. `formatted(date:time:)` and
+        // `Bundle.localizedString` (not the `.hour().minute()` builder / `String(localized:)`)
+        // because those are the forms SkipFoundation provides. Colored from `subtitleColor` so it
+        // tracks the background like the lines above it, just dimmer. Mirrors the TV view.
         if let date = viewModel.focusedEntryDate {
           Text(
             String(

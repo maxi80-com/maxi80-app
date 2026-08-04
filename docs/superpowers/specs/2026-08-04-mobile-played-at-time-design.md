@@ -44,11 +44,11 @@ New `airTimeFontSize` computed property, one step below the subtitle: **13pt on 
 
 ### Layout
 
-Both arrangements are **artist-first** (artist above title) so the two orientations read consistently. Selected by a `songLabel(inlineHistoryTime:)` flag; they differ only in where the air time goes, because the orientations have opposite vertical budgets:
+Both orientations are **artist-first**: line 1 is the artist in the big primary style (`titleFontSize`/`titleColor`/bold), line 2 is the song name in the smaller secondary style (`subtitleFontSize`/`subtitleColor`). The per-line font sizes/weights are the pre-existing ones — only the content was swapped between the two lines. Selected by a `songLabel(inlineHistoryTime:)` flag; the arrangements differ only in where the air time goes, because the orientations have opposite vertical budgets. In **both** the time is dim `subtitleColor.opacity(0.6)`:
 
-- **Portrait** (`inlineHistoryTime: false`) — artist → title → discreet "Played at 14:30" **third line**, dim (`subtitleColor.opacity(0.6)`). No height reservation: the `phonePortraitSubviewsHeight` budget is untouched; the line only adds ~24pt while browsing. The live-slot layout (common case) is unchanged and the hero stays as large as possible.
+- **Portrait** (`inlineHistoryTime: false`) — artist → song → discreet "Played at 14:30" **third line**. No height reservation: the `phonePortraitSubviewsHeight` budget is untouched; the line only adds ~24pt while browsing. The live-slot layout (common case) is unchanged and the hero stays as large as possible.
 
-- **Landscape** (`inlineHistoryTime: true`) — the info column is short (it shares its height with the controls), so a third line shrank the title/artist via `minimumScaleFactor`. Instead: **artist on top, title below with the time inlined** in parentheses (`(14:02)`) baseline-aligned after it. No third line → title stays full size. The time uses the **brand orange** (distinct from portrait's dim color, matching the Back-to-live pill tint) to read as a history accent. Bare parenthesized locale time, no "Played at" prefix, to keep the line short. Applies to both phone and iPad landscape.
+- **Landscape** (`inlineHistoryTime: true`) — the info column is short (it shares its height with the controls), so a third line shrank the lines via `minimumScaleFactor`. Instead the bare parenthesized locale time (`(14:02)`, no "Played at" prefix) is **inlined after the song name on line 2**, baseline-aligned — no third line, so the lines keep their full size. Applies to both phone and iPad landscape.
 
 Neither orientation reorders on the live slot (where no time shows) — the artist-first order is fixed, not history-dependent.
 
