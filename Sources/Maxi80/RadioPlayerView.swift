@@ -133,14 +133,20 @@ public struct RadioPlayerView: View {
               // immune to the recomposition-storm wall-clock loss that `withAnimation`
               // suffered here (the reason this driver used to defer 120ms). The back layer
               // fades up FROM 0, so its fresh color first renders invisible: no flash.
+              // A nil color is the generic/live slot: fade the incoming layer to 0 so BOTH
+              // the wash and the neutral base clear, revealing the brand gradient (matching
+              // iOS, which shows brandBackground() when dominantColor is nil). Fading up an
+              // empty-color layer would leave the neutral base covering the brand → a blank
+              // white/black background.
+              let show: Double = newColor == nil ? 0 : 1
               let toA = !washDriver.frontIsA
               if toA {
                 washAColor = newColor
               } else {
                 washBColor = newColor
               }
-              washAFade = toA ? 1 : 0
-              washBFade = toA ? 0 : 1
+              washAFade = toA ? show : 0
+              washBFade = toA ? 0 : show
               // Snaps in this commit; the tray/play-button carry their own matching tween.
               textDarkFade = viewModel.isBackgroundDark ? 0 : 1
               washDriver.frontIsA = toA
@@ -173,11 +179,23 @@ public struct RadioPlayerView: View {
   ///   through the brand base. Purely presentational here; the driver lives on the MAIN view
   ///   tree in `body`, because on SkipUI/Android lifecycle modifiers attached to
   ///   `.background {}` content never fire.
+  ///
+  ///   A scheme-neutral base sits UNDER the washes so a shown wash composites over the same
+  ///   light/dark system background iOS uses — NOT over the dark neon-dusk brand, which
+  ///   multiplied every color darker than iOS. Its opacity tracks how much wash is showing
+  ///   (`max(washAFade, washBFade)`), so it covers the brand exactly while a color is
+  ///   present and fades away with the wash to reveal the brand on the live slot. During a
+  ///   color→color crossfade one fade rises as the other falls, so the max stays high and
+  ///   the neutral base never dips (no mid-fade darkening).
   @ViewBuilder
   private func dynamicBackground(isPortrait: Bool) -> some View {
     #if os(Android)
       ZStack {
         brandBackground()
+        (colorScheme == .dark ? Color.black : Color.white)
+          .opacity(max(washAFade, washBFade))
+          .animation(.easeInOut(duration: 0.5), value: washAFade)
+          .animation(.easeInOut(duration: 0.5), value: washBFade)
         if let a = washAColor {
           washGradient(a, isPortrait: isPortrait)
             .opacity(washAFade * washMaxOpacity)
