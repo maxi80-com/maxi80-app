@@ -310,13 +310,15 @@ public struct RadioPlayerView: View {
   // adaptive-hero chrome budget below (rather than being hardcoded in two places).
   private static let phonePortraitVSpacing: CGFloat = 20
   private static let phonePortraitTopPadding: CGFloat = 12
-  private static let phonePortraitBottomPadding: CGFloat = 24
+  // Clearance for the pinned bottom footer. Sized for the brand-logo row (~22pt tall) plus a
+  // small margin above it, so the volume row never sits under the logo/version stamp.
+  private static let phonePortraitBottomPadding: CGFloat = 36
 
   /// Estimated height of the non-hero *subviews* in phone portrait — song labels + status slot +
   /// two-tier controls + volume row. Kept separate from the paddings/spacing (which are derived
   /// from the named constants above) so only this genuine content estimate is hand-tuned. If those
   /// subviews change materially, update this one number. Verified against iPhone SE → Pro Max.
-  /// (Kept so the derived total matches the previously tuned 448: 332 + 12 + 24 + 20*4.)
+  /// (This is only the subviews estimate; the derived chrome total adds paddings + gaps below.)
   private static let phonePortraitSubviewsHeight: CGFloat = 332
 
   /// Total fixed chrome height the adaptive hero must leave room for: the subview estimate plus the
@@ -697,16 +699,41 @@ public struct RadioPlayerView: View {
 
   // MARK: - Version Footer
 
-  /// A tiny, discreet build stamp pinned to the very bottom edge (phone screens only — the TV,
-  /// CarPlay, and Android Auto UIs are separate entry points and never render this view). The
-  /// string is extracted per-platform by `AppVersion`; the styling here is identical on both.
+  /// The bottom-edge chrome pinned across the full width in both orientations (the TV, CarPlay,
+  /// and Android Auto UIs are separate entry points and never render this view): the tappable
+  /// Maxi 80 brand logo on the leading edge, the discreet build stamp on the trailing edge. The
+  /// version string is extracted per-platform by `AppVersion`; the styling is identical on both.
   @ViewBuilder
   private var versionFooter: some View {
-    Text(verbatim: AppVersion.displayString)
-      .font(.system(size: 10))
-      .foregroundStyle(subtitleColor.opacity(0.6))
-      .padding(.bottom, 4)
-      .accessibilityHidden(true)
+    HStack(alignment: .bottom) {
+      brandLogo
+      Spacer(minLength: 12)
+      Text(verbatim: AppVersion.displayString)
+        .font(.system(size: 10))
+        .foregroundStyle(subtitleColor.opacity(0.6))
+        .accessibilityHidden(true)
+    }
+    .padding(.horizontal, 20)
+    .padding(.bottom, 4)
+  }
+
+  /// The Maxi 80 neon logo — a `Link` so a tap opens the station website in the system browser
+  /// (the same cross-platform pattern as the donate button; `Link` routes through `openURL`,
+  /// which launches the external browser on both iOS and Android). Sized as a small footer mark.
+  @ViewBuilder
+  private var brandLogo: some View {
+    let logo = Image("Maxi80Logo", bundle: .module)
+      .resizable()
+      .scaledToFit()
+      .frame(height: 22)
+      .opacity(0.8)
+      .accessibilityLabel(Text(verbatim: BrandConstants.name))
+
+    if let url = URL(string: BrandConstants.websiteURL) {
+      Link(destination: url) { logo }
+    } else {
+      logo
+    }
   }
 
   // MARK: - Error Banner
