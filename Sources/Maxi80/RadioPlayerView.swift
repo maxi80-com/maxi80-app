@@ -275,15 +275,6 @@ public struct RadioPlayerView: View {
 
   /// Whether to use the roomier "big canvas" treatment (enlarged hero + capped info/controls
   /// column) instead of the phone layout. True on iPad and on macOS — both have a large window to
-  /// fill; iPhone/Android phones keep the compact phone layout.
-  private var usesExpandedLayout: Bool {
-    #if os(macOS)
-      return true
-    #else
-      return PlatformEnvironment.isPad
-    #endif
-  }
-
   /// Width cap for the info/controls column in the expanded landscape layout.
   private let expandedColumnWidth: CGFloat = 420
   private let expandedHSpacing: CGFloat = 24
@@ -363,7 +354,7 @@ public struct RadioPlayerView: View {
 
   @ViewBuilder
   private func portraitView(containerWidth: CGFloat, containerHeight: CGFloat) -> some View {
-    if usesExpandedLayout {
+    if PlatformEnvironment.usesExpandedLayout {
       // iPad's tall canvas: anchor the enlarged hero + song info near the top and the controls
       // near the bottom, with flexible air between the two groups so the space reads as
       // intentional breathing room rather than one empty void above everything.
@@ -411,7 +402,7 @@ public struct RadioPlayerView: View {
 
   @ViewBuilder
   private func landscapeView(containerWidth: CGFloat) -> some View {
-    if usesExpandedLayout {
+    if PlatformEnvironment.usesExpandedLayout {
       // iPad / macOS landscape: let the hero fill the left half and vertically center the info +
       // controls as one block in the right half (title/artist/back-to-live sat too high before).
       HStack(spacing: expandedHSpacing) {
@@ -569,7 +560,7 @@ public struct RadioPlayerView: View {
     #if os(Android)
       26
     #else
-      if usesExpandedLayout {
+      if PlatformEnvironment.usesExpandedLayout {
         38  // iPad and macOS
       } else {
         26  // iPhone
@@ -581,7 +572,7 @@ public struct RadioPlayerView: View {
     #if os(Android)
       19
     #else
-      if usesExpandedLayout {
+      if PlatformEnvironment.usesExpandedLayout {
         30  // iPad and macOS
       } else {
         19  // iPhone
@@ -595,7 +586,7 @@ public struct RadioPlayerView: View {
     #if os(Android)
       13
     #else
-      usesExpandedLayout ? 16 : 13  // iPad and macOS : iPhone
+      PlatformEnvironment.usesExpandedLayout ? 16 : 13  // iPad and macOS : iPhone
     #endif
   }
 
@@ -615,7 +606,7 @@ public struct RadioPlayerView: View {
   /// of the device's light/dark setting.
   private var titleColor: Color {
     #if os(Android)
-      viewModel.isBackgroundDark ? .white : .black
+      ContrastStyle.resolve(isBackgroundDark: viewModel.isBackgroundDark).title
     #else
       .primary
     #endif
@@ -624,7 +615,7 @@ public struct RadioPlayerView: View {
   /// Subtitle color — a dimmed counterpart to `titleColor`, matching `.secondary` on Apple.
   private var subtitleColor: Color {
     #if os(Android)
-      viewModel.isBackgroundDark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
+      ContrastStyle.resolve(isBackgroundDark: viewModel.isBackgroundDark).subtitle
     #else
       .secondary
     #endif

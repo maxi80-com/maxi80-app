@@ -73,27 +73,17 @@ struct PlaybackControlsView: View {
 
   // MARK: - Sizing / spacing (per idiom)
 
-  /// The roomier treatment used on iPad and macOS (both fill a large window); iPhone/Android phones
-  /// keep the compact phone sizes. Mirrors `RadioPlayerView.usesExpandedLayout`.
-  private var usesExpandedLayout: Bool {
-    #if os(macOS)
-      return true
-    #else
-      return PlatformEnvironment.isPad
-    #endif
-  }
-
   /// Diameter of the play/pause hero disc.
-  private var heroSize: CGFloat { usesExpandedLayout ? 84 : 72 }
+  private var heroSize: CGFloat { PlatformEnvironment.usesExpandedLayout ? 84 : 72 }
   /// Diameter of each ghost-circle utility button (≥44pt touch target on phone).
-  private var secondaryFrame: CGFloat { usesExpandedLayout ? 60 : 48 }
+  private var secondaryFrame: CGFloat { PlatformEnvironment.usesExpandedLayout ? 60 : 48 }
   /// Point size of the glyph inside each utility button, normalized so the differing symbol shapes
   /// share one visual center.
-  private var secondaryGlyphSize: CGFloat { usesExpandedLayout ? 30 : 24 }
+  private var secondaryGlyphSize: CGFloat { PlatformEnvironment.usesExpandedLayout ? 30 : 24 }
   /// Fixed spacing between the three utility buttons so the trio stays centered.
-  private var traySpacing: CGFloat { usesExpandedLayout ? 44 : 28 }
+  private var traySpacing: CGFloat { PlatformEnvironment.usesExpandedLayout ? 44 : 28 }
   /// Gap between the hero tier and the utility tray.
-  private var tierSpacing: CGFloat { usesExpandedLayout ? 28 : 20 }
+  private var tierSpacing: CGFloat { PlatformEnvironment.usesExpandedLayout ? 28 : 20 }
 
   /// Tint for the utility glyphs and their ghost-circle backgrounds on Apple platforms, where
   /// `.secondary` already tracks the forced color scheme. Android doesn't use a single color:
@@ -127,14 +117,11 @@ struct PlaybackControlsView: View {
             // backing circle is well inside the orange disc (the Material glyph occupies the
             // icon's center) so no ring ever shows around the button.
             ZStack {
-              Circle()
-                .fill(Color.white)
-                .frame(width: heroSize * 0.5, height: heroSize * 0.5)
-                .opacity(1 - contrastDarkFade)
-              Circle()
-                .fill(Color.black)
-                .frame(width: heroSize * 0.5, height: heroSize * 0.5)
-                .opacity(contrastDarkFade)
+              CrossfadeLayer(contrastFade: contrastDarkFade, lightTint: .white, darkTint: .black) { tint in
+                Circle()
+                  .fill(tint)
+                  .frame(width: heroSize * 0.5, height: heroSize * 0.5)
+              }
               AndroidIcon(
                 symbol: viewModel.isPlaying ? .pause : .play, size: heroSize, tint: .orange)
             }
@@ -249,9 +236,8 @@ struct PlaybackControlsView: View {
       label()
         .frame(width: secondaryFrame, height: secondaryFrame)
         .background(
-          ZStack {
-            Circle().fill(Self.lightControl.opacity(0.12)).opacity(1 - contrastDarkFade)
-            Circle().fill(Self.darkControl.opacity(0.12)).opacity(contrastDarkFade)
+          CrossfadeLayer(contrastFade: contrastDarkFade, lightTint: Self.lightControl, darkTint: Self.darkControl) { tint in
+            Circle().fill(tint.opacity(0.12))
           }
         )
     #else
@@ -280,12 +266,10 @@ struct PlaybackControlsView: View {
         AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: fixedTint)
           .frame(width: secondaryGlyphSize, height: secondaryGlyphSize)
       } else {
-        ZStack {
-          AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: Self.lightControl)
-            .opacity((1 - contrastDarkFade) * dim)
-          AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: Self.darkControl)
-            .opacity(contrastDarkFade * dim)
+        CrossfadeLayer(contrastFade: contrastDarkFade, lightTint: Self.lightControl, darkTint: Self.darkControl) { tint in
+          AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: tint)
         }
+        .opacity(dim)
         .frame(width: secondaryGlyphSize, height: secondaryGlyphSize)
       }
     #else
@@ -309,26 +293,11 @@ struct PlaybackControlsView: View {
 struct SleepCountdownPill: View {
   @Bindable var viewModel: RadioPlayerViewModel
   @Binding var showPicker: Bool
-  #if os(Android)
-    // `TimelineView` isn't in SkipUI's surface, so tick a `@State` clock via a `Task` (below).
-    // Internal, not private: Skip's bridge requires @State properties to be non-private.
-    @State var now = Date()
-  #endif
 
   var body: some View {
-    #if os(Android)
+    PeriodicClock(interval: 1) { now in
       SleepCountdownPillBody(viewModel: viewModel, showPicker: $showPicker, now: now)
-        .task {
-          while !Task.isCancelled {
-            now = Date()
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-          }
-        }
-    #else
-      TimelineView(.periodic(from: .now, by: 1)) { context in
-        SleepCountdownPillBody(viewModel: viewModel, showPicker: $showPicker, now: context.date)
-      }
-    #endif
+    }
   }
 }
 
@@ -524,13 +493,9 @@ struct SleepTimerSheetRemaining: View {
   @Bindable var viewModel: RadioPlayerViewModel
 
   var body: some View {
-    #if os(Android)
-      SleepTimerSheetRemainingBody(viewModel: viewModel, now: Date())
-    #else
-      TimelineView(.periodic(from: Date(), by: 1)) { context in
-        SleepTimerSheetRemainingBody(viewModel: viewModel, now: context.date)
-      }
-    #endif
+    PeriodicClock(interval: 1) { now in
+      SleepTimerSheetRemainingBody(viewModel: viewModel, now: now)
+    }
   }
 }
 

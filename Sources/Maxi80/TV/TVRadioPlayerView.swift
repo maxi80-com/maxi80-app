@@ -418,13 +418,13 @@ public struct TVRadioPlayerView: View {
   // Title/artist sit directly on the dominant-color wash, so their color tracks the background's
   // brightness via `viewModel.isBackgroundDark` (computed from its luminance; always true for the
   // branded dark gradient): white text on dark backgrounds, dark text on bright ones.
-  private var titleColor: Color {
-    viewModel.isBackgroundDark ? .white : .black
+  private var contrast: ContrastStyle {
+    ContrastStyle.resolve(isBackgroundDark: viewModel.isBackgroundDark)
   }
 
-  private var subtitleColor: Color {
-    viewModel.isBackgroundDark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
-  }
+  private var titleColor: Color { contrast.title }
+
+  private var subtitleColor: Color { contrast.subtitle }
 
   @ViewBuilder
   private func errorBanner(message: String) -> some View {

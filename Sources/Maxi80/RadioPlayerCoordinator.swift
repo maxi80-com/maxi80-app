@@ -47,12 +47,13 @@ public final class RadioPlayerCoordinator {
   /// `Slider` to this value (through `viewModel.volume`).
   public var volume: Double = 1.0
 
-  /// When the sleep timer will fire, or `nil` when no timer is running. Storing the absolute fire
-  /// *date* (rather than a countdown integer) makes the remaining time always computable fresh, so
-  /// the countdown survives backgrounding/activity recreation without drift and needs no ticking
-  /// state of its own. This is the single source of truth for both "is a timer running" and "how
-  /// long is left".
-  public private(set) var sleepTimerFiresAt: Date?
+  /// When the sleep timer will fire, or `nil` when no timer is running. Delegates to the
+  /// extracted `SleepTimerManager`.
+  public var sleepTimerFiresAt: Date? { sleepTimerManager.firesAt }
+
+  /// Manages the sleep timer lifecycle (start/cancel/extend/fade).
+  @ObservationIgnored
+  let sleepTimerManager = SleepTimerManager()
 
   /// The generic cover shown before any song has played. Chosen once per launch.
   @ObservationIgnored
@@ -73,18 +74,11 @@ public final class RadioPlayerCoordinator {
   /// Retries the artwork lookup for the current song when it wasn't available on first fetch
   /// (backend collector hadn't produced it yet). Cancelled whenever the song changes.
   @ObservationIgnored
-  private var artworkRetryTask: Task<Void, Never>?
-  /// The running sleep-timer task: sleeps until the fire time, then fades out and stops playback.
-  /// Cancelled by `cancelSleepTimer()` and superseded by `startSleepTimer(minutes:)`.
+  private let artworkRetryManager = ArtworkRetryManager()
   @ObservationIgnored
-  private var sleepTimerTask: Task<Void, Never>?
-
-  #if !SKIP
-    /// Modern NowPlaying-framework publisher (iOS 26+). `nil` on platforms/SDKs without the
-    /// framework, in which case the bridged MediaPlayer `nowPlaying` is used instead.
-    @ObservationIgnored
-    private var modernNowPlaying: (any NowPlayingPublishing)?
-  #endif
+  private let historyReconciler = HistoryReconciler()
+  @ObservationIgnored
+  private var nowPlayingFacade: NowPlayingFacade!
 
   /// Default stream URL used when station hasn't loaded yet.
   private let defaultStreamURL = BrandConstants.streamURL
@@ -115,18 +109,17 @@ public final class RadioPlayerCoordinator {
     setupCallbacks()
     setupReconnection()
 
-    #if !SKIP
-      // Prefer the modern NowPlaying framework when available (iOS 27+); nil elsewhere, so the
-      // bridged MediaPlayer `nowPlaying` remains the fallback.
-      modernNowPlaying = makeModernNowPlaying(
-        onPlay: { [weak self] in self?.handleRemoteCommand("play") },
-        onPause: { [weak self] in self?.handleRemoteCommand("pause") }
-      )
-      let nowPlayingPath =
-        modernNowPlaying == nil
-        ? "FALLBACK (MPNowPlayingInfoCenter)" : "MODERN (NowPlaying framework)"
-      logger.info("NowPlaying path: \(nowPlayingPath)")
-    #endif
+    // Consolidate the modern (NowPlaying framework, iOS 27+) and bridged (MediaPlayer) paths
+    // into a single facade so the coordinator never needs to branch on `#if !SKIP` for publishing.
+    nowPlayingFacade = NowPlayingFacade(
+      fallback: nowPlaying,
+      onPlay: { [weak self] in self?.handleRemoteCommand("play") },
+      onPause: { [weak self] in self?.handleRemoteCommand("pause") }
+    )
+    let nowPlayingPath =
+      nowPlayingFacade.usesModernFramework
+      ? "MODERN (NowPlaying framework)" : "FALLBACK (MPNowPlayingInfoCenter)"
+    logger.info("NowPlaying path: \(nowPlayingPath)")
 
     // Seed the volume from the system's current level and start tracking hardware-button changes.
     // `startObservingVolume()` is a no-op on Apple platforms (iOS/tvOS track hardware volume through
@@ -251,99 +244,32 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Sleep Timer
 
-  /// How long the fade-out runs before playback stops, in nanoseconds.
-  private static let sleepFadeDurationNanos: UInt64 = 2_500_000_000
-  /// Number of attenuation steps across the fade. ~12 steps over ~2.5s is smooth without spinning.
-  /// `nonisolated` so the pure `fadeMultiplier(step:)` helper can read it off the main actor.
-  nonisolated private static let sleepFadeSteps = 12
-
-  /// The attenuation multiplier at `step` (1…`sleepFadeSteps`); the final step is `0.0` (silence).
-  /// Pure/static so the fade ramp is unit-testable without real sleeping — a future change to
-  /// `sleepFadeSteps` can't silently leave a non-zero final multiplier (faded-but-audible on stop).
-  nonisolated static func fadeMultiplier(step: Int) -> Double {
-    1.0 - Double(step) / Double(sleepFadeSteps)
-  }
-
-  /// Compute the absolute fire date for a timer of `minutes`, relative to `now`. Pure and static so
-  /// the arithmetic is unit-testable without real sleeping or a live coordinator. Negative or zero
-  /// durations clamp to `now` (fire immediately) rather than scheduling in the past.
-  nonisolated static func sleepTimerFireDate(minutes: Int, from now: Date) -> Date {
-    now.addingTimeInterval(TimeInterval(max(0, minutes) * 60))
-  }
-
-  /// Whole minutes remaining until `firesAt`, relative to `now`, rounded up so a partial final
-  /// minute still counts (e.g. 90s left → 2 min). Never negative. Pure/static for testability;
-  /// used by `extendSleepTimer(minutes:)` to fold the current remainder into the new duration.
-  nonisolated static func remainingMinutes(until firesAt: Date, from now: Date) -> Int {
-    let seconds = firesAt.timeIntervalSince(now)
-    guard seconds > 0 else { return 0 }
-    return Int((seconds / 60).rounded(.up))
-  }
+  // MARK: - Sleep Timer (delegated to SleepTimerManager)
 
   /// Start (or restart) the sleep timer for `minutes` from now. Playback fades out and stops when it
-  /// fires. Modeled on `startArtworkRetry(for:)`: a stored cancelable `Task` with `Task.isCancelled`
-  /// guards. Cancelling or extending mid-run supersedes this task cleanly.
+  /// fires.
   public func startSleepTimer(minutes: Int) {
-    // Enforce the "only settable while playing" invariant at the API boundary, not only in the UI's
-    // `isEnabled`: a sleep timer with no audio is meaningless and would fire a fade/stop on an idle
-    // player. Keeps any current/future caller in sync with the UI.
-    guard case .playing = playbackState else {
-      logger.info("ignoring sleep timer request while not playing")
-      return
-    }
-    sleepTimerTask?.cancel()
-    let firesAt = Self.sleepTimerFireDate(minutes: minutes, from: Date())
-    sleepTimerFiresAt = firesAt
-    logger.info("sleep timer set for \(minutes) min (fires at \(firesAt))")
-
-    sleepTimerTask = Task { [weak self] in
-      let interval = firesAt.timeIntervalSinceNow
-      if interval > 0 {
-        try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-      }
-      if Task.isCancelled { return }
-      guard let self else { return }
-      await self.fireSleepTimer()
-    }
+    sleepTimerManager.start(
+      minutes: minutes,
+      isPlaying: playbackState.isPlaying,
+      setAttenuation: { [weak self] value in self?.player.setPlaybackAttenuation(value) },
+      onFired: { [weak self] in self?.stopForDisconnect() }
+    )
   }
 
-  /// Cancel a running sleep timer and restore full playback volume. A no-op when no timer is
-  /// running (so the fire path, which clears its own state first, doesn't re-enter it).
+  /// Cancel a running sleep timer and restore full playback volume.
   public func cancelSleepTimer() {
-    guard sleepTimerFiresAt != nil || sleepTimerTask != nil else { return }
-    sleepTimerTask?.cancel()
-    sleepTimerTask = nil
-    sleepTimerFiresAt = nil
-    player.setPlaybackAttenuation(1.0)
-    logger.info("sleep timer cancelled")
+    sleepTimerManager.cancel(setAttenuation: { [weak self] value in self?.player.setPlaybackAttenuation(value) })
   }
 
-  /// Extend the running timer by `minutes`, folding in whatever time is currently left. When no
-  /// timer is running this is a no-op (the UI only offers extend while active).
+  /// Extend the running timer by `minutes`, folding in whatever time is currently left.
   public func extendSleepTimer(minutes: Int) {
-    guard let firesAt = sleepTimerFiresAt else { return }
-    let remaining = Self.remainingMinutes(until: firesAt, from: Date())
-    startSleepTimer(minutes: remaining + minutes)
-  }
-
-  /// Runs when the timer elapses: fade the output to silence, then perform the existing true-stop
-  /// and restore attenuation for the next play. Clears `sleepTimerFiresAt`/`sleepTimerTask` up front
-  /// so the observable "timer running" state ends the moment it fires. If playback was already
-  /// stopped (the user paused earlier and never resumed), the fade + stop are inaudible no-ops.
-  private func fireSleepTimer() async {
-    logger.info("sleep timer fired — fading out and stopping")
-    sleepTimerFiresAt = nil
-    sleepTimerTask = nil
-
-    let stepDelay = Self.sleepFadeDurationNanos / UInt64(Self.sleepFadeSteps)
-    for step in 1...Self.sleepFadeSteps {
-      if Task.isCancelled { player.setPlaybackAttenuation(1.0); return }
-      player.setPlaybackAttenuation(Self.fadeMultiplier(step: step))
-      try? await Task.sleep(nanoseconds: stepDelay)
-    }
-
-    stopForDisconnect()
-    player.setPlaybackAttenuation(1.0)
+    sleepTimerManager.extend(
+      minutes: minutes,
+      isPlaying: playbackState.isPlaying,
+      setAttenuation: { [weak self] value in self?.player.setPlaybackAttenuation(value) },
+      onFired: { [weak self] in self?.stopForDisconnect() }
+    )
   }
 
   // MARK: - CarPlay
@@ -368,11 +294,10 @@ public final class RadioPlayerCoordinator {
   /// effect immediately. Uses the current song when known, else the station as a placeholder
   /// title so Now Playing isn't blank before the first song.
   private func republishNowPlaying() {
-    let playing = { if case .playing = playbackState { return true } else { return false } }()
     let artist = currentSong?.artist ?? station?.name ?? BrandConstants.name
     let title = currentSong?.title ?? station?.shortDesc ?? ""
     let url = currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
-    publishNowPlaying(artist: artist, title: title, artworkURL: url, isPlaying: playing)
+    publishNowPlaying(artist: artist, title: title, artworkURL: url, isPlaying: playbackState.isPlaying)
   }
 
   /// Fetch station metadata on launch with fallback chain.
@@ -380,7 +305,7 @@ public final class RadioPlayerCoordinator {
     logger.info("loadStation: GET /station")
     let stationJSON = try? await apiClient.fetchStation()
 
-    if let json = stationJSON, let parsed = parseStation(from: json) {
+    if let json = stationJSON, let parsed = decodeJSON(json, as: Station.self) {
       logger.info(
         "loadStation: station loaded — name=\(parsed.name), streamUrl=\(parsed.streamUrl)")
       station = parsed
@@ -522,7 +447,7 @@ public final class RadioPlayerCoordinator {
     currentSong = metadata
 
     // A new song supersedes any in-flight artwork retry for the previous one.
-    artworkRetryTask?.cancel()
+    artworkRetryManager.cancel()
 
     // Fetch artwork asynchronously
     logger.info("fetching artwork for current song")
@@ -564,36 +489,19 @@ public final class RadioPlayerCoordinator {
     // If artwork wasn't ready (backend collector hadn't produced it yet), retry in the
     // background — the cover fills in once it appears, without waiting for the next song.
     if artwork.isDefault {
-      startArtworkRetry(for: metadata)
-    }
-  }
-
-  /// Delays between artwork retries when the first lookup found nothing. Grows so we catch up
-  /// quickly then back off; the sequence spans ~65s, comfortably covering the collector's cadence.
-  private static let artworkRetryDelays: [UInt64] = [5, 10, 20, 30].map { $0 * 1_000_000_000 }
-
-  /// Retry the artwork lookup for `metadata` with backoff until it resolves or the song changes.
-  /// The `ArtworkService` no longer caches misses, so each attempt actually re-queries the backend.
-  private func startArtworkRetry(for metadata: SongMetadata) {
-    artworkRetryTask = Task { [weak self] in
-      for delay in Self.artworkRetryDelays {
-        try? await Task.sleep(nanoseconds: delay)
-        if Task.isCancelled { return }
-        guard let self else { return }
-
-        // Bail if the song moved on while we were waiting.
-        guard self.currentSong == metadata else { return }
-
-        let artwork = await self.artworkService.fetchArtwork(
-          artist: metadata.artist, title: metadata.title)
-        if Task.isCancelled || self.currentSong != metadata { return }
-        guard !artwork.isDefault else { continue }
-
-        logger.info("artwork retry succeeded for \(metadata.artist) — \(metadata.title)")
-        self.applyRetriedArtwork(artwork, for: metadata)
-        return
-      }
-      logger.debug("artwork retry exhausted for \(metadata.artist) — \(metadata.title)")
+      artworkRetryManager.startRetry(
+        for: metadata,
+        currentSong: { [weak self] in self?.currentSong },
+        fetchArtwork: { [weak self] artist, title in
+          guard let self else {
+            return ArtworkResult(image: nil, dominantColor: .gray, isDefault: true)
+          }
+          return await self.artworkService.fetchArtwork(artist: artist, title: title)
+        },
+        onResolved: { [weak self] artwork, metadata in
+          self?.applyRetriedArtwork(artwork, for: metadata)
+        }
+      )
     }
   }
 
@@ -613,12 +521,11 @@ public final class RadioPlayerCoordinator {
   private func applyRetriedArtwork(_ artwork: ArtworkResult, for metadata: SongMetadata) {
     currentArtwork = artwork
     cacheArtworkImage(artwork)
-    let playing = { if case .playing = playbackState { return true } else { return false } }()
     publishNowPlaying(
       artist: metadata.artist,
       title: metadata.title,
       artworkURL: artwork.url,
-      isPlaying: playing
+      isPlaying: playbackState.isPlaying
     )
 
     // Update the newest history entry for this song (the live-appended one) in place.
@@ -642,28 +549,19 @@ public final class RadioPlayerCoordinator {
     artist: String, title: String, artworkURL: String?, isPlaying: Bool
   ) {
     // On CarPlay, substitute the bundled generic cover for a missing remote one so the car's
-    // Now Playing template is never blank. Both sinks below load artwork by URL and accept a
-    // `file://` URL, so the placeholder rides the same path — the phone is unaffected because
-    // this only fires while CarPlay is connected.
+    // Now Playing template is never blank.
     let publishedArtworkURL =
       shouldPublishPlaceholderArtwork(forArtworkURL: artworkURL)
       ? placeholderArtworkFileURL
       : artworkURL
 
-    #if !SKIP
-      if let modernNowPlaying {
-        modernNowPlaying.activate()
-        modernNowPlaying.update(
-          stationName: station?.name ?? BrandConstants.name,
-          programName: "\(title) — \(artist)",
-          artworkURL: publishedArtworkURL,
-          isPlaying: isPlaying
-        )
-        return
-      }
-    #endif
-    nowPlaying.updateNowPlaying(
-      artist: artist, title: title, artworkURL: publishedArtworkURL, isPlaying: isPlaying)
+    nowPlayingFacade.publish(
+      artist: artist,
+      title: title,
+      stationName: station?.name ?? BrandConstants.name,
+      artworkURL: publishedArtworkURL,
+      isPlaying: isPlaying
+    )
   }
 
   /// A `file://` URL string for this launch's generic placeholder cover, materialized once from
@@ -708,15 +606,9 @@ public final class RadioPlayerCoordinator {
     #endif
   }
 
-  /// Publish only the play/pause state, via the same modern-or-fallback routing.
+  /// Publish only the play/pause state, via the Now Playing facade.
   private func publishPlaybackState(isPlaying: Bool) {
-    #if !SKIP
-      if let modernNowPlaying {
-        modernNowPlaying.updatePlaybackState(isPlaying: isPlaying)
-        return
-      }
-    #endif
-    nowPlaying.updatePlaybackState(isPlaying: isPlaying)
+    nowPlayingFacade.publishState(isPlaying: isPlaying)
   }
 
   // MARK: - Reconnection
@@ -859,151 +751,11 @@ public final class RadioPlayerCoordinator {
   /// Fetches `/history` and merges it into the in-memory list. Internal (not private) so tests
   /// can await it directly; production callers go through `refreshHistory`/`refreshHistoryIfStale`.
   func fetchHistory() async {
-    logger.info("fetchHistory: GET /history")
-    guard let json = try? await apiClient.fetchHistory(),
-      let entries = parseHistoryEntries(from: json)
-    else {
-      logger.notice("fetchHistory: no data or decode failed")
-      return
-    }
-
-    // First load (empty history): resolve artwork for every entry and seed the list.
-    if history.isEmpty {
-      let resolved = await resolveArtwork(for: entries)
-      // Re-check AFTER the await: `handleMetadataChanged` may have live-appended a song while we
-      // were suspended resolving artwork (both run on @MainActor but interleave across suspension
-      // points). Overwriting `history` here would either drop that live entry or, combined with a
-      // later fetch, duplicate it. If the list is no longer empty, reconcile incrementally against
-      // the live array instead of clobbering it.
-      if history.isEmpty {
-        history = resolved
-      } else {
-        mergeResolvedEntries(resolved)
-      }
-      lastHistoryFetchedAt = Date()
-      logger.info("fetchHistory: seeded \(self.history.count) entries")
-      return
-    }
-
-    lastHistoryFetchedAt = Date()
-
-    // Reconcile the backend list into the in-memory one, matching by SONG identity
-    // (artist+title), NOT by `id`: a live-appended entry and the backend's own copy of the same
-    // song get different timestamps → different ids, so id-based matching would show a duplicate.
-    //
-    // Two things are resolved against the backend:
-    //   1. Genuinely NEW songs not in memory yet (played while stopped/paused).
-    //   2. EXISTING songs still MISSING artwork — a live entry appended before the backend had
-    //      produced the cover carries `artworkURL == nil`; the backend copy now resolves one.
-    //      Without this, keeping the stale nil-artwork live entry would leave it blank forever.
-    // Songs already showing artwork are left untouched (no reload, no flicker). Legitimate
-    // repeat plays (same song at different times) are preserved — we edit in place and append,
-    // never collapse by song.
-    // Identity, not raw songMetadata: a backend `Maxi80` entry and a live artist-less entry for
-    // the same program collapse to one identity, so they heal into a single entry rather than
-    // showing a duplicate cover.
-    let existingSongs = Set(history.map(\.songIdentity))
-    let songsMissingArtwork = Set(history.filter { $0.artworkURL == nil }.map(\.songIdentity))
-
-    // Backend entries worth resolving: new songs, or songs an in-memory entry still lacks art for.
-    let toResolve = entries.filter {
-      !existingSongs.contains($0.songIdentity) || songsMissingArtwork.contains($0.songIdentity)
-    }
-    guard !toResolve.isEmpty else {
-      logger.info("fetchHistory: nothing new or missing artwork to merge")
-      return
-    }
-
-    let resolved = await resolveArtwork(for: toResolve)
-
-    // Heal existing entries and append genuinely-new songs, deduping against the LIVE `history`
-    // read *after* the await — not the `existingSongs` snapshot taken before it. See
-    // `mergeResolvedEntries` for why the post-await read is required.
-    mergeResolvedEntries(resolved)
-  }
-
-  /// Merges backend-resolved entries into the live `history`: heals in-place any existing entry
-  /// missing artwork/artist from its backend copy, then appends songs not already present, ordered
-  /// by timestamp.
-  ///
-  /// The existence check keys off `history` **as read here**, at mutation time — NOT off a snapshot
-  /// captured before the artwork `await` in `fetchHistory()`. `RadioPlayerCoordinator` is
-  /// `@MainActor`, which prevents data races but not interleaving across suspension points: while
-  /// `fetchHistory()` is suspended resolving artwork, `handleMetadataChanged(...)` can run to
-  /// completion and live-append the currently-playing song. Deduping against a pre-await snapshot
-  /// would then miss that live entry and append the backend's copy of the same song a second time
-  /// → the duplicate reported in issue #28. Reading `history` here closes that window.
-  ///
-  /// Dedup is by *presence in the current array* (`songIdentity`), so genuine repeat plays (same
-  /// song, different timestamps) are preserved — the backend reports each song once, so a repeat
-  /// that is already in memory simply isn't re-appended.
-  private func mergeResolvedEntries(_ resolved: [HistoryEntry]) {
-    // Backend entry per identity, for healing existing entries (carries the `Maxi80` artist,
-    // artwork URL, and color the live copy may be missing).
-    var backendBySong: [SongMetadata: HistoryEntry] = [:]
-    for entry in resolved {
-      backendBySong[entry.songIdentity] = entry
-    }
-
-    // 1. Heal existing entries against the backend copy, in place (preserves order & repeats).
-    //    Merges when the in-memory entry lacks artwork or a real artist; `mergedWith` keeps the
-    //    non-empty `Maxi80` artist and fills artwork/color.
-    var healed = 0
-    history = history.map { entry in
-      guard entry.artworkURL == nil || entry.artist.isEmpty,
-        let backend = backendBySong[entry.songIdentity]
-      else { return entry }
-      let merged = entry.mergedWith(backend)
-      if merged != entry { healed += 1 }
-      return merged
-    }
-
-    // 2. Append genuinely-new songs, then order by timestamp so newest sits nearest the now-slot
-    //    (the carousel renders history oldest→newest, left→right). Dedup against the LIVE array
-    //    read on the line above — not a pre-await snapshot — so a song `handleMetadataChanged`
-    //    live-appended during the artwork await is not added a second time.
-    let existingSongsNow = Set(history.map(\.songIdentity))
-    let newEntries = resolved.filter { !existingSongsNow.contains($0.songIdentity) }
-    if !newEntries.isEmpty {
-      history = (history + newEntries).sorted { $0.timestamp < $1.timestamp }
-    }
-    logger.info(
-      "fetchHistory: healed \(healed), added \(newEntries.count); history now has \(self.history.count)"
+    await historyReconciler.fetchAndReconcile(
+      apiClient: apiClient,
+      artworkService: artworkService,
+      history: &history
     )
-  }
-
-  /// Resolves each entry's artwork S3 key into a lightweight presigned URL, concurrently.
-  /// AsyncImage loads the image lazily — we do NOT download it here. The background color is
-  /// derived from the backend `colors` palette already decoded on the entry; if absent it stays nil.
-  private func resolveArtwork(for entries: [HistoryEntry]) async -> [HistoryEntry] {
-    await withTaskGroup(of: (Int, String?).self) { group in
-      for (index, entry) in entries.enumerated() {
-        group.addTask { [artworkService] in
-          let url = await artworkService.resolveArtworkURL(artist: entry.artist, title: entry.title)
-          return (index, url)
-        }
-      }
-      var urlByIndex = [Int: String?]()
-      for await (index, url) in group {
-        urlByIndex[index] = url
-      }
-      return entries.enumerated().map { index, entry -> HistoryEntry in
-        var copy = entry
-        copy.artworkURL = urlByIndex[index] ?? nil
-        return copy
-      }
-    }
-  }
-
-  // MARK: - JSON Parsing Helpers
-
-  private func parseStation(from json: String) -> Station? {
-    guard let data = json.data(using: .utf8) else { return nil }
-    return try? JSONDecoder().decode(Station.self, from: data)
-  }
-
-  private func parseHistoryEntries(from json: String) -> [HistoryEntry]? {
-    guard let data = json.data(using: .utf8) else { return nil }
-    return try? JSONDecoder().decode(HistoryResponse.self, from: data).entries
+    lastHistoryFetchedAt = Date()
   }
 }

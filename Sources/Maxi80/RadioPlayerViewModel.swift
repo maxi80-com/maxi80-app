@@ -48,8 +48,7 @@ public final class RadioPlayerViewModel {
   // MARK: - Coordinator-Derived State (read-through, tracked by Observation)
 
   public var isPlaying: Bool {
-    if case .playing = coordinator.playbackState { return true }
-    return false
+    coordinator.playbackState.isPlaying
   }
 
   public var isLoading: Bool {
@@ -301,6 +300,10 @@ public final class RadioPlayerViewModel {
       coordinator.play()
     }
   }
+
+  // MARK: - Coordinator Passthroughs
+  // These methods delegate directly to the coordinator with no additional logic or transformation.
+  // They exist to keep the view model as the single API boundary for views.
 
   public func setVolume(_ volume: Double) {
     // Writes to the system STREAM_MUSIC level (Android); the coordinator's observable `volume`

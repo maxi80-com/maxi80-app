@@ -52,15 +52,15 @@ struct SleepTimerTests {
   @Test("Fire date is the reference date plus the requested minutes")
   func fireDateAddsMinutes() {
     let base = Date(timeIntervalSince1970: 1_000_000)
-    let firesAt = RadioPlayerCoordinator.sleepTimerFireDate(minutes: 30, from: base)
+    let firesAt = SleepTimerManager.sleepTimerFireDate(minutes: 30, from: base)
     #expect(firesAt == base.addingTimeInterval(30 * 60))
   }
 
   @Test("A non-positive duration clamps to the reference date (fires immediately)")
   func fireDateClampsNonPositive() {
     let base = Date(timeIntervalSince1970: 1_000_000)
-    #expect(RadioPlayerCoordinator.sleepTimerFireDate(minutes: 0, from: base) == base)
-    #expect(RadioPlayerCoordinator.sleepTimerFireDate(minutes: -10, from: base) == base)
+    #expect(SleepTimerManager.sleepTimerFireDate(minutes: 0, from: base) == base)
+    #expect(SleepTimerManager.sleepTimerFireDate(minutes: -10, from: base) == base)
   }
 
   @Test("Remaining minutes rounds a partial final minute up")
@@ -68,10 +68,10 @@ struct SleepTimerTests {
     let base = Date(timeIntervalSince1970: 1_000_000)
     // 90 seconds left → 2 minutes.
     let firesAt = base.addingTimeInterval(90)
-    #expect(RadioPlayerCoordinator.remainingMinutes(until: firesAt, from: base) == 2)
+    #expect(SleepTimerManager.remainingMinutes(until: firesAt, from: base) == 2)
     // Exactly 15 minutes left → 15.
     #expect(
-      RadioPlayerCoordinator.remainingMinutes(until: base.addingTimeInterval(15 * 60), from: base)
+      SleepTimerManager.remainingMinutes(until: base.addingTimeInterval(15 * 60), from: base)
         == 15)
   }
 
@@ -79,17 +79,17 @@ struct SleepTimerTests {
   func remainingMinutesClampsPast() {
     let base = Date(timeIntervalSince1970: 1_000_000)
     let firesAt = base.addingTimeInterval(-60)
-    #expect(RadioPlayerCoordinator.remainingMinutes(until: firesAt, from: base) == 0)
+    #expect(SleepTimerManager.remainingMinutes(until: firesAt, from: base) == 0)
   }
 
   @Test("The fade ramp ends at exactly zero (no faded-but-audible final step)")
   func fadeMultiplierEndsAtSilence() {
     // The last step must be full silence so the stream is never audible at the moment of stop.
-    #expect(RadioPlayerCoordinator.fadeMultiplier(step: 12) == 0.0)
+    #expect(SleepTimerManager.fadeMultiplier(step: 12) == 0.0)
     // The ramp is monotonic and starts below 1.0.
-    #expect(RadioPlayerCoordinator.fadeMultiplier(step: 1) < 1.0)
+    #expect(SleepTimerManager.fadeMultiplier(step: 1) < 1.0)
     #expect(
-      RadioPlayerCoordinator.fadeMultiplier(step: 1) > RadioPlayerCoordinator.fadeMultiplier(step: 6)
+      SleepTimerManager.fadeMultiplier(step: 1) > SleepTimerManager.fadeMultiplier(step: 6)
     )
   }
 
@@ -98,7 +98,7 @@ struct SleepTimerTests {
     let base = Date(timeIntervalSince1970: 1_000_000)
     // 20 minutes remaining, extend by 15 → the new timer is 35 minutes from now.
     let firesAt = base.addingTimeInterval(20 * 60)
-    let remaining = RadioPlayerCoordinator.remainingMinutes(until: firesAt, from: base)
+    let remaining = SleepTimerManager.remainingMinutes(until: firesAt, from: base)
     #expect(remaining + 15 == 35)
   }
 

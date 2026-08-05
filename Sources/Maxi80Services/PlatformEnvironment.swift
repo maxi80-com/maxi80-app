@@ -24,6 +24,15 @@ import Foundation
     /// `true` when running on an iPad; `false` on iPhone, macOS, tvOS, and Android.
     public static let isPad: Bool = computeIsPad()
 
+    /// Whether the app should use an expanded (iPad/Mac) layout.
+    public static var usesExpandedLayout: Bool {
+      #if os(macOS)
+        return true
+      #else
+        return isPad
+      #endif
+    }
+
     private static func computeIsPad() -> Bool {
       #if os(iOS)
         #if canImport(UIKit)
