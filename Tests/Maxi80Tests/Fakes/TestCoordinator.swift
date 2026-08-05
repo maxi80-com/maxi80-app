@@ -17,6 +17,7 @@
 func makeTestCoordinator(
   apiClient: (any APIClientProtocol)? = nil,
   player: FakeAudioPlayer? = nil,
+  shareService: FakeSharing? = nil,
   reconnectConfirmationDelay: UInt64 = 3_000_000_000,
   reconnectTimeScale: Double = 1.0,
   sleepFadeDuration: UInt64 = 2_500_000_000
@@ -28,6 +29,7 @@ func makeTestCoordinator(
     nowPlaying: NowPlayingController(),
     apiClient: client,
     artworkService: ArtworkService(apiClient: client),
+    shareService: shareService ?? FakeSharing(),
     reconnectConfirmationDelay: reconnectConfirmationDelay,
     reconnectTimeScale: reconnectTimeScale,
     sleepFadeDuration: sleepFadeDuration

@@ -30,7 +30,7 @@ public final class RadioPlayerCoordinator {
   @ObservationIgnored
   private let artworkService: ArtworkService
   @ObservationIgnored
-  private let shareService: ShareService
+  private let shareService: any Sharing
 
   // MARK: - Observable State
 
@@ -104,7 +104,7 @@ public final class RadioPlayerCoordinator {
     nowPlaying: NowPlayingController,
     apiClient: any APIClientProtocol,
     artworkService: ArtworkService,
-    shareService: ShareService = ShareService(),
+    shareService: any Sharing,
     reconnectConfirmationDelay: UInt64 = 3_000_000_000,
     reconnectTimeScale: Double = 1.0,
     sleepFadeDuration: UInt64 = 2_500_000_000

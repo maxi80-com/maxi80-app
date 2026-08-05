@@ -23,12 +23,16 @@ public enum SharedPlayer {
     // 4. Artwork service backed by the API client.
     let artworkService = ArtworkService(apiClient: apiClient)
 
-    // 5. Coordinator with all dependencies injected.
+    // 5. Platform share chooser (Android presents the system sheet; Apple uses SwiftUI ShareSheet).
+    let shareService = ShareService()
+
+    // 6. Coordinator with all dependencies injected.
     return RadioPlayerCoordinator(
       player: player,
       nowPlaying: nowPlaying,
       apiClient: apiClient,
-      artworkService: artworkService
+      artworkService: artworkService,
+      shareService: shareService
     )
   }()
 

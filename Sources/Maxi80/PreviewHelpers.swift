@@ -26,7 +26,8 @@ import SwiftUI
         player: player,
         nowPlaying: nowPlaying,
         apiClient: apiClient,
-        artworkService: artworkService
+        artworkService: artworkService,
+        shareService: ShareService()
       )
 
       // Configure coordinator state — the ViewModel reads through to it.
