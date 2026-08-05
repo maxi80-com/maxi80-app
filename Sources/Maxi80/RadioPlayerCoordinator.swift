@@ -385,6 +385,7 @@ public final class RadioPlayerCoordinator {
         "loadStation: station loaded — name=\(parsed.name), streamUrl=\(parsed.streamUrl)")
       station = parsed
       cachedStation = parsed
+      FeatureFlags.shared.update(from: parsed.features ?? [:])
     } else if let cached = cachedStation {
       logger.notice("loadStation: /station failed, using cached station")
       station = cached

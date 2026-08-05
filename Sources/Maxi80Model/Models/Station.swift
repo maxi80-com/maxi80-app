@@ -9,6 +9,8 @@ public struct Station: Sendable, Codable {
   public let websiteUrl: String
   public let donationUrl: String
   public let defaultCoverUrl: String
+  /// Runtime feature flags from the /station API. `nil` when the field is absent (older backends).
+  public let features: [String: Bool]?
 
   public init(
     name: String,
@@ -18,7 +20,8 @@ public struct Station: Sendable, Codable {
     longDesc: String,
     websiteUrl: String,
     donationUrl: String,
-    defaultCoverUrl: String
+    defaultCoverUrl: String,
+    features: [String: Bool]? = nil
   ) {
     self.name = name
     self.streamUrl = streamUrl
@@ -28,5 +31,6 @@ public struct Station: Sendable, Codable {
     self.websiteUrl = websiteUrl
     self.donationUrl = donationUrl
     self.defaultCoverUrl = defaultCoverUrl
+    self.features = features
   }
 }

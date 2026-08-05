@@ -45,6 +45,7 @@ public final class StationProvider {
       do {
         let station = try JSONDecoder().decode(Station.self, from: data)
         cachedStation = station
+        FeatureFlags.shared.update(from: station.features ?? [:])
         return station
       } catch {
         print("[StationProvider] Failed to decode station JSON: \(error.localizedDescription)")
