@@ -41,12 +41,7 @@ struct HistoryMergeTests {
     -> RadioPlayerCoordinator
   {
     let apiClient = HistoryMockAPIClient(historyJSON: historyJSON, servesArtwork: servesArtwork)
-    return RadioPlayerCoordinator(
-      player: AudioStreamPlayer(),
-      nowPlaying: NowPlayingController(),
-      apiClient: apiClient,
-      artworkService: ArtworkService(apiClient: apiClient)
-    )
+    return makeTestCoordinator(apiClient: apiClient).coordinator
   }
 
   @Test("New backend entries merge in timestamp order, newest nearest the now-slot")
@@ -267,12 +262,7 @@ struct HistoryMergeTests {
 
   @MainActor
   private func makeGatedCoordinator(client: GatedArtworkAPIClient) -> RadioPlayerCoordinator {
-    RadioPlayerCoordinator(
-      player: AudioStreamPlayer(),
-      nowPlaying: NowPlayingController(),
-      apiClient: client,
-      artworkService: ArtworkService(apiClient: client)
-    )
+    makeTestCoordinator(apiClient: client).coordinator
   }
 
   /// Regression for issue #28: a stale-history refresh whose `fetchHistory()` is suspended on

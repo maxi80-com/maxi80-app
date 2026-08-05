@@ -70,7 +70,15 @@ final class FakeAudioPlayer: AudioPlaying {
 
   func syncWithExternalPlayback() -> Bool {
     commands.append(.syncWithExternalPlayback)
-    return syncResult
+    // Mirror the Apple platform: syncWithExternalPlayback() returns isPlaying.
+    // Stage syncResult = true to simulate Android Auto externally-started playback
+    // where the ExoPlayer is running but the isPlaying flag hasn't been updated yet
+    // (cold start). In that case we also set isPlaying = true, mirroring what the
+    // Android implementation does when it reads the live ExoPlayer state.
+    if syncResult {
+      isPlaying = true
+    }
+    return isPlaying
   }
 
   // MARK: - Assertion helpers

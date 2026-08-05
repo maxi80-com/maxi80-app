@@ -9,24 +9,11 @@ import Testing
 @Suite("Volume Sync Tests")
 struct VolumeSyncTests {
 
-  actor StubAPIClient: APIClientProtocol {
-    func fetchStation() async throws(APIClientError) -> String { throw .noContent }
-    func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
-      throw .noContent
-    }
-    func fetchHistory() async throws(APIClientError) -> String { throw .noContent }
-  }
-
   @MainActor
-  private func make() -> (vm: RadioPlayerViewModel, coordinator: RadioPlayerCoordinator, player: AudioStreamPlayer) {
-    let player = AudioStreamPlayer()
-    let apiClient = StubAPIClient()
-    let coordinator = RadioPlayerCoordinator(
-      player: player,
-      nowPlaying: NowPlayingController(),
-      apiClient: apiClient,
-      artworkService: ArtworkService(apiClient: apiClient)
-    )
+  private func make() -> (
+    vm: RadioPlayerViewModel, coordinator: RadioPlayerCoordinator, player: FakeAudioPlayer
+  ) {
+    let (coordinator, player) = makeTestCoordinator()
     return (RadioPlayerViewModel(coordinator: coordinator), coordinator, player)
   }
 
