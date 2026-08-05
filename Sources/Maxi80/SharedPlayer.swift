@@ -13,8 +13,25 @@ public enum SharedPlayer {
     // 1. Platform-appropriate audio player.
     let player = AudioStreamPlayer()
 
-    // 2. Platform-appropriate Now Playing controller.
-    let nowPlaying = NowPlayingController()
+    // 2. Now Playing publisher: prefer the modern NowPlaying framework (iOS 27+), else the
+    //    bridged MediaPlayer / MediaSession controller. The bridged controller is also the
+    //    remote-command source, so it is retained and wired below regardless.
+    let controller = NowPlayingController()
+    var publisher: any NowPlayingPublishing = BridgedNowPlayingPublisher(controller: controller)
+
+    // The modern publisher's transport closures need the coordinator, which doesn't exist yet.
+    // A local `var` captured by reference lets the closures resolve it after assignment below,
+    // without reaching back into this `static let` while it is still initializing.
+    var builtCoordinator: RadioPlayerCoordinator?
+
+    #if !SKIP
+      if let modern = makeModernNowPlaying(
+        onPlay: { builtCoordinator?.handleRemote("play") },
+        onPause: { builtCoordinator?.handleRemote("pause") }
+      ) {
+        publisher = modern
+      }
+    #endif
 
     // 3. Load configuration and create the API client.
     let config = ConfigurationLoader.loadAPIConfiguration()
@@ -27,13 +44,22 @@ public enum SharedPlayer {
     let shareService = ShareService()
 
     // 6. Coordinator with all dependencies injected.
-    return RadioPlayerCoordinator(
+    let coordinator = RadioPlayerCoordinator(
       player: player,
-      nowPlaying: nowPlaying,
+      nowPlaying: publisher,
       apiClient: apiClient,
       artworkService: artworkService,
       shareService: shareService
     )
+    builtCoordinator = coordinator
+
+    // The bridged controller stays the remote-command source on every platform (lock screen,
+    // media3 notification, car), even when the modern publisher is the metadata sink.
+    controller.onRemoteCommand = { [weak coordinator] command in
+      Task { @MainActor in coordinator?.handleRemote(command) }
+    }
+
+    return coordinator
   }()
 
   public static let viewModel = RadioPlayerViewModel(coordinator: coordinator)

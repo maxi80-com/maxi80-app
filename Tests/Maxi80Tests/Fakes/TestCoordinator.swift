@@ -18,6 +18,7 @@ func makeTestCoordinator(
   apiClient: (any APIClientProtocol)? = nil,
   player: FakeAudioPlayer? = nil,
   shareService: FakeSharing? = nil,
+  nowPlaying: FakeNowPlayingPublisher? = nil,
   reconnectConfirmationDelay: UInt64 = 3_000_000_000,
   reconnectTimeScale: Double = 1.0,
   sleepFadeDuration: UInt64 = 2_500_000_000
@@ -26,7 +27,7 @@ func makeTestCoordinator(
   let client = apiClient ?? StubAPIClient()
   let coordinator = RadioPlayerCoordinator(
     player: fakePlayer,
-    nowPlaying: NowPlayingController(),
+    nowPlaying: nowPlaying ?? FakeNowPlayingPublisher(),
     apiClient: client,
     artworkService: ArtworkService(apiClient: client),
     shareService: shareService ?? FakeSharing(),

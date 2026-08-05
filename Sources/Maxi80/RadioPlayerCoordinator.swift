@@ -24,7 +24,7 @@ public final class RadioPlayerCoordinator {
   @ObservationIgnored
   private let player: any AudioPlaying
   @ObservationIgnored
-  private let nowPlaying: NowPlayingController
+  private let nowPlayingPublisher: any NowPlayingPublishing
   @ObservationIgnored
   private let apiClient: any APIClientProtocol
   @ObservationIgnored
@@ -79,13 +79,6 @@ public final class RadioPlayerCoordinator {
   @ObservationIgnored
   private var sleepTimerTask: Task<Void, Never>?
 
-  #if !SKIP
-    /// Modern NowPlaying-framework publisher (iOS 26+). `nil` on platforms/SDKs without the
-    /// framework, in which case the bridged MediaPlayer `nowPlaying` is used instead.
-    @ObservationIgnored
-    private var modernNowPlaying: (any NowPlayingPublishing)?
-  #endif
-
   /// Default stream URL used when station hasn't loaded yet.
   private let defaultStreamURL = BrandConstants.streamURL
 
@@ -101,7 +94,7 @@ public final class RadioPlayerCoordinator {
 
   public init(
     player: any AudioPlaying,
-    nowPlaying: NowPlayingController,
+    nowPlaying: any NowPlayingPublishing,
     apiClient: any APIClientProtocol,
     artworkService: ArtworkService,
     shareService: any Sharing,
@@ -110,7 +103,7 @@ public final class RadioPlayerCoordinator {
     sleepFadeDuration: UInt64 = 2_500_000_000
   ) {
     self.player = player
-    self.nowPlaying = nowPlaying
+    self.nowPlayingPublisher = nowPlaying
     self.apiClient = apiClient
     self.artworkService = artworkService
     self.shareService = shareService
@@ -120,19 +113,6 @@ public final class RadioPlayerCoordinator {
 
     setupCallbacks()
     setupReconnection()
-
-    #if !SKIP
-      // Prefer the modern NowPlaying framework when available (iOS 27+); nil elsewhere, so the
-      // bridged MediaPlayer `nowPlaying` remains the fallback.
-      modernNowPlaying = makeModernNowPlaying(
-        onPlay: { [weak self] in self?.handleRemoteCommand("play") },
-        onPause: { [weak self] in self?.handleRemoteCommand("pause") }
-      )
-      let nowPlayingPath =
-        modernNowPlaying == nil
-        ? "FALLBACK (MPNowPlayingInfoCenter)" : "MODERN (NowPlaying framework)"
-      logger.info("NowPlaying path: \(nowPlayingPath)")
-    #endif
 
     // Seed the volume from the system's current level and start tracking hardware-button changes.
     // `startObservingVolume()` is a no-op on Apple platforms (iOS/tvOS track hardware volume through
@@ -494,11 +474,8 @@ public final class RadioPlayerCoordinator {
       }
     }
 
-    nowPlaying.onRemoteCommand = { [weak self] command in
-      Task { @MainActor [weak self] in
-        self?.handleRemoteCommand(command)
-      }
-    }
+    // Remote commands (lock screen, media3 notification, car) are wired at the composition root,
+    // which owns the bridged `NowPlayingController` — see `SharedPlayer` and `handleRemote(_:)`.
   }
 
   // MARK: - Metadata Handling
@@ -643,34 +620,28 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Now Playing Publishing
 
-  /// Publish current-track metadata to the system. Uses the modern NowPlaying framework when
-  /// available (iOS 26+), otherwise the bridged MediaPlayer controller.
+  /// Publish current-track metadata to the system through the injected publisher. Which sink that
+  /// is — the modern NowPlaying framework or the bridged MediaPlayer / MediaSession controller — is
+  /// decided once at the composition root (`SharedPlayer`).
   private func publishNowPlaying(
     artist: String, title: String, artworkURL: String?, isPlaying: Bool
   ) {
     // On CarPlay, substitute the bundled generic cover for a missing remote one so the car's
-    // Now Playing template is never blank. Both sinks below load artwork by URL and accept a
-    // `file://` URL, so the placeholder rides the same path — the phone is unaffected because
-    // this only fires while CarPlay is connected.
+    // Now Playing template is never blank. Both sinks load artwork by URL and accept a `file://`
+    // URL, so the placeholder rides the same path.
     let publishedArtworkURL =
       shouldPublishPlaceholderArtwork(forArtworkURL: artworkURL)
       ? placeholderArtworkFileURL
       : artworkURL
 
-    #if !SKIP
-      if let modernNowPlaying {
-        modernNowPlaying.activate()
-        modernNowPlaying.update(
-          stationName: station?.name ?? BrandConstants.name,
-          programName: "\(title) — \(artist)",
-          artworkURL: publishedArtworkURL,
-          isPlaying: isPlaying
-        )
-        return
-      }
-    #endif
-    nowPlaying.updateNowPlaying(
-      artist: artist, title: title, artworkURL: publishedArtworkURL, isPlaying: isPlaying)
+    nowPlayingPublisher.activate()
+    nowPlayingPublisher.update(
+      stationName: station?.name ?? BrandConstants.name,
+      artist: artist,
+      title: title,
+      artworkURL: publishedArtworkURL,
+      isPlaying: isPlaying
+    )
   }
 
   /// A `file://` URL string for this launch's generic placeholder cover, materialized once from
@@ -715,15 +686,9 @@ public final class RadioPlayerCoordinator {
     #endif
   }
 
-  /// Publish only the play/pause state, via the same modern-or-fallback routing.
+  /// Publish only the play/pause state, through the same single publisher.
   private func publishPlaybackState(isPlaying: Bool) {
-    #if !SKIP
-      if let modernNowPlaying {
-        modernNowPlaying.updatePlaybackState(isPlaying: isPlaying)
-        return
-      }
-    #endif
-    nowPlaying.updatePlaybackState(isPlaying: isPlaying)
+    nowPlayingPublisher.updatePlaybackState(isPlaying: isPlaying)
   }
 
   // MARK: - Reconnection
@@ -844,6 +809,13 @@ public final class RadioPlayerCoordinator {
   }
 
   // MARK: - Remote Command Handling
+
+  /// Handle a transport command from a system surface (lock screen, notification, car).
+  /// Public so the composition root can forward the bridged controller's callback, which it now
+  /// owns. Values: "play", "pause", "togglePlayPause".
+  public func handleRemote(_ command: String) {
+    handleRemoteCommand(command)
+  }
 
   private func handleRemoteCommand(_ command: String) {
     switch command {
