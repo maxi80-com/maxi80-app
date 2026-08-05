@@ -11,7 +11,7 @@ import Maxi80Services
 /// `AnyObject` because the coordinator mutates the callback properties on a shared reference and
 /// relies on reference semantics for the player's lifetime.
 @MainActor
-protocol AudioPlaying: AnyObject {
+public protocol AudioPlaying: AnyObject {
   /// Whether audio is currently playing, as the player last reported it. May be stale-`false` when
   /// playback was started externally (e.g. Android Auto cold start) — see `syncWithExternalPlayback()`.
   var isPlaying: Bool { get }

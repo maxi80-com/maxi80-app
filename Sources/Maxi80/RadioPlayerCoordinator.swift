@@ -22,7 +22,7 @@ public final class RadioPlayerCoordinator {
   // MARK: - Dependencies
 
   @ObservationIgnored
-  private let player: AudioStreamPlayer
+  private let player: any AudioPlaying
   @ObservationIgnored
   private let nowPlaying: NowPlayingController
   @ObservationIgnored
@@ -100,7 +100,7 @@ public final class RadioPlayerCoordinator {
   // MARK: - Initialization
 
   public init(
-    player: AudioStreamPlayer,
+    player: any AudioPlaying,
     nowPlaying: NowPlayingController,
     apiClient: any APIClientProtocol,
     artworkService: ArtworkService,
