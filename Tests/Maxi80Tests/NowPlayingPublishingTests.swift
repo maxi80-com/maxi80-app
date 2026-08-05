@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import Maxi80
@@ -54,16 +55,38 @@ struct NowPlayingPublishingTests {
   @Test("A coverless song publishes the placeholder rather than blank artwork")
   @MainActor
   func coverlessSongPublishesPlaceholder() async {
-    // The stub client serves no artwork, so the resolved cover is the default (no URL).
+    // The stub client serves no artwork, so the resolved cover is the default (no URL) and the
+    // publish site must substitute the placeholder. The real placeholder is materialized from the
+    // asset catalog, which the host test bundle lacks — it would resolve to `nil` here, making the
+    // substitution indistinguishable from publishing nothing. Injecting a sentinel makes the
+    // substitution observable, so deleting it at the publish site fails this test.
+    let placeholder = "file:///test-placeholder.png"
     let publisher = FakeNowPlayingPublisher()
-    let (coordinator, _) = makeTestCoordinator(nowPlaying: publisher)
+    let (coordinator, _) = makeTestCoordinator(
+      nowPlaying: publisher, placeholderArtworkURL: placeholder)
 
     await coordinator.handleMetadataChanged("Artist - Song")
 
-    // On Apple platforms the placeholder materializes to a file:// URL; on Android there are no
-    // image APIs so it stays nil. Assert the decision, which is platform-independent.
-    let noURL: String? = nil
-    #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: noURL) == true)
-    #expect(publisher.updates.isEmpty == false)
+    #expect(coordinator.shouldPublishPlaceholderArtwork(forArtworkURL: nil) == true)
+    #expect(publisher.updates.last?.artworkURL == placeholder)
+  }
+
+  @Test("A present cover is published unmodified, never replaced by the placeholder")
+  @MainActor
+  func presentCoverIsPassedThrough() {
+    // Staged through `carPlayDidConnect()` → `republishNowPlaying()`, which reads `currentArtwork`
+    // directly, so a real cover URL reaches the publish site without needing a network fetch.
+    let cover = "https://cover.example/enjoy-the-silence.jpg"
+    let publisher = FakeNowPlayingPublisher()
+    let (coordinator, _) = makeTestCoordinator(
+      nowPlaying: publisher, placeholderArtworkURL: "file:///test-placeholder.png")
+    coordinator.currentSong = SongMetadata(artist: "Depeche Mode", title: "Enjoy the Silence")
+    coordinator.currentArtwork = ArtworkResult(
+      image: nil, dominantColor: .black, isDefault: false, url: cover)
+    publisher.reset()
+
+    coordinator.carPlayDidConnect()
+
+    #expect(publisher.updates.last?.artworkURL == cover)
   }
 }

@@ -100,7 +100,8 @@ public final class RadioPlayerCoordinator {
     shareService: any Sharing,
     reconnectConfirmationDelay: UInt64 = 3_000_000_000,
     reconnectTimeScale: Double = 1.0,
-    sleepFadeDuration: UInt64 = 2_500_000_000
+    sleepFadeDuration: UInt64 = 2_500_000_000,
+    placeholderArtworkURL: String? = nil
   ) {
     self.player = player
     self.nowPlayingPublisher = nowPlaying
@@ -110,6 +111,7 @@ public final class RadioPlayerCoordinator {
     self.reconnectConfirmationDelay = reconnectConfirmationDelay
     self.reconnectionManager = ReconnectionManager(timeScale: reconnectTimeScale)
     self.sleepFadeDuration = sleepFadeDuration
+    self.injectedPlaceholderArtworkURL = placeholderArtworkURL
 
     setupCallbacks()
     setupReconnection()
@@ -649,7 +651,16 @@ public final class RadioPlayerCoordinator {
   /// `nil` on platforms without image APIs (Android) or if materialization fails — callers then
   /// simply publish no artwork, as before.
   @ObservationIgnored
-  private lazy var placeholderArtworkFileURL: String? = materializePlaceholderArtwork()
+  private lazy var placeholderArtworkFileURL: String? =
+    injectedPlaceholderArtworkURL ?? materializePlaceholderArtwork()
+
+  /// Overrides the materialized placeholder when non-nil. Injectable because materialization needs a
+  /// real asset catalog: in the host test bundle `UIImage`/`NSImage(named:)` find nothing, so the
+  /// production path resolves to `nil` there — indistinguishable from publishing no artwork at all,
+  /// which would let a deletion of the substitution at the publish site go unnoticed. Tests stage a
+  /// sentinel URL so the substitution is observable. Production passes nothing.
+  @ObservationIgnored
+  private let injectedPlaceholderArtworkURL: String?
 
   /// Write the placeholder cover to a temp file so it can be published to the system Now Playing
   /// info by URL. Supported on Apple platforms (UIKit for iOS/tvOS Now Playing + CarPlay, AppKit

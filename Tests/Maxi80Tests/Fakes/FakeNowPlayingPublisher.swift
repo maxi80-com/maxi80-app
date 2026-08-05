@@ -22,6 +22,8 @@ final class FakeNowPlayingPublisher: NowPlayingPublishing {
     case playbackState(Bool)
   }
 
+  /// Counts every `activate()` call. The real `NowPlayingSession.activate()` guards on
+  /// `session == nil`, so repeat calls are no-ops there — assert `>= 1`, never `== 1`.
   var activateCount = 0
   var updates: [Update] = []
   var playbackStates: [Bool] = []
