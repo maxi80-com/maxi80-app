@@ -19,8 +19,27 @@ struct PlaceholderCover: Equatable, Sendable {
       imageName: "NoCover-c", dominantColor: Color(red: 61 / 255, green: 42 / 255, blue: 28 / 255)),
   ]
 
-  /// A random generic cover, used once per app launch.
+  /// A random generic cover.
   static func random() -> PlaceholderCover {
     all.randomElement() ?? all[0]
+  }
+
+  /// The cover assigned to a given entry, derived from its hash so the same entry always renders
+  /// the same placeholder across re-renders. The remainder is taken before `abs` because
+  /// `abs(Int.min)` traps.
+  static func forEntry(hashValue: Int) -> PlaceholderCover {
+    all[abs(hashValue % all.count)]
+  }
+}
+
+/// Hands out generic covers in round-robin order so a session cycles through all of them instead
+/// of showing one for its whole lifetime.
+@MainActor
+final class PlaceholderCoverProvider {
+  private var lastIndex: Int = -1
+
+  func next() -> PlaceholderCover {
+    lastIndex = (lastIndex + 1) % PlaceholderCover.all.count
+    return PlaceholderCover.all[lastIndex]
   }
 }

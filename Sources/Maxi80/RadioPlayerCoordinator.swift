@@ -54,9 +54,12 @@ public final class RadioPlayerCoordinator {
   /// long is left".
   public private(set) var sleepTimerFiresAt: Date?
 
-  /// The generic cover shown before any song has played. Chosen once per launch.
+  /// The generic cover shown in the now slot while no artwork is available. Rotates on each song
+  /// change so a session sees every bundled cover; starts on a random one so relaunches differ.
+  private(set) var nowPlaceholderCover: PlaceholderCover = .random()
+
   @ObservationIgnored
-  let placeholderCover: PlaceholderCover = .random()
+  private let placeholderCoverProvider = PlaceholderCoverProvider()
 
   // MARK: - Internal State
 
@@ -520,6 +523,7 @@ public final class RadioPlayerCoordinator {
     }
 
     currentSong = metadata
+    nowPlaceholderCover = placeholderCoverProvider.next()
 
     // A new song supersedes any in-flight artwork retry for the previous one.
     artworkRetryTask?.cancel()
@@ -666,20 +670,22 @@ public final class RadioPlayerCoordinator {
       artist: artist, title: title, artworkURL: publishedArtworkURL, isPlaying: isPlaying)
   }
 
-  /// A `file://` URL string for this launch's generic placeholder cover, materialized once from
-  /// the asset catalog (the covers live in `.xcassets`, which have no directly loadable URL).
-  /// `nil` on platforms without image APIs (Android) or if materialization fails — callers then
-  /// simply publish no artwork, as before.
-  @ObservationIgnored
-  private lazy var placeholderArtworkFileURL: String? = materializePlaceholderArtwork()
+  /// A `file://` URL string for the current generic placeholder cover, materialized from the asset
+  /// catalog (the covers live in `.xcassets`, which have no directly loadable URL). Computed rather
+  /// than cached so a rotated cover is re-materialized; the underlying write is skipped once that
+  /// cover's file exists. `nil` on platforms without image APIs (Android) or if materialization
+  /// fails — callers then simply publish no artwork, as before.
+  private var placeholderArtworkFileURL: String? {
+    materializePlaceholderArtwork(nowPlaceholderCover)
+  }
 
   /// Write the placeholder cover to a temp file so it can be published to the system Now Playing
   /// info by URL. Supported on Apple platforms (UIKit for iOS/tvOS Now Playing + CarPlay, AppKit
   /// for macOS); Android has no platform image APIs so it returns `nil` and no artwork is published.
-  /// Idempotent per launch: reuses the file if it already exists.
-  private func materializePlaceholderArtwork() -> String? {
+  /// Idempotent per cover: reuses the file if it already exists.
+  private func materializePlaceholderArtwork(_ cover: PlaceholderCover) -> String? {
     let fileURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("maxi80-\(placeholderCover.imageName).png")
+      .appendingPathComponent("maxi80-\(cover.imageName).png")
 
     if FileManager.default.fileExists(atPath: fileURL.path) {
       return fileURL.absoluteString
@@ -687,7 +693,7 @@ public final class RadioPlayerCoordinator {
 
     #if canImport(UIKit)
       guard
-        let image = UIImage(named: placeholderCover.imageName, in: .module, compatibleWith: nil),
+        let image = UIImage(named: cover.imageName, in: .module, compatibleWith: nil),
         let data = image.pngData(),
         (try? data.write(to: fileURL)) != nil
       else {
@@ -695,7 +701,7 @@ public final class RadioPlayerCoordinator {
       }
       return fileURL.absoluteString
     #elseif canImport(AppKit)
-      guard let image = NSImage(named: placeholderCover.imageName),
+      guard let image = NSImage(named: cover.imageName),
         let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
         let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]),
         (try? data.write(to: fileURL)) != nil
