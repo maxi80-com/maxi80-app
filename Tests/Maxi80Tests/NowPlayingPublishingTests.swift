@@ -89,4 +89,29 @@ struct NowPlayingPublishingTests {
 
     #expect(publisher.updates.last?.artworkURL == cover)
   }
+
+  @Test("A default-cover artwork is suppressed and the placeholder is published instead")
+  @MainActor
+  func defaultCoverIsFilteredToPlaceholder() {
+    // The `republishNowPlaying()` path contains `$0.isDefault ? nil : $0.url` at :363.
+    // Dropping that filter passes with the two existing tests because both stage `isDefault: false`.
+    // This case stages `isDefault: true` so the filter is load-bearing: removing it publishes the
+    // default-cover URL instead of the placeholder sentinel, failing the assertion below.
+    let placeholder = "file:///test-placeholder.png"
+    let defaultCoverURL = "https://cover.example/default-cover.jpg"
+    let publisher = FakeNowPlayingPublisher()
+    let (coordinator, _) = makeTestCoordinator(
+      nowPlaying: publisher, placeholderArtworkURL: placeholder)
+    coordinator.currentSong = SongMetadata(artist: "Unknown", title: "Live")
+    coordinator.currentArtwork = ArtworkResult(
+      image: nil, dominantColor: .black, isDefault: true, url: defaultCoverURL)
+    publisher.reset()
+
+    coordinator.carPlayDidConnect()
+
+    // The default cover's URL must be suppressed; the placeholder must be published instead.
+    #expect(
+      publisher.updates.last?.artworkURL == placeholder,
+      "a default-cover artwork must be replaced by the placeholder; got \(String(describing: publisher.updates.last?.artworkURL))")
+  }
 }

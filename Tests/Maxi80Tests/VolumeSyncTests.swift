@@ -72,4 +72,30 @@ struct VolumeSyncTests {
     #expect(coordinator.volume == 0.5)
     #expect(vm.volume == 0.5)
   }
+
+  // MARK: - Volume command reaches the player through the seam
+
+  @Test("Coordinator issues startObservingVolume to the player on init")
+  @MainActor
+  func startObservingVolumeIssuedOnInit() {
+    // The coordinator calls player.startObservingVolume() in its init — this asserts the command
+    // actually crosses the AudioPlaying seam rather than being elided.
+    let (_, _, player) = make()
+    #expect(
+      player.commands.contains(.startObservingVolume),
+      "coordinator must call startObservingVolume on the player during init; got \(player.commands)")
+  }
+
+  @Test("Setting volume via setVolume calls updateVolume on the player")
+  @MainActor
+  func setVolumeSendsUpdateVolumeToPlayer() {
+    let (_, coordinator, player) = make()
+    player.reset()   // clear init-time commands
+
+    coordinator.setVolume(0.7)
+
+    #expect(
+      player.commands.contains(.updateVolume(0.7)),
+      "setVolume must forward the level to player.updateVolume; got \(player.commands)")
+  }
 }
