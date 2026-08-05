@@ -1079,6 +1079,14 @@ git commit -m "refactor: add Sharing protocol seam and cover share forwarding"
 
 **Behavior contract — must not change:** the modern iOS-27 publisher is still preferred where available; the bridged MediaPlayer path remains the fallback and the only path on Android; `activate()` still precedes the first update; the CarPlay placeholder substitution (`shouldPublishPlaceholderArtwork`) still applies.
 
+> **CONTROLLER NOTE — this brief was written before Tasks 6 and 7 landed and has five defects. The text below is corrected; do not "restore" the originals.**
+>
+> 1. **`NowPlayingPublishing` must be declared `public`**, for the same reason `AudioPlaying` and `Sharing` are: it appears in `RadioPlayerCoordinator`'s `public init`, and a public signature cannot expose an internal type. Widening is free — a protocol declared in the native `Maxi80` module generates a 0-byte `SkipBridgeGenerated/*_Bridge.swift`, verified three times on this branch.
+> 2. **Do NOT change `makeTestCoordinator`'s return type to a 4-tuple.** Task 7 already rejected the same move for exactly this reason: it would churn ~15 destructuring call sites across 9 files for the second time in two tasks. Add a defaulted `nowPlaying: FakeNowPlayingPublisher? = nil` parameter and keep the existing 2-tuple return `(coordinator:player:)`. Tests that need the publisher construct it and pass it in, keeping their own reference. **Zero existing call sites change** — verify with `git diff --name-only Tests/`, which must list only `Fakes/TestCoordinator.swift`, `Fakes/FakeNowPlayingPublisher.swift`, and `NowPlayingPublishingTests.swift`.
+> 3. **Keep `shareService:` and the three timing parameters** (`reconnectConfirmationDelay`, `reconnectTimeScale`, `sleepFadeDuration`) on both `makeTestCoordinator` and the coordinator init — Tasks 6 and 7 added them after this brief was drafted. Step 7's block below is the current, correct signature. Dropping any of them breaks `PlayerCommandTests` or `SharingTests`.
+> 4. **The protocol's existing `update` signature is `(stationName:programName:artworkURL:isPlaying:)`, not the `programName`-less version this brief's Step 1 assumes.** Step 3 is what widens it to `(stationName:artist:title:artworkURL:isPlaying:)`. That is the intended change; just don't be surprised the current code disagrees with Step 1.
+> 5. **Step 6's remote-command rewiring is needlessly fragile.** The brief admits an "ordering problem" and then resolves it by referencing the `SharedPlayer.coordinator` static from inside a closure stored during that very static's own initializer. That is re-entrant access to a `static let` under initialization — it happens not to deadlock today only because nothing invokes `onRemoteCommand` before init returns, so it is a latent trap rather than a present bug. It also silently drops the `[weak self]` semantics the current wiring has. The corrected Step 6 below binds a local instead, which is both simpler and safe.
+
 - [ ] **Step 1: Write the failing test**
 
 ```swift
@@ -1098,7 +1106,8 @@ struct NowPlayingPublishingTests {
   @Test("New metadata is published with artist, title and playing state")
   @MainActor
   func metadataIsPublished() async {
-    let (coordinator, _, _, publisher) = makeTestCoordinator()
+    let publisher = FakeNowPlayingPublisher()
+    let (coordinator, _) = makeTestCoordinator(nowPlaying: publisher)
 
     await coordinator.handleMetadataChanged("Depeche Mode - Enjoy the Silence")
 
@@ -1112,7 +1121,8 @@ struct NowPlayingPublishingTests {
   @Test("Publishing activates the session before the first update")
   @MainActor
   func activatePrecedesUpdate() async {
-    let (coordinator, _, _, publisher) = makeTestCoordinator()
+    let publisher = FakeNowPlayingPublisher()
+    let (coordinator, _) = makeTestCoordinator(nowPlaying: publisher)
 
     await coordinator.handleMetadataChanged("Artist - Song")
 
@@ -1122,7 +1132,8 @@ struct NowPlayingPublishingTests {
   @Test("A pause publishes a not-playing state")
   @MainActor
   func pausePublishesStopped() async {
-    let (coordinator, _, _, publisher) = makeTestCoordinator()
+    let publisher = FakeNowPlayingPublisher()
+    let (coordinator, _) = makeTestCoordinator(nowPlaying: publisher)
     await coordinator.handleMetadataChanged("Artist - Song")
     publisher.reset()
 
@@ -1135,7 +1146,8 @@ struct NowPlayingPublishingTests {
   @MainActor
   func coverlessSongPublishesPlaceholder() async {
     // The stub client serves no artwork, so the resolved cover is the default (no URL).
-    let (coordinator, _, _, publisher) = makeTestCoordinator()
+    let publisher = FakeNowPlayingPublisher()
+    let (coordinator, _) = makeTestCoordinator(nowPlaying: publisher)
 
     await coordinator.handleMetadataChanged("Artist - Song")
 
@@ -1150,7 +1162,7 @@ struct NowPlayingPublishingTests {
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `swift test --filter NowPlayingPublishingTests`
-Expected: compile failure — `makeTestCoordinator` returns a 3-tuple and `FakeNowPlayingPublisher` doesn't exist.
+Expected: compile failure — `FakeNowPlayingPublisher` doesn't exist yet and `makeTestCoordinator` has no `nowPlaying:` parameter.
 
 - [ ] **Step 3: Widen and un-gate the protocol**
 
@@ -1163,7 +1175,7 @@ In `Sources/Maxi80/NowPlayingSession.swift`, move the protocol **outside** the `
 /// Two conformances: `NowPlayingSession` (modern framework, iOS/macOS/tvOS 27+) and
 /// `BridgedNowPlayingPublisher` (MediaPlayer on Apple, MediaSession on Android).
 @MainActor
-protocol NowPlayingPublishing: AnyObject {
+public protocol NowPlayingPublishing: AnyObject {
   /// Begin publishing the session to the system (Lock Screen, Control Center, accessories).
   func activate()
   /// Update the currently-playing metadata.
@@ -1173,6 +1185,8 @@ protocol NowPlayingPublishing: AnyObject {
   func updatePlaybackState(isPlaying: Bool)
 }
 ```
+
+Note the protocol is `public` (see controller note 1) and that this widens `update`'s signature: the current declaration takes `programName:` where this takes `artist:` and `title:`. Both conformances are updated below.
 
 `deactivate()` is dropped — it has no caller anywhere in `Sources/` or `Tests/`.
 
@@ -1324,28 +1338,49 @@ In `Sources/Maxi80/SharedPlayer.swift`, replace step 2 of the graph and wire the
     var publisher: any NowPlayingPublishing = BridgedNowPlayingPublisher(controller: controller)
 ```
 
-After the coordinator is built, wire remote commands to it:
+Select the modern publisher next, still Apple-only. Build it BEFORE the coordinator so the coordinator gets its final publisher — but note the modern publisher needs the coordinator for its play/pause commands, so those closures resolve it lazily through a local declared up front:
 
 ```swift
-    controller.onRemoteCommand = { command in
-      Task { @MainActor in coordinator.handleRemote(command) }
-    }
-```
+    // The modern publisher's transport closures need the coordinator, which doesn't exist yet.
+    // A local `var` captured by reference lets the closures resolve it after assignment below,
+    // without reaching back into this `static let` while it is still initializing.
+    var builtCoordinator: RadioPlayerCoordinator?
 
-Note the ordering problem this creates: `coordinator` must exist before the closure captures it, so restructure the closure body to `SharedPlayer.coordinator.handleRemote(command)` — referencing the static lazily avoids capturing a value mid-initialization. Verify no initialization cycle at runtime by launching the app.
-
-For the modern path, keep it Apple-only:
-
-```swift
     #if !SKIP
       if let modern = makeModernNowPlaying(
-        onPlay: { Task { @MainActor in SharedPlayer.coordinator.handleRemote("play") } },
-        onPause: { Task { @MainActor in SharedPlayer.coordinator.handleRemote("pause") } }
+        onPlay: { Task { @MainActor in builtCoordinator?.handleRemote("play") } },
+        onPause: { Task { @MainActor in builtCoordinator?.handleRemote("pause") } }
       ) {
         publisher = modern
       }
     #endif
 ```
+
+Then, after the coordinator is constructed, assign the local and wire the bridged controller's callback to the same entry point. Return the coordinator instead of returning the `RadioPlayerCoordinator(...)` expression directly:
+
+```swift
+    let coordinator = RadioPlayerCoordinator(
+      player: player,
+      nowPlaying: publisher,
+      apiClient: apiClient,
+      artworkService: artworkService,
+      shareService: shareService
+    )
+    builtCoordinator = coordinator
+
+    // The bridged controller stays the remote-command source on every platform (lock screen,
+    // media3 notification, car), even when the modern publisher is the metadata sink.
+    controller.onRemoteCommand = { [weak coordinator] command in
+      Task { @MainActor in coordinator?.handleRemote(command) }
+    }
+
+    return coordinator
+```
+
+Two things to get right here, both of which the original draft got wrong:
+
+- **Do not reference `SharedPlayer.coordinator` from inside these closures.** They are installed during that static's own initializer; touching the static from within its initialization is re-entrant and a latent deadlock. The local-`var` capture above avoids it entirely.
+- **Keep the weak capture.** The current `setupCallbacks()` wiring uses `[weak self]`; preserving `[weak coordinator]` keeps the ownership story unchanged even though both objects live for the process lifetime.
 
 - [ ] **Step 7: Create the fake and thread it through the factory**
 
@@ -1391,7 +1426,7 @@ final class FakeNowPlayingPublisher: NowPlayingPublishing {
 }
 ```
 
-Update `Tests/Maxi80Tests/Fakes/TestCoordinator.swift` to a 4-tuple:
+Add ONE defaulted parameter to `Tests/Maxi80Tests/Fakes/TestCoordinator.swift` and pass it through. Keep the 2-tuple return, the `shareService:` parameter, and all three timing parameters. The result should read exactly:
 
 ```swift
 @MainActor
@@ -1399,27 +1434,30 @@ func makeTestCoordinator(
   apiClient: (any APIClientProtocol)? = nil,
   player: FakeAudioPlayer? = nil,
   shareService: FakeSharing? = nil,
-  nowPlaying: FakeNowPlayingPublisher? = nil
-) -> (
-  coordinator: RadioPlayerCoordinator, player: FakeAudioPlayer, shareService: FakeSharing,
-  nowPlaying: FakeNowPlayingPublisher
-) {
+  nowPlaying: FakeNowPlayingPublisher? = nil,
+  reconnectConfirmationDelay: UInt64 = 3_000_000_000,
+  reconnectTimeScale: Double = 1.0,
+  sleepFadeDuration: UInt64 = 2_500_000_000
+) -> (coordinator: RadioPlayerCoordinator, player: FakeAudioPlayer) {
   let fakePlayer = player ?? FakeAudioPlayer()
-  let fakeShare = shareService ?? FakeSharing()
-  let fakeNowPlaying = nowPlaying ?? FakeNowPlayingPublisher()
   let client = apiClient ?? StubAPIClient()
   let coordinator = RadioPlayerCoordinator(
     player: fakePlayer,
-    nowPlaying: fakeNowPlaying,
+    nowPlaying: nowPlaying ?? FakeNowPlayingPublisher(),
     apiClient: client,
     artworkService: ArtworkService(apiClient: client),
-    shareService: fakeShare
+    shareService: shareService ?? FakeSharing(),
+    reconnectConfirmationDelay: reconnectConfirmationDelay,
+    reconnectTimeScale: reconnectTimeScale,
+    sleepFadeDuration: sleepFadeDuration
   )
-  return (coordinator, fakePlayer, fakeShare, fakeNowPlaying)
+  return (coordinator, fakePlayer)
 }
 ```
 
-Fix every caller's destructuring to the 4-tuple (add a trailing `_` where the publisher is unused), including Task 6's direct construction.
+**No existing call site changes** — the new parameter is defaulted and the return type is untouched. Verify rather than assume: after this step, `git diff --name-only Tests/` must list only `Fakes/TestCoordinator.swift`, `Fakes/FakeNowPlayingPublisher.swift`, and `NowPlayingPublishingTests.swift`. Anything else in that list is a change you were not asked to make — revert it.
+
+This also closes the gap noted in Task 5: the factory previously hardcoded a real `NowPlayingController()` with no override, so no test could inject a Now Playing double. It can now.
 
 - [ ] **Step 8: Run the new tests, then everything**
 
