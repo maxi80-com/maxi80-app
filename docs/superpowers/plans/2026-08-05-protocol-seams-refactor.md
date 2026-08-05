@@ -97,7 +97,7 @@ Expected: PASS. If it fails with "does not conform", the member signatures diffe
 
 - [ ] **Step 3: Verify the Android build compiles (the real question)**
 
-Run: `make build-android`
+Run: `make clean build-android`
 Expected: PASS.
 
 If this **fails**, record the exact error and switch Task 2 to the **adapter fallback**: instead of `extension AudioStreamPlayer: AudioPlaying {}`, create a `final class AudioPlayerAdapter: AudioPlaying` in the native module holding an `AudioStreamPlayer` and forwarding every member (including bidirectional callback wiring in its `init`). All later tasks are unaffected — they depend only on the `AudioPlaying` protocol, not on how conformance is achieved.
@@ -166,7 +166,7 @@ extension AudioStreamPlayer: AudioPlaying {}
 
 - [ ] **Step 2: Verify both platforms build**
 
-Run: `swift build && make build-android`
+Run: `swift build && make clean build-android`
 Expected: PASS both. (Task 1 already proved the Android half; this confirms the full member list.)
 
 - [ ] **Step 3: Verify the existing suite is untouched**
@@ -362,7 +362,7 @@ Change `player: AudioStreamPlayer,` to `player: any AudioPlaying,` in the `publi
 
 - [ ] **Step 3: Verify both platforms build**
 
-Run: `swift build && make build-android`
+Run: `swift build && make clean build-android`
 Expected: PASS. `SharedPlayer.coordinator` passes a concrete `AudioStreamPlayer()`, which satisfies `any AudioPlaying` with no change needed at the composition root.
 
 - [ ] **Step 4: Verify the existing suite still passes**
@@ -857,7 +857,7 @@ If `sleepTimerFadesThenStops` fails on `ramp.contains(0.0)`, that is a **real pr
 
 - [ ] **Step 6: Run the whole suite for regressions**
 
-Run: `swift test && make build-android`
+Run: `swift test && make clean build-android`
 Expected: PASS. `ReconnectionPropertyTests` exercises `delay(for:)` and must still pass with the default `timeScale` of `1.0`.
 
 - [ ] **Step 7: Commit**
@@ -1029,7 +1029,7 @@ Existing callers destructure a 2-tuple and will now fail to compile. Fix each by
 Run: `swift test --filter SharingTests`
 Expected: PASS both.
 
-Run: `swift test && make build-android`
+Run: `swift test && make clean build-android`
 Expected: PASS.
 
 - [ ] **Step 9: Commit**
@@ -1404,7 +1404,7 @@ Fix every caller's destructuring to the 4-tuple (add a trailing `_` where the pu
 Run: `swift test --filter NowPlayingPublishingTests`
 Expected: PASS all four.
 
-Run: `swift test && make build-android`
+Run: `swift test && make clean build-android`
 Expected: PASS. `CarPlayNowPlayingTests` must still pass unchanged — it asserts the placeholder decision, which this task preserves.
 
 - [ ] **Step 9: Device verification — required before merge**
@@ -1451,7 +1451,7 @@ git commit -m "refactor: unify Now Playing publishing behind one protocol"
 
 - [ ] **Step 2: Verify and commit**
 
-Run: `swift test && make build-android`
+Run: `swift test && make clean build-android`
 Expected: PASS (docs-only change; this confirms the tree is still green).
 
 ```bash
