@@ -569,17 +569,26 @@ struct PlayerCommandTests {
   @Test("Sleep timer fades attenuation to silence, then stops the player")
   @MainActor
   func sleepTimerFadesThenStops() async {
-    let (coordinator, player) = makeTestCoordinator()
+    // A tiny fade duration keeps the test in milliseconds instead of the production 2.5s.
+    let player = FakeAudioPlayer()
+    let client = StubAPIClient()
+    let coordinator = RadioPlayerCoordinator(
+      player: player,
+      nowPlaying: NowPlayingController(),
+      apiClient: client,
+      artworkService: ArtworkService(apiClient: client),
+      sleepFadeDuration: 12_000_000
+    )
     await startPlaying(coordinator)
     player.reset()
 
     // Fire immediately: a 0-minute timer clamps to "now".
     coordinator.startSleepTimer(minutes: 0)
 
-    // The fade runs ~2.5s of real sleeping across 12 steps; poll until the stop lands.
+    // Poll until the stop lands rather than sleeping a fixed span.
     var waited = 0
-    while player.stopCount() == 0 && waited < 60 {
-      try? await Task.sleep(nanoseconds: 100_000_000)
+    while player.stopCount() == 0 && waited < 200 {
+      try? await Task.sleep(nanoseconds: 10_000_000)
       waited += 1
     }
 
@@ -747,6 +756,31 @@ Change `delay(for:)`'s body to:
     return UInt64(seconds * 1_000_000_000)
 ```
 
+- [ ] **Step 3a: Make the sleep-timer fade duration injectable**
+
+`sleepFadeDurationNanos` is a hardcoded `private static let` at `RadioPlayerCoordinator.swift:255`, so the fade test would otherwise poll for the full production 2.5s. Convert it to an instance property set by `init`. Replace:
+
+```swift
+  /// How long the fade-out runs before playback stops, in nanoseconds.
+  private static let sleepFadeDurationNanos: UInt64 = 2_500_000_000
+```
+
+with:
+
+```swift
+  /// How long the fade-out runs before playback stops, in nanoseconds. Injectable so tests can
+  /// drive the ramp in milliseconds; production keeps the 2.5s default.
+  private let sleepFadeDuration: UInt64
+```
+
+Then in `fireSleepTimer()` at `:338`, change `Self.sleepFadeDurationNanos` to `sleepFadeDuration`:
+
+```swift
+    let stepDelay = sleepFadeDuration / UInt64(Self.sleepFadeSteps)
+```
+
+Leave `sleepFadeSteps` and `fadeMultiplier(step:)` alone — they are `static`/`nonisolated` because pure tests already exercise them.
+
 - [ ] **Step 4: Make the coordinator's delays injectable**
 
 In `Sources/Maxi80/RadioPlayerCoordinator.swift`, change the hardcoded constant at `:94` from a `let` initialized inline to one set by the init, and build the manager with the scale. Replace the declaration:
@@ -776,7 +810,8 @@ Add the two parameters to the end of `public init` (before the body) and assign 
 ```swift
     shareService: ShareService = ShareService(),
     reconnectConfirmationDelay: UInt64 = 3_000_000_000,
-    reconnectTimeScale: Double = 1.0
+    reconnectTimeScale: Double = 1.0,
+    sleepFadeDuration: UInt64 = 2_500_000_000
   ) {
     self.player = player
     self.nowPlaying = nowPlaying
@@ -785,10 +820,13 @@ Add the two parameters to the end of `public init` (before the body) and assign 
     self.shareService = shareService
     self.reconnectConfirmationDelay = reconnectConfirmationDelay
     self.reconnectionManager = ReconnectionManager(timeScale: reconnectTimeScale)
+    self.sleepFadeDuration = sleepFadeDuration
 
     setupCallbacks()
     setupReconnection()
 ```
+
+All three injected values default to the current production constants, so production timing is byte-identical.
 
 - [ ] **Step 4a: Make `handleError` reachable from tests**
 
