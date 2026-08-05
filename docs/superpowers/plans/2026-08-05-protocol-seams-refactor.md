@@ -17,7 +17,9 @@
 - No force unwrapping (`!`) in production code; allowed in tests.
 - Use `Logger` (OSLog), never `print()`.
 - Tests use Swift Testing (`@Test`, `#expect`), not XCTest.
-- Every task ends green on **both** `swift test` and `make build-android`.
+- Every task ends green on **both** `swift test` and `make clean build-android`. Two measured pre-existing baselines define "green" — both were confirmed in Task 1 to exist on the untouched base commit, so neither is evidence that your change broke something:
+  - **Android:** use `make clean build-android`, **not** `make build-android`. The incremental build fails on this tree with missing `.build/plugins/outputs/.../Packages/skip-fuse-ui/Package.swift` and `skip-bridge/Package.swift`, cascading into hundreds of `Unresolved reference 'SwiftPeerBridged' / 'ComposeContext' / 'Maxi80RootView'` errors in generated Kotlin. The clean build passes (489/489 tasks). If you hit those errors, run `make clean build-android` before reporting a failure.
+  - **Tests:** `swift test` exits **non-zero** on a healthy tree. Green means all Swift Testing tests pass (142 at base, plus whatever your task adds) and the **only** failures are the three `XCSkipTests.testSkipModule` cases in `Maxi80Tests`, `Maxi80ServicesTests`, and `Maxi80ModelTests` (`cannot find type 'SkipUIBridging'` in generated `CoverImage_Bridge.swift` / `Maxi80App_Bridge.swift`). Report the passing count and confirm no new failures; do not try to fix the harness.
 - No production behavior changes in any task. This is seam insertion only. Task 8 is the sole exception (it deletes dead branches) and must preserve identical observable behavior.
 - Commit after each task.
 
@@ -59,6 +61,8 @@ Task 1 is a **gate** — it answers the one unverified question and everything e
 ---
 
 ### Task 1: Spike — verify retroactive conformance compiles for Android
+
+> **RESOLVED 2026-08-05 — gate answer: YES.** The full designed `AudioPlaying` surface (3 properties, 6 settable closures, 7 methods) was spiked as a retroactive conformance on the bridged `AudioStreamPlayer`; `swift build` and `make clean build-android` both passed. Skip emitted a zero-byte `SkipBridgeGenerated/SpikeAudioPlaying_Bridge.swift`, confirming the protocol stays native-only and adds no bridge surface. **Task 2 proceeds as written — the `AudioPlayerAdapter` fallback is not needed.** Spike file deleted; no code from this task is committed.
 
 **Files:**
 - Create (temporary, reverted at end): `Sources/Maxi80/Services/SpikeAudioPlaying.swift`
