@@ -1,6 +1,6 @@
 import Foundation
 import Maxi80Model
-import OSLog
+import SkipFuse
 
 /// Retries the artwork lookup for a song when it wasn't available on first fetch (the backend
 /// collector hadn't produced it yet). Backs off then gives up.

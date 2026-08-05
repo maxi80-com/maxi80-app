@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+import SkipFuse
 
 /// Manages the sleep timer lifecycle: start, cancel, extend, and the fade-to-silence firing.
 ///

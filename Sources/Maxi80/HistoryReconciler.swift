@@ -1,6 +1,6 @@
 import Foundation
 import Maxi80Model
-import OSLog
+import SkipFuse
 
 /// Handles fetching, merging, and artwork-resolution of the play history list.
 ///
