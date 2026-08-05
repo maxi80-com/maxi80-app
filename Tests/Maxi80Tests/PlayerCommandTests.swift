@@ -41,10 +41,7 @@ struct PlayerCommandTests {
 
     // Only the writes BEFORE the stop are the fade ramp; the write after it is the restore-to-1.0
     // that the final assertion covers, and including it would make the ramp look non-monotonic.
-    let stopIndex = player.commands.firstIndex(of: .stop) ?? player.commands.endIndex
-    let ramp: [Double] = player.commands[..<stopIndex].compactMap {
-      if case .setAttenuation(let value) = $0 { return value } else { return nil }
-    }
+    let ramp = player.attenuations(in: player.commandsBeforeStop())
     #expect(ramp.count >= 12, "expected one attenuation write per fade step; got \(ramp.count)")
     // Monotonically descending.
     #expect(zip(ramp, ramp.dropFirst()).allSatisfy { $0 >= $1 }, "ramp must not increase: \(ramp)")
@@ -75,7 +72,15 @@ struct PlayerCommandTests {
     #expect(player.attenuation == 1.0)
   }
 
-  // MARK: - True-stop semantics (issue #49 / StopOnPausePlayer invariant)
+  // MARK: - Stop semantics
+  //
+  // Scope note: these two tests prove that `stopForDisconnect()` issues exactly one `stop()` and
+  // lands `.paused` — reached via the user pause button and via the headset-disconnect callback.
+  // They do NOT prove "stop rather than pause": `AudioPlaying` exposes no `pause()` at all, and both
+  // entry points funnel into the same `stopForDisconnect()`, so this is one code path asserted from
+  // two callers. The real issue-#49 invariant — that a media3 transport pause must be a stop that
+  // KEEPS the media item — lives in `ExoPlayerStreamPlayer`/`StopOnPausePlayer` on the Android side
+  // and is not reachable from this suite. Don't mistake these for end-to-end #49 coverage.
 
   @Test("User pause issues exactly one true stop")
   @MainActor
@@ -167,6 +172,10 @@ struct PlayerCommandTests {
       shortDesc: "", longDesc: "", websiteUrl: "", donationUrl: "", defaultCoverUrl: "")
     player.reset()
 
+    // Decouple `play(url:)` from `isPlaying` so the staged flag below — not a side effect of the
+    // replay itself — is what the confirmation reads. Without this, the fake's `play(url:)` would
+    // set `isPlaying = true` on its own and the staging would be dead code.
+    player.playEstablishesPlayback = false
     // The player will report healthy playback, so the first attempt should succeed.
     player.isPlaying = true
     coordinator.handleError("stream dropped")
@@ -189,5 +198,46 @@ struct PlayerCommandTests {
     #expect(player.playedURLs() == ["https://stream.example/live.mp3"])
     #expect(coordinator.playbackState == .playing, "a confirmed replay resolves to playing")
     #expect(coordinator.errorMessage == nil, "a successful reconnect must clear the error message")
+  }
+
+  @Test("An unrecovered reconnect attempt is not confirmed and the ladder advances")
+  @MainActor
+  func unrecoveredReconnectAdvancesLadder() async {
+    let (coordinator, player) = makeTestCoordinator(
+      reconnectConfirmationDelay: 20_000_000,
+      reconnectTimeScale: 0.05
+    )
+    coordinator.station = Station(
+      name: "Maxi 80", streamUrl: "https://stream.example/live.mp3", image: "",
+      shortDesc: "", longDesc: "", websiteUrl: "", donationUrl: "", defaultCoverUrl: "")
+    player.reset()
+
+    // The replay reaches the player but audio never recovers (dead stream / no live edge), so
+    // `isPlaying` stays false through the confirmation window. This is the half of the ladder that
+    // is unreachable while `play(url:)` establishes playback by itself, and it is what makes the
+    // confirmation's POSITIVE direction load-bearing: a coordinator that declares success without
+    // reading the player would settle on `.playing` here instead of advancing.
+    player.playEstablishesPlayback = false
+    player.isPlaying = false
+    coordinator.handleError("stream dropped")
+
+    // Wait for the ladder to reach attempt 2, i.e. for attempt 1 to have been REJECTED.
+    var observed: [PlaybackState] = []
+    var waited = 0
+    while coordinator.playbackState != .reconnecting(2) && waited < 200 {
+      if observed.last != coordinator.playbackState { observed.append(coordinator.playbackState) }
+      try? await Task.sleep(nanoseconds: 5_000_000)
+      waited += 1
+    }
+
+    #expect(
+      coordinator.playbackState == .reconnecting(2),
+      "an unconfirmed attempt must advance the ladder, not settle; saw \(observed)")
+    #expect(
+      !observed.contains(.playing),
+      "playback must never be reported as playing over dead audio; saw \(observed)")
+    #expect(
+      player.playedURLs() == ["https://stream.example/live.mp3"],
+      "attempt 1 must have replayed the station URL exactly once by now")
   }
 }

@@ -31,6 +31,14 @@ final class FakeAudioPlayer: AudioPlaying {
   /// What `currentVolume()` returns.
   var systemVolume: Double = 1.0
 
+  /// Whether `play(url:)` establishes playback (sets `isPlaying`). `true` mirrors the happy path.
+  /// Stage `false` to simulate a `play(url:)` that does NOT recover audio — a dead stream URL, or a
+  /// reconnect attempt that fails to reach the live edge. This is what makes the *positive*
+  /// direction of the reconnect confirmation testable: with this `false`, `isPlaying` stays whatever
+  /// the test staged, so a coordinator that declares a reconnect confirmed without consulting the
+  /// player is distinguishable from one that consults it.
+  var playEstablishesPlayback = true
+
   /// Mirrors the real player's stored values so tests can read the final state.
   var volume: Double = 1.0
   var attenuation: Double = 1.0
@@ -44,7 +52,9 @@ final class FakeAudioPlayer: AudioPlaying {
 
   func play(url: String) {
     commands.append(.play(url: url))
-    isPlaying = true
+    if playEstablishesPlayback {
+      isPlaying = true
+    }
   }
 
   func stop() {
@@ -83,9 +93,18 @@ final class FakeAudioPlayer: AudioPlaying {
 
   // MARK: - Assertion helpers
 
-  /// The attenuation values written, in order — used to verify the sleep-timer fade ramp.
-  func attenuations() -> [Double] {
-    commands.compactMap { if case .setAttenuation(let value) = $0 { return value } else { return nil } }
+  /// The attenuation values written, in order — used to verify the sleep-timer fade ramp. Takes a
+  /// slice (defaulting to everything) because the fade assertions need only the writes BEFORE the
+  /// stop: the write after it is the restore-to-1.0, which would make the ramp look non-monotonic.
+  func attenuations(in slice: ArraySlice<PlayerCommand>? = nil) -> [Double] {
+    (slice ?? commands[...]).compactMap {
+      if case .setAttenuation(let value) = $0 { return value } else { return nil }
+    }
+  }
+
+  /// The commands issued before the first `stop`, i.e. everything that led up to it.
+  func commandsBeforeStop() -> ArraySlice<PlayerCommand> {
+    commands[..<(commands.firstIndex(of: .stop) ?? commands.endIndex)]
   }
 
   /// The URLs played, in order.
