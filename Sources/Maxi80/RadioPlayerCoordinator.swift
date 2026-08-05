@@ -61,7 +61,7 @@ public final class RadioPlayerCoordinator {
   // MARK: - Internal State
 
   @ObservationIgnored
-  private let reconnectionManager = ReconnectionManager()
+  private let reconnectionManager: ReconnectionManager
   @ObservationIgnored
   private var cachedStation: Station?
   @ObservationIgnored
@@ -90,8 +90,8 @@ public final class RadioPlayerCoordinator {
   private let defaultStreamURL = BrandConstants.streamURL
 
   /// How long to wait after issuing a reconnect `play()` before checking whether the
-  /// stream actually resumed.
-  private let reconnectConfirmationDelay: UInt64 = 3_000_000_000
+  /// stream actually resumed. Injectable so tests don't pay the full 3s; production keeps the default.
+  private let reconnectConfirmationDelay: UInt64
 
   /// Produces backend-compatible ISO-8601 timestamps for live history entries so they
   /// sort consistently against entries fetched from the API.
@@ -104,13 +104,19 @@ public final class RadioPlayerCoordinator {
     nowPlaying: NowPlayingController,
     apiClient: any APIClientProtocol,
     artworkService: ArtworkService,
-    shareService: ShareService = ShareService()
+    shareService: ShareService = ShareService(),
+    reconnectConfirmationDelay: UInt64 = 3_000_000_000,
+    reconnectTimeScale: Double = 1.0,
+    sleepFadeDuration: UInt64 = 2_500_000_000
   ) {
     self.player = player
     self.nowPlaying = nowPlaying
     self.apiClient = apiClient
     self.artworkService = artworkService
     self.shareService = shareService
+    self.reconnectConfirmationDelay = reconnectConfirmationDelay
+    self.reconnectionManager = ReconnectionManager(timeScale: reconnectTimeScale)
+    self.sleepFadeDuration = sleepFadeDuration
 
     setupCallbacks()
     setupReconnection()
@@ -251,8 +257,9 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Sleep Timer
 
-  /// How long the fade-out runs before playback stops, in nanoseconds.
-  private static let sleepFadeDurationNanos: UInt64 = 2_500_000_000
+  /// How long the fade-out runs before playback stops, in nanoseconds. Injectable so tests can
+  /// drive the ramp in milliseconds; production keeps the 2.5s default.
+  private let sleepFadeDuration: UInt64
   /// Number of attenuation steps across the fade. ~12 steps over ~2.5s is smooth without spinning.
   /// `nonisolated` so the pure `fadeMultiplier(step:)` helper can read it off the main actor.
   nonisolated private static let sleepFadeSteps = 12
@@ -335,7 +342,7 @@ public final class RadioPlayerCoordinator {
     sleepTimerFiresAt = nil
     sleepTimerTask = nil
 
-    let stepDelay = Self.sleepFadeDurationNanos / UInt64(Self.sleepFadeSteps)
+    let stepDelay = sleepFadeDuration / UInt64(Self.sleepFadeSteps)
     for step in 1...Self.sleepFadeSteps {
       if Task.isCancelled { player.setPlaybackAttenuation(1.0); return }
       player.setPlaybackAttenuation(Self.fadeMultiplier(step: step))
@@ -744,7 +751,9 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Error Handling
 
-  private func handleError(_ message: String) {
+  // Internal (not private) so tests can drive the reconnection cycle directly — the production
+  // caller is the `player.onError` closure wired in `setupCallbacks()`.
+  func handleError(_ message: String) {
     // A stream error triggers the backoff reconnection cycle rather than failing outright.
     // ReconnectionManager drives playbackState to .reconnecting/.playing/.error via its callback.
     errorMessage = nil

@@ -14,6 +14,14 @@ public final class ReconnectionManager {
 
   private let maxAttempts = 3
 
+  /// Multiplies every backoff delay. `1.0` in production; tests pass a tiny value so the
+  /// 2s/4s/8s ladder doesn't dominate the suite. Does not change the 2^n shape.
+  private let timeScale: Double
+
+  public init(timeScale: Double = 1.0) {
+    self.timeScale = timeScale
+  }
+
   // MARK: - State
 
   private var currentAttempt = 0
@@ -96,7 +104,7 @@ public final class ReconnectionManager {
   /// - Parameter attempt: The attempt number (1-indexed).
   /// - Returns: Delay in nanoseconds.
   public func delay(for attempt: Int) -> UInt64 {
-    let seconds = pow(2.0, Double(attempt))
+    let seconds = pow(2.0, Double(attempt)) * timeScale
     return UInt64(seconds * 1_000_000_000)
   }
 }

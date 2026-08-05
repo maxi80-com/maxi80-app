@@ -8,10 +8,18 @@
 ///
 /// Returns the player as the concrete `FakeAudioPlayer` (not `any AudioPlaying`) so callers can
 /// stage `isPlaying`/`syncResult` and assert against `commands`.
+///
+/// The three timing parameters default to the production constants, so a plain
+/// `makeTestCoordinator()` behaves exactly like the shipping coordinator; tests that exercise a
+/// real-time path (the sleep-timer fade ramp, the reconnect backoff + confirmation wait) scale them
+/// down so the suite stays in milliseconds instead of seconds.
 @MainActor
 func makeTestCoordinator(
   apiClient: (any APIClientProtocol)? = nil,
-  player: FakeAudioPlayer? = nil
+  player: FakeAudioPlayer? = nil,
+  reconnectConfirmationDelay: UInt64 = 3_000_000_000,
+  reconnectTimeScale: Double = 1.0,
+  sleepFadeDuration: UInt64 = 2_500_000_000
 ) -> (coordinator: RadioPlayerCoordinator, player: FakeAudioPlayer) {
   let fakePlayer = player ?? FakeAudioPlayer()
   let client = apiClient ?? StubAPIClient()
@@ -19,7 +27,10 @@ func makeTestCoordinator(
     player: fakePlayer,
     nowPlaying: NowPlayingController(),
     apiClient: client,
-    artworkService: ArtworkService(apiClient: client)
+    artworkService: ArtworkService(apiClient: client),
+    reconnectConfirmationDelay: reconnectConfirmationDelay,
+    reconnectTimeScale: reconnectTimeScale,
+    sleepFadeDuration: sleepFadeDuration
   )
   return (coordinator, fakePlayer)
 }
