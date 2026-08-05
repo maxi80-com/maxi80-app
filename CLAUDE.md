@@ -60,13 +60,20 @@ A known-good, minimal Skip prototype exercising this exact native+transpiled+bri
 ### Cross-module bridging rules (important, and easy to get wrong)
 
 - **Transpiled → native communication is callback-based, not Combine/ObservableObject.** `AudioStreamPlayer` and `NowPlayingController` expose closures (`onMetadataChanged`, `onError`, `onInterruption`, `onRemoteCommand`); the coordinator wires them in `setupCallbacks()` and hops to `@MainActor`. Closures bridge cleanly across the Swift/Kotlin boundary — plain `@Observable`/ObservableObject do not, because the transpiled Kotlin context lacks SkipModel/Compose.
+- **The coordinator depends on protocols, not the bridged classes.** `AudioPlaying`, `Sharing`, and
+  `NowPlayingPublishing` are declared in the **native `Maxi80` module** (`Sources/Maxi80/`)
+  and the bridged `Maxi80Services` classes conform retroactively. Declare any future service seam
+  the same way — a protocol in the native module never crosses the JNI boundary, so it can't break
+  the bridge. The `#if SKIP` platform dispatch stays inside the bridged class.
+- Coordinator tests inject fakes via `makeTestCoordinator(...)` in `Tests/Maxi80Tests/Fakes/`.
+  Never construct a real `AudioStreamPlayer()` in a test — it starts the platform audio path.
 - The two bridged service classes are wrapped in `/* SKIP @bridge */` + `#if !SKIP_BRIDGE`. Platform method bodies live in separate files under `Sources/Maxi80Services/Platform/{iOS,Android}/` and are dispatched via `#if SKIP` (Android) / `#elseif os(iOS) || os(tvOS)`.
 - `APIClient` is marked `// SKIP @nobridge` and uses completion handlers (`@escaping @Sendable (String?) -> Void`) that callers adapt to async with `withCheckedContinuation`. It returns raw JSON strings; JSON decoding into Codable types happens in the native coordinator, because transpiled modules can't synthesize Codable.
 - `Maxi80Services` pulls in ExoPlayer/media3 Gradle deps declared directly in its `skip.yml` `build.contents` block.
 
 ### Platform-specific patterns to preserve
 
-- **Apple-only code** (the `Maxi80App`/`App` protocol conformance, previews) is guarded with `#if !SKIP_BRIDGE`.
+- **Apple-only code** (the `Maxi80App`/`App` protocol conformance, previews) is guarded with `#if !SKIP_BRIDGE`. Note: do **not** use bare `#if !SKIP` to guard Apple-only frameworks inside the native `Maxi80` module — `Maxi80` is Fuse mode, so `SKIP` is *not* defined when the Swift is cross-compiled for Android, and `#if !SKIP` evaluates to `true` there. Use `#if canImport(NowPlaying)` (or the appropriate framework) instead; `canImport` is the gate that actually keeps Apple-only symbols out of the Android build.
 - **Image/color extraction** in `ArtworkService` uses `#if canImport(UIKit)` / `#elseif canImport(AppKit)`, with an Android fallback that returns a default color and no image (no platform image APIs).
 - **Previews are gated behind `ENABLE_PREVIEWS`**, defined in `Package.swift` only for Xcode-driven builds (detected via the `__CFBundleIdentifier` env var), because the `#Preview` macro plugin ships only with Xcode's toolchain, not the bare `swift build` toolchain. Keep new preview code inside that gate.
 
