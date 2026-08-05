@@ -10,7 +10,9 @@ import Maxi80Services
 /// of branching on `#if !SKIP` at every publish site.
 @MainActor
 final class BridgedNowPlayingPublisher: NowPlayingPublishing {
-  private let controller: NowPlayingController
+  /// Internal, not private: the composition root reads it to wire `onRemoteCommand`, and holding
+  /// this publisher is what keeps the controller alive for the process.
+  let controller: NowPlayingController
 
   init(controller: NowPlayingController) {
     self.controller = controller

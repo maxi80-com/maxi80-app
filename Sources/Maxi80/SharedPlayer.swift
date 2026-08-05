@@ -12,6 +12,16 @@ private let logger = Logger(subsystem: "com.stormacq.maxi80", category: "SharedP
 @MainActor
 public enum SharedPlayer {
 
+  /// The bridged MediaPlayer / MediaSession publisher, owned here rather than as a local so its
+  /// `NowPlayingController` genuinely lives for the process — a local `let` inside `coordinator`'s
+  /// initializer would be released when that initializer returned, taking the controller with it
+  /// whenever the modern sink won (nothing else retains it: assigning `onRemoteCommand` stores a
+  /// closure ON the controller without owning it). That would silently kill the remote-command
+  /// wiring below on the modern path. Structural ownership here makes the lifetime independent of
+  /// which sink was selected.
+  private static let bridgedNowPlaying = BridgedNowPlayingPublisher(
+    controller: NowPlayingController())
+
   public static let coordinator: RadioPlayerCoordinator = {
     // 1. Platform-appropriate audio player.
     let player = AudioStreamPlayer()
@@ -19,13 +29,7 @@ public enum SharedPlayer {
     // 2. Now Playing publisher: prefer the modern NowPlaying framework, else the bridged
     //    MediaPlayer / MediaSession controller. Each sink serves its OWN transport commands —
     //    see the remote-command wiring after the coordinator is built.
-    //
-    //    `bridged` is held in its own `let` so the `NowPlayingController` it wraps outlives this
-    //    initializer even when `publisher` is reassigned to the modern sink below: assigning
-    //    `controller.onRemoteCommand` stores a closure ON the controller and does not retain it,
-    //    so the wrapper is the controller's only strong owner.
-    let controller = NowPlayingController()
-    let bridged = BridgedNowPlayingPublisher(controller: controller)
+    let bridged = bridgedNowPlaying
     var publisher: any NowPlayingPublishing = bridged
 
     // The modern publisher's transport closures need the coordinator, which doesn't exist yet.
@@ -82,8 +86,9 @@ public enum SharedPlayer {
     // callback stays dormant because `NowPlayingController` only installs its
     // `MPRemoteCommandCenter` targets from `platformUpdateNowPlaying`, which the modern path never
     // calls. Wiring it unconditionally anyway costs nothing and keeps the bridged path complete
-    // regardless of which sink won.
-    controller.onRemoteCommand = { [weak coordinator] command in
+    // regardless of which sink won — `bridgedNowPlaying` owns the controller for the process, so
+    // this callback survives even when it isn't the selected sink.
+    bridged.controller.onRemoteCommand = { [weak coordinator] command in
       Task { @MainActor in coordinator?.handleRemote(command) }
     }
 
