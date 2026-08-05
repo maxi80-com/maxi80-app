@@ -881,7 +881,14 @@ git commit -m "test: cover fade ramp, true-stop, cold-start adoption and reconne
 
 **Interfaces:**
 - Consumes: `makeTestCoordinator` (Task 5)
-- Produces: `protocol Sharing { func share(text: String, imageData: Data?) }`; `final class FakeSharing: Sharing` with `var shares: [(text: String, imageData: Data?)]`; `makeTestCoordinator` gains `shareService: FakeSharing? = nil` and returns a 3-tuple `(coordinator:player:shareService:)`
+- Produces: `public protocol Sharing { func share(text: String, imageData: Data?) }`; `final class FakeSharing: Sharing` with `var shares: [(text: String, imageData: Data?)]`; `makeTestCoordinator` gains a defaulted `shareService: FakeSharing? = nil` parameter and **keeps its existing 2-tuple return** `(coordinator:player:)`
+
+> **CONTROLLER NOTE — the brief as first written had four defects; the text below is corrected. Read these so you don't "restore" them:**
+>
+> 1. **`Sharing` must be `public`.** `RadioPlayerCoordinator.init` is `public`, so a public signature cannot expose an internal protocol. Task 4 hit this exact wall with `AudioPlaying` and resolved it by widening the protocol. Widening is free — a protocol declared in the native module generates a 0-byte `SkipBridgeGenerated/*_Bridge.swift`, i.e. no JNI surface.
+> 2. **Do NOT change `makeTestCoordinator`'s return type.** The originally-drafted 3-tuple would break ~15 destructuring call sites across 9 files, and Task 8 would then churn all of them a second time for a Now Playing double. Instead, tests that need the fake construct it and pass it in — the factory already takes it as a defaulted parameter, and the caller keeps its own reference. Zero call sites change.
+> 3. **Do NOT drop Task 6's three timing parameters** (`reconnectConfirmationDelay`, `reconnectTimeScale`, `sleepFadeDuration`) from `makeTestCoordinator`. They were added after this plan was written; deleting them breaks `PlayerCommandTests`. Step 7's code block below is the current, correct signature.
+> 4. **`reconnectReplaysStationURL` does not construct the coordinator directly** — it goes through `makeTestCoordinator`. Ignore any instruction to edit it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -902,7 +909,8 @@ struct SharingTests {
   @Test("Sharing without an artwork URL forwards the text and no image")
   @MainActor
   func shareWithoutArtworkIsTextOnly() async {
-    let (coordinator, _, share) = makeTestCoordinator()
+    let share = FakeSharing()
+    let (coordinator, _) = makeTestCoordinator(shareService: share)
 
     await coordinator.shareCurrentTrack(text: "listen to this", artworkURL: nil)
 
@@ -914,14 +922,19 @@ struct SharingTests {
   @Test("A failed artwork download still shares the text")
   @MainActor
   func failedArtworkStillSharesText() async {
-    // The stub API client serves no artwork, so the image fetch fails.
-    let (coordinator, _, share) = makeTestCoordinator()
+    let share = FakeSharing()
+    let (coordinator, _) = makeTestCoordinator(shareService: share)
 
+    // A `file://` URL for a path that does not exist. Deliberately not an `https://` host: this
+    // must fail deterministically and offline. `ArtworkService.fetchImageData` requires a 200
+    // `HTTPURLResponse`, and a file URL never produces one, so this returns nil on any machine —
+    // whereas an unresolvable hostname depends on the DNS resolver not handing back a wildcard.
     await coordinator.shareCurrentTrack(
-      text: "listen to this", artworkURL: "https://nonexistent.invalid/cover.jpg")
+      text: "listen to this", artworkURL: "file:///maxi80-no-such-cover.jpg")
 
     #expect(share.shares.count == 1, "a download failure must not swallow the share")
     #expect(share.shares.first?.text == "listen to this")
+    #expect(share.shares.first?.imageData == nil, "a failed fetch must degrade to text-only")
   }
 }
 ```
@@ -929,7 +942,7 @@ struct SharingTests {
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `swift test --filter SharingTests`
-Expected: compile failure — `makeTestCoordinator` returns a 2-tuple and `FakeSharing` doesn't exist.
+Expected: compile failure — `FakeSharing` doesn't exist yet and `makeTestCoordinator` has no `shareService:` parameter.
 
 - [ ] **Step 3: Create the protocol and conformance**
 
@@ -941,7 +954,7 @@ import Maxi80Services
 /// The share surface the coordinator depends on, abstracting the bridged `ShareService`.
 /// Declared in the native module so it never crosses the JNI boundary — see `AudioPlaying`.
 @MainActor
-protocol Sharing: AnyObject {
+public protocol Sharing: AnyObject {
   /// Present the platform share chooser. Fire-and-forget.
   func share(text: String, imageData: Data?)
 }
@@ -1000,30 +1013,38 @@ In `Sources/Maxi80/SharedPlayer.swift`, add the service to the graph:
 
 - [ ] **Step 7: Thread the fake through the test factory**
 
-In `Tests/Maxi80Tests/Fakes/TestCoordinator.swift`, replace the function with:
+In `Tests/Maxi80Tests/Fakes/TestCoordinator.swift`, add ONE parameter to the existing function and pass it through. Keep the 2-tuple return and keep all three timing parameters. The result should read exactly:
 
 ```swift
 @MainActor
 func makeTestCoordinator(
   apiClient: (any APIClientProtocol)? = nil,
   player: FakeAudioPlayer? = nil,
-  shareService: FakeSharing? = nil
-) -> (coordinator: RadioPlayerCoordinator, player: FakeAudioPlayer, shareService: FakeSharing) {
+  shareService: FakeSharing? = nil,
+  reconnectConfirmationDelay: UInt64 = 3_000_000_000,
+  reconnectTimeScale: Double = 1.0,
+  sleepFadeDuration: UInt64 = 2_500_000_000
+) -> (coordinator: RadioPlayerCoordinator, player: FakeAudioPlayer) {
   let fakePlayer = player ?? FakeAudioPlayer()
-  let fakeShare = shareService ?? FakeSharing()
   let client = apiClient ?? StubAPIClient()
   let coordinator = RadioPlayerCoordinator(
     player: fakePlayer,
     nowPlaying: NowPlayingController(),
     apiClient: client,
     artworkService: ArtworkService(apiClient: client),
-    shareService: fakeShare
+    shareService: shareService ?? FakeSharing(),
+    reconnectConfirmationDelay: reconnectConfirmationDelay,
+    reconnectTimeScale: reconnectTimeScale,
+    sleepFadeDuration: sleepFadeDuration
   )
-  return (coordinator, fakePlayer, fakeShare)
+  return (coordinator, fakePlayer)
 }
 ```
 
-Existing callers destructure a 2-tuple and will now fail to compile. Fix each by ignoring the third element — `let (coordinator, player, _) = makeTestCoordinator()` — or, where the file's helper returns `.coordinator` / `.player` by label, no change is needed. Also update Task 6's `reconnectReplaysStationURL`, which constructs the coordinator directly, to pass `shareService: FakeSharing()`.
+Two consequences worth understanding rather than pattern-matching:
+
+- **No existing call site changes.** The new parameter is defaulted and the return type is untouched, so all ~15 existing `makeTestCoordinator` calls across 9 test files compile unmodified. Verify this rather than assume it: after Step 7, `git diff --name-only Tests/` should list only `Fakes/TestCoordinator.swift`, `Fakes/FakeSharing.swift`, and `SharingTests.swift`. If any other test file appears in that list, you have changed something you were not asked to change — revert it.
+- **The default is now a `FakeSharing`, not a real `ShareService`.** That is intentional and is the point of dropping the coordinator's defaulted argument in Step 5: no test can accidentally reach a real platform share chooser.
 
 - [ ] **Step 8: Run the new tests, then everything**
 
