@@ -100,7 +100,12 @@ in `defaults` (`FeatureFlagsTests` fails if you forget). Rules that must hold:
   the feature and gate that one place; with no way in, the downstream coordinator methods need no
   guards of their own (`sleep_timer` gates only `isSleepTimerAvailable`, which hides the tray button
   that presents the picker). Check first that the entry point really is singular — a feature also
-  reachable from CarPlay or the TV UIs needs its coordinator API gated too.
+  reachable from CarPlay or the TV UIs needs its coordinator API gated too. When a feature has no
+  single control but several readers, gate the **data they all resolve through** instead:
+  `anniversary_cover` is read only by `RadioPlayerCoordinator.placeholderCoverPool`, and the carousel,
+  history and Now Playing picks all draw from that pool. `PlaceholderCover.forSong(_:from:)` therefore
+  takes the pool as a parameter rather than reading the flag itself — a static helper that reached for
+  `.shared` would scatter the gate and break the injection rule below.
 - **Leave a feature already in progress able to finish or be cancelled.** The flag stops new
   entries; it shouldn't strand state that's already running. A sleep timer armed before the switch
   arrives keeps its countdown pill, because that pill is how the user calls off a stop that's already

@@ -149,6 +149,7 @@ public final class RadioPlayerViewModel {
   /// cover is always the persistent "now" slot — the generic image when idle, or the current
   /// song's artwork while playing.
   var covers: [Cover] {
+    let pool = coordinator.placeholderCoverPool
     let past = pastEntries.map { entry in
       // Fall back to generic art for entries whose artwork couldn't be resolved, so no cover is
       // ever blank. The pick follows the song, so coverless entries don't all show one cover.
@@ -156,7 +157,7 @@ public final class RadioPlayerViewModel {
         id: entry.id,
         artworkURL: entry.artworkURL,
         assetName: entry.artworkURL == nil
-          ? PlaceholderCover.forSong(entry.songMetadata).imageName : nil
+          ? PlaceholderCover.forSong(entry.songMetadata, from: pool).imageName : nil
       )
     }
 

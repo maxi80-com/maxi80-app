@@ -61,8 +61,21 @@ public final class RadioPlayerCoordinator {
   /// coverless songs no longer all share one cover picked at launch (issue #70). Falls back to a
   /// fixed pool member before the first song, when there is nothing to derive a pick from.
   var nowPlaceholderCover: PlaceholderCover {
-    guard let currentSong else { return PlaceholderCover.all[0] }
-    return .forSong(currentSong)
+    guard let currentSong else { return placeholderCoverPool[0] }
+    return .forSong(currentSong, from: placeholderCoverPool)
+  }
+
+  /// The covers a coverless song may be given. **The one place the `anniversary_cover` flag is
+  /// read** (issue #71): every placeholder pick — carousel now slot, carousel history, and the
+  /// artwork published to system Now Playing — resolves through this pool, so gating it here gates
+  /// the feature everywhere without a second flag check.
+  ///
+  /// Computed rather than stored: flags arrive with the station response, well after the coordinator
+  /// is constructed, so a stored pool would be fixed before the backend had spoken. Reading the flag
+  /// per access also lets SwiftUI observe it, so the carousel re-renders when the response lands.
+  var placeholderCoverPool: [PlaceholderCover] {
+    guard featureFlags.isEnabled(.anniversaryCover) else { return PlaceholderCover.all }
+    return PlaceholderCover.all + [.anniversary]
   }
 
   // MARK: - Internal State

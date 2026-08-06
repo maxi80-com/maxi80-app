@@ -20,6 +20,13 @@ struct PlaceholderCover: Equatable, Sendable {
       imageName: "NoCover-c", dominantColor: Color(red: 61 / 255, green: 42 / 255, blue: 28 / 255)),
   ]
 
+  /// The 25th-anniversary cover (issue #71), which joins the pool only while the
+  /// `anniversary_cover` flag is on so the celebration artwork can be switched off once the window
+  /// closes without shipping a build. Kept out of `all` rather than filtered back out of it, so the
+  /// default pool needs no knowledge of the flag.
+  static let anniversary = PlaceholderCover(
+    imageName: "NoCover-25ans", dominantColor: Color(red: 47 / 255, green: 31 / 255, blue: 55 / 255))
+
   /// An arbitrary cover for a song with no artwork of its own, so coverless slots vary across a
   /// session instead of all showing one cover picked at launch (issue #70).
   ///
@@ -33,12 +40,20 @@ struct PlaceholderCover: Equatable, Sendable {
   /// stream and as `Maxi80` from the backend, and history dedup/`mergedWith` already treat those as
   /// one play. Hashing the raw artist would give the two representations different covers, so the
   /// cover would visibly change as the program slid from the now slot into a healed history entry.
-  static func forSong(_ song: SongMetadata) -> PlaceholderCover {
+  ///
+  /// Takes the pool as a parameter instead of reading `all` directly, so the one place that knows
+  /// whether the anniversary cover is in play is the coordinator that owns the feature flags — this
+  /// stays a pure function of (song, pool) and remains directly testable for either pool.
+  static func forSong(_ song: SongMetadata, from pool: [PlaceholderCover] = all) -> PlaceholderCover
+  {
     let identity = song.identity
     var hash: UInt64 = 0xcbf2_9ce4_8422_2325
     for byte in "\(identity.artist)|\(identity.title)".utf8 {
       hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
     }
-    return all[Int(hash % UInt64(all.count))]
+    // Take the remainder of the *high* bits: FNV-1a's last multiply barely disturbs its low bits, so
+    // `% n` on the raw hash reaches only part of an even-sized pool — with three covers that went
+    // unnoticed, but a fourth (the anniversary cover) collapsed the pick to two of the four.
+    return pool[Int((hash >> 32) % UInt64(pool.count))]
   }
 }
