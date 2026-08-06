@@ -86,6 +86,11 @@ public final class RadioPlayerCoordinator {
   @ObservationIgnored
   private let artworkRetry: ArtworkRetryManager
 
+  /// The rules for folding the backend's `/history` into `history`. Stateless — it owns no part of
+  /// the list; the coordinator installs whatever it returns.
+  @ObservationIgnored
+  private let reconciler: HistoryReconciler
+
   /// Owns the sleep timer's fire date, fade ramp, and task. `@ObservationIgnored` because the
   /// reference never changes; the manager is itself `@Observable`, so reading `sleepTimerFiresAt`
   /// through it still re-renders the views that consult it.
@@ -127,6 +132,7 @@ public final class RadioPlayerCoordinator {
     self.reconnectionManager = ReconnectionManager(timeScale: reconnectTimeScale)
     self.sleepTimer = SleepTimerManager(player: player, fadeDuration: sleepFadeDuration)
     self.artworkRetry = ArtworkRetryManager(artworkService: artworkService)
+    self.reconciler = HistoryReconciler(artworkService: artworkService)
     self.injectedPlaceholderArtworkURL = placeholderArtworkURL
 
     // Assigned here rather than injected: the handlers capture `self`, which can't exist while the
@@ -805,17 +811,11 @@ public final class RadioPlayerCoordinator {
   /// Fetches `/history` and merges it into the in-memory list. Internal (not private) so tests
   /// can await it directly; production callers go through `refreshHistory`/`refreshHistoryIfStale`.
   func fetchHistory() async {
-    logger.info("fetchHistory: GET /history")
-    guard let json = try? await apiClient.fetchHistory(),
-      let entries = try? json.decodedJSON(as: HistoryResponse.self).entries
-    else {
-      logger.notice("fetchHistory: no data or decode failed")
-      return
-    }
+    guard let entries = await reconciler.fetchBackendEntries(using: apiClient) else { return }
 
     // First load (empty history): resolve artwork for every entry and seed the list.
     if history.isEmpty {
-      let resolved = await resolveArtwork(for: entries)
+      let resolved = await reconciler.resolveArtwork(for: entries)
       // Re-check AFTER the await: `handleMetadataChanged` may have live-appended a song while we
       // were suspended resolving artwork (both run on @MainActor but interleave across suspension
       // points). Overwriting `history` here would either drop that live entry or, combined with a
@@ -824,7 +824,7 @@ public final class RadioPlayerCoordinator {
       if history.isEmpty {
         history = resolved
       } else {
-        mergeResolvedEntries(resolved)
+        install(HistoryReconciler.merged(history, with: resolved))
       }
       lastHistoryFetchedAt = Date()
       logger.info("fetchHistory: seeded \(self.history.count) entries")
@@ -833,120 +833,27 @@ public final class RadioPlayerCoordinator {
 
     lastHistoryFetchedAt = Date()
 
-    // Reconcile the backend list into the in-memory one, matching by SONG identity
-    // (artist+title), NOT by `id`: a live-appended entry and the backend's own copy of the same
-    // song get different timestamps → different ids, so id-based matching would show a duplicate.
-    //
-    // Two things are resolved against the backend:
-    //   1. Genuinely NEW songs not in memory yet (played while stopped/paused).
-    //   2. EXISTING songs still MISSING artwork — a live entry appended before the backend had
-    //      produced the cover is showing a generic one (`cover.wantsArtwork`); the backend copy now
-    //      resolves the real one. Without this, that entry would keep the generic cover forever.
-    // Songs already showing artwork are left untouched (no reload, no flicker). Legitimate
-    // repeat plays (same song at different times) are preserved — we edit in place and append,
-    // never collapse by song.
-    // Identity, not raw songMetadata: a backend `Maxi80` entry and a live artist-less entry for
-    // the same program collapse to one identity, so they heal into a single entry rather than
-    // showing a duplicate cover.
-    let existingSongs = Set(history.map(\.songIdentity))
-    let songsMissingArtwork = Set(history.filter { $0.cover.wantsArtwork }.map(\.songIdentity))
-
-    // Backend entries worth resolving: new songs, or songs an in-memory entry still lacks art for.
-    let toResolve = entries.filter {
-      !existingSongs.contains($0.songIdentity) || songsMissingArtwork.contains($0.songIdentity)
-    }
+    let toResolve = HistoryReconciler.entriesNeedingResolution(backend: entries, existing: history)
     guard !toResolve.isEmpty else {
       logger.info("fetchHistory: nothing new or missing artwork to merge")
       return
     }
 
-    let resolved = await resolveArtwork(for: toResolve)
+    let resolved = await reconciler.resolveArtwork(for: toResolve)
 
-    // Heal existing entries and append genuinely-new songs, deduping against the LIVE `history`
-    // read *after* the await — not the `existingSongs` snapshot taken before it. See
-    // `mergeResolvedEntries` for why the post-await read is required.
-    mergeResolvedEntries(resolved)
+    // Merge against `history` read HERE, after the await — not against the list `toResolve` was
+    // computed from. A song `handleMetadataChanged` live-appended while we were suspended is only
+    // visible in this read, and deduping without it appends the backend's copy a second time
+    // (issue #28). See `HistoryReconciler.merged`.
+    install(HistoryReconciler.merged(history, with: resolved))
   }
 
-  /// Merges backend-resolved entries into the live `history`: heals in-place any existing entry
-  /// missing artwork/artist from its backend copy, then appends songs not already present, ordered
-  /// by timestamp.
-  ///
-  /// The existence check keys off `history` **as read here**, at mutation time — NOT off a snapshot
-  /// captured before the artwork `await` in `fetchHistory()`. `RadioPlayerCoordinator` is
-  /// `@MainActor`, which prevents data races but not interleaving across suspension points: while
-  /// `fetchHistory()` is suspended resolving artwork, `handleMetadataChanged(...)` can run to
-  /// completion and live-append the currently-playing song. Deduping against a pre-await snapshot
-  /// would then miss that live entry and append the backend's copy of the same song a second time
-  /// → the duplicate reported in issue #28. Reading `history` here closes that window.
-  ///
-  /// Dedup is by *presence in the current array* (`songIdentity`), so genuine repeat plays (same
-  /// song, different timestamps) are preserved — the backend reports each song once, so a repeat
-  /// that is already in memory simply isn't re-appended.
-  private func mergeResolvedEntries(_ resolved: [HistoryEntry]) {
-    // Backend entry per identity, for healing existing entries (carries the `Maxi80` artist,
-    // artwork URL, and color the live copy may be missing).
-    var backendBySong: [SongMetadata: HistoryEntry] = [:]
-    for entry in resolved {
-      backendBySong[entry.songIdentity] = entry
-    }
-
-    // 1. Heal existing entries against the backend copy, in place (preserves order & repeats).
-    //    Merges when the in-memory entry lacks artwork or a real artist; `mergedWith` keeps the
-    //    non-empty `Maxi80` artist and fills artwork/color.
-    var healed = 0
-    history = history.map { entry in
-      guard entry.cover.wantsArtwork || entry.artist.isEmpty,
-        let backend = backendBySong[entry.songIdentity]
-      else { return entry }
-      let merged = entry.mergedWith(backend)
-      if merged != entry { healed += 1 }
-      return merged
-    }
-
-    // 2. Append genuinely-new songs, then order by timestamp so newest sits nearest the now-slot
-    //    (the carousel renders history oldest→newest, left→right). Dedup against the LIVE array
-    //    read on the line above — not a pre-await snapshot — so a song `handleMetadataChanged`
-    //    live-appended during the artwork await is not added a second time.
-    let existingSongsNow = Set(history.map(\.songIdentity))
-    let newEntries = resolved.filter { !existingSongsNow.contains($0.songIdentity) }
-    if !newEntries.isEmpty {
-      history = (history + newEntries).sorted { $0.timestamp < $1.timestamp }
-    }
+  /// Adopt a reconciliation result as the new history and log what it changed.
+  private func install(_ result: HistoryReconciler.MergeResult) {
+    history = result.entries
     logger.info(
-      "fetchHistory: healed \(healed), added \(newEntries.count); history now has \(self.history.count)"
+      "fetchHistory: healed \(result.healed), added \(result.added); history now has \(self.history.count)"
     )
-  }
-
-  /// Resolves each entry's artwork S3 key into a lightweight presigned URL, concurrently.
-  /// AsyncImage loads the image lazily — we do NOT download it here. The background color is
-  /// derived from the backend `colors` palette already decoded on the entry; if absent it stays nil.
-  ///
-  /// Entries whose artwork doesn't resolve get a generic cover here, the other half of the rule in
-  /// `handleMetadataChanged`: an entry is given one when it is created without artwork. Backend
-  /// entries never pass through the now slot — on a cold start `/history` seeds ~20 past songs — so
-  /// this is where their covers come from, and every coverless entry in `history` carries one.
-  private func resolveArtwork(for entries: [HistoryEntry]) async -> [HistoryEntry] {
-    let urlByIndex = await withTaskGroup(of: (Int, String?).self) { group in
-      for (index, entry) in entries.enumerated() {
-        group.addTask { [artworkService] in
-          let url = await artworkService.resolveArtworkURL(artist: entry.artist, title: entry.title)
-          return (index, url)
-        }
-      }
-      var urlByIndex = [Int: String?]()
-      for await (index, url) in group {
-        urlByIndex[index] = url
-      }
-      return urlByIndex
-    }
-
-    return entries.enumerated().map { index, entry -> HistoryEntry in
-      var copy = entry
-      let url = urlByIndex[index] ?? nil
-      copy.cover = url.map(CoverSource.artwork) ?? .generic(PlaceholderCover.random().imageName)
-      return copy
-    }
   }
 
 }
