@@ -82,7 +82,8 @@ KEYSTORE_PROPS := Android/app/keystore.properties
 .PHONY: help version doctor verify check-config check-clean-tree test \
         clean kill-daemons android-studio build-ios build-android build-all \
         package-ios package-tvos package-macos package-android package-all \
-        publish-metadata-ios publish-metadata-tvos publish-metadata-mac publish-metadata-all \
+        publish-metadata-ios publish-metadata-tvos publish-metadata-mac \
+        publish-metadata-android publish-metadata-all \
         publish-ios publish-ios-open publish-tvos publish-tvos-open \
         publish-macos publish-android publish-android-open \
         publish-all publish-all-open \
@@ -140,8 +141,10 @@ help: ## Show this help (default target)
 	@echo "    push-release         Step 3 only: push commit + tag, then create the GitHub release"
 	@echo "    bump                 Rewrite build number in Skip.env (yyyyMMddNN, low-level)"
 	@echo ""
-	@echo "  Publish metadata (listing text + screenshots, draft; no binary/review)"
-	@echo "    publish-metadata-ios / -tvos / -mac / -all"
+	@echo "  Publish metadata (listing text + screenshots; no binary)"
+	@echo "    publish-metadata-ios / -tvos / -mac   Apple, draft, no review"
+	@echo "    publish-metadata-android              Play — TRIGGERS Play review"
+	@echo "    publish-metadata-all                  all of the above"
 	@echo ""
 	@echo "  Publish binaries — INTERNAL (private/fast; macOS→App Store, no TestFlight)"
 	@echo "    publish-ios / publish-tvos   TestFlight internal"
@@ -444,8 +447,11 @@ bump: ## Rewrite CURRENT_PROJECT_VERSION in Skip.env to a fresh build number
 #                  release — you promote to production manually in each Console.
 #
 #   make publish-metadata-all
-#                  Separate, opt-in: push the store LISTING (text + screenshots) as a
-#                  draft. Run only when the listing changed — it's independent of the build.
+#                  Separate, opt-in: push the store LISTING (text + screenshots).
+#                  Run only when the listing changed — it's independent of the build.
+#                  Apple listings land as an editable draft; the PLAY listing is
+#                  app-global and writing it QUEUES A PLAY REVIEW, so treat the
+#                  Android half as a deliberate act, not routine hygiene.
 #
 #   Typical flow:  make clean  &&  make release  &&  make publish-all
 #                  (then test on device, then promote to prod in the Consoles)
@@ -532,7 +538,10 @@ ship-with-metadata: ## Like 'ship', but also uploads changed store listing text/
 	@echo ""
 	@echo "==> SHIPPED (with metadata). Verify on TestFlight / Play internal, then: make promote-all"
 
-# --- Metadata uploads (listing text + screenshots as draft; no binary, no review) ---
+# --- Metadata uploads (listing text + screenshots; no binary) -----------------
+# NOT uniformly review-free: the Apple lanes land as an editable draft, but the Play
+# listing is app-global, so publish-metadata-android QUEUES A PLAY REVIEW. See its
+# comment below.
 publish-metadata-ios: ## App Store iOS listing (text + iPhone screenshots) as draft
 	cd Darwin && fastlane metadata
 
@@ -542,7 +551,15 @@ publish-metadata-tvos: ## App Store tvOS listing (text + Apple TV screenshots) a
 publish-metadata-mac: ## App Store macOS listing (text + Mac screenshots) as draft
 	cd Darwin && fastlane metadata_mac
 
-publish-metadata-all: publish-metadata-ios publish-metadata-tvos publish-metadata-mac ## All Apple listings
+publish-metadata-android: ## Play listing (text + images) — TRIGGERS Play review
+	# Unlike the Apple lanes above this is NOT a harmless draft: the Play listing is
+	# app-global (edits.listings/edits.images take no track), so writing it queues a
+	# Play review. Run it only when the listing under Android/fastlane/metadata really
+	# changed. Dry run first with:
+	#   cd Android && fastlane metadata validate_only:true
+	cd Android && fastlane metadata
+
+publish-metadata-all: publish-metadata-ios publish-metadata-tvos publish-metadata-mac publish-metadata-android ## All store listings (Apple drafts + Play, which triggers review)
 
 # --- Binary uploads to TEST tracks -------------------------------------------
 # Two symmetric tiers on both stores:
@@ -574,7 +591,11 @@ publish-macos: ## macOS → App Store Connect (pkg; no TestFlight — submit via
 	@ls $(MACOS_DIR)/*.pkg >/dev/null 2>&1 || { echo "no macOS pkg in $(MACOS_DIR) — run 'make package-macos' (or release) first"; exit 1; }
 	cd Darwin && fastlane upload platform:macos
 
-publish-android: ## Android → Play internal track (private, draft)
+publish-android: ## Android → Play internal track (private, draft; binary only, no review)
+	# Binary only. The `upload` lane pins skip_upload_metadata/images/screenshots — see
+	# the note there: supply defaults them to FALSE, and the Play listing is app-global,
+	# so an unpinned test-track upload rewrites the PRODUCTION listing and restarts its
+	# review. Listing changes go through publish-metadata-android instead.
 	@test -f "$(AAB_PATH)" || { echo "no AAB at $(AAB_PATH) — run 'make package-android' (or release) first"; exit 1; }
 	cd Android && fastlane upload track:internal release_status:draft
 

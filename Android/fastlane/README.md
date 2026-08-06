@@ -43,7 +43,15 @@ Assemble Skip Android App
 [bundle exec] fastlane upload
 ```
 
-Upload the EXISTING signed AAB to Google Play (no rebuild)
+Upload the EXISTING signed AAB to Google Play (no rebuild) — BINARY ONLY
+
+### metadata
+
+```sh
+[bundle exec] fastlane metadata
+```
+
+Push the Play store LISTING (text + images) — no binary. TRIGGERS Play review.
 
 ### release
 

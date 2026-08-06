@@ -48,10 +48,18 @@ end
 
 AAB_PATH = '../.build/Android/app/outputs/bundle/release/app-release.aab'
 
-desc "Upload the EXISTING signed AAB to Google Play (no rebuild)"
+desc "Upload the EXISTING signed AAB to Google Play (no rebuild) — BINARY ONLY"
 # The Makefile builds the AAB once via `make release`, then calls this to upload
 # exactly that binary (the one that was version-stamped + tagged) — no rebuild, so
 # what ships is what was tested/tagged.
+#
+# BINARY ONLY — the store listing is deliberately NOT touched here. supply defaults
+# every skip_upload_* to false, so without these flags a plain test-track upload also
+# rewrites the listing. That matters because the listing is APP-GLOBAL in the Play
+# API: edits.listings and edits.images take a language but NO track, so writing them
+# alongside an internal-track AAB mutates the PRODUCTION listing and queues a fresh
+# Play review — restarting the review clock for a build only testers will ever see.
+# Update the listing deliberately via the `metadata` lane instead.
 # options:
 #   track          : Play track (default: 'internal')
 #   release_status : 'draft' | 'completed' | ... (default: 'draft')
@@ -59,7 +67,43 @@ lane :upload do |options|
   upload_to_play_store(
     aab: AAB_PATH,
     track: options[:track] || 'internal',
-    release_status: options[:release_status] || 'draft'
+    release_status: options[:release_status] || 'draft',
+    skip_upload_metadata: true,
+    skip_upload_images: true,
+    skip_upload_screenshots: true,
+    # Changelogs stay: unlike listings they ARE track-scoped (supply writes them via
+    # update_edit_track), so they attach to THIS track's release, are visible to the
+    # testers on it, and carry forward when promote_production copies that release.
+    skip_upload_changelogs: false
+  )
+end
+
+desc "Push the Play store LISTING (text + images) — no binary. TRIGGERS Play review."
+# The deliberate, opt-in counterpart to `upload`: run this ONLY when the listing text
+# or artwork under fastlane/metadata/android actually changed. It writes the app-global
+# listing, so it does queue a Play review — that's the point, and why it is separate.
+#
+# sync_image_upload: without it, upload_screenshots clears every screenshot and
+# re-uploads it, so byte-identical artwork still reads as a real change to Google.
+# With it, supply sha256-compares against Play and unchanged assets are a true no-op.
+# (Same reasoning as sync_screenshots on the Apple side — see Darwin/fastlane/Fastfile.)
+# options:
+#   track         : track supply resolves to locate a release (default: 'production').
+#                   The listing writes themselves are app-global, so this only picks
+#                   which track supply looks at — it does not scope the listing.
+#   version_code  : disambiguate if that track holds more than one release
+#                   (supply errors with "More than one release found in this track")
+#   validate_only : 'true' for a dry run that validates instead of committing
+lane :metadata do |options|
+  upload_to_play_store(
+    skip_upload_aab: true,
+    skip_upload_apk: true,
+    # Changelogs are per-release; this lane is about the listing, not a release.
+    skip_upload_changelogs: true,
+    sync_image_upload: true,
+    track: options[:track] || 'production',
+    version_code: options[:version_code],
+    validate_only: options[:validate_only].to_s == 'true'
   )
 end
 
