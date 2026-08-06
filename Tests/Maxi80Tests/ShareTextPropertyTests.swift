@@ -14,16 +14,8 @@ struct ShareTextPropertyTests {
   @Test("P7: Share text matches template with artist and title")
   @MainActor
   func shareTextFormatting() {
-    let player = AudioStreamPlayer()
-    let nowPlaying = NowPlayingController()
     let apiClient = APIClient(baseURL: "https://test.com", authToken: "test-key")
-    let artworkService = ArtworkService(apiClient: apiClient)
-    let coordinator = RadioPlayerCoordinator(
-      player: player,
-      nowPlaying: nowPlaying,
-      apiClient: apiClient,
-      artworkService: artworkService
-    )
+    let (coordinator, _) = makeTestCoordinator(apiClient: apiClient)
     let vm = RadioPlayerViewModel(coordinator: coordinator)
 
     property("share text matches expected template")
@@ -47,12 +39,7 @@ struct ShareTextPropertyTests {
   @MainActor
   private func makeViewModel() -> (RadioPlayerViewModel, RadioPlayerCoordinator) {
     let apiClient = APIClient(baseURL: "https://test.com", authToken: "test-key")
-    let coordinator = RadioPlayerCoordinator(
-      player: AudioStreamPlayer(),
-      nowPlaying: NowPlayingController(),
-      apiClient: apiClient,
-      artworkService: ArtworkService(apiClient: apiClient)
-    )
+    let (coordinator, _) = makeTestCoordinator(apiClient: apiClient)
     return (RadioPlayerViewModel(coordinator: coordinator), coordinator)
   }
 

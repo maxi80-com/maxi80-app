@@ -21,14 +21,8 @@ struct ViewModelPropertyTests {
       let n = Int.random(in: 2...20)
       let index = Int.random(in: 0...(n - 2))  // non-live index
 
-      let player = AudioStreamPlayer()
-      let nowPlaying = NowPlayingController()
       let apiClient = APIClient(baseURL: "https://test.example.com", authToken: "test-key")
-      let artworkService = ArtworkService(apiClient: apiClient)
-      let coordinator = RadioPlayerCoordinator(
-        player: player, nowPlaying: nowPlaying,
-        apiClient: apiClient, artworkService: artworkService
-      )
+      let (coordinator, _) = makeTestCoordinator(apiClient: apiClient)
       let vm = RadioPlayerViewModel(coordinator: coordinator)
 
       // Populate history with distinct entries

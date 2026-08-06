@@ -61,3 +61,9 @@ Android/fastlane/report.xml
 **/*.mobileprovision
 *.provisionprofile
 **/*.provisionprofile
+
+# SwiftPM/Skip resource-accessor build artifacts that land in the repo root
+resource_bundle_accessor-*.d
+resource_bundle_accessor-*.dia
+resource_bundle_accessor-*.swiftdeps
+resource_bundle_accessor-*.swiftmodule

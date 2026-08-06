@@ -1,22 +1,26 @@
 import Foundation
 
-#if !SKIP
-  /// Abstraction the coordinator uses to publish Now Playing info without depending on the
-  /// iOS-27-only NowPlaying framework types. On iOS 27+ this is backed by `NowPlayingSession`
-  /// (the modern framework); otherwise the coordinator falls back to the bridged
-  /// `NowPlayingController` (MediaPlayer / MPNowPlayingInfoCenter).
-  @MainActor
-  protocol NowPlayingPublishing: AnyObject {
-    /// Begin publishing the session to the system (Lock Screen, Control Center, accessories).
-    func activate()
-    /// Stop publishing and release the session.
-    func deactivate()
-    /// Update the currently-playing metadata.
-    func update(stationName: String, programName: String, artworkURL: String?, isPlaying: Bool)
-    /// Update only the play/pause state.
-    func updatePlaybackState(isPlaying: Bool)
-  }
+/// Abstraction the coordinator uses to publish Now Playing info, so it depends on neither the
+/// iOS-27-only NowPlaying framework nor the bridged MediaPlayer controller directly.
+///
+/// Two conformances: `NowPlayingSession` (modern framework, iOS/macOS/tvOS 27+) and
+/// `BridgedNowPlayingPublisher` (MediaPlayer on Apple, MediaSession on Android).
+///
+/// Declared in the native module and `public` because it appears in `RadioPlayerCoordinator`'s
+/// `public init` — see `AudioPlaying`. It never crosses the JNI boundary, so the `Maxi80Services`
+/// bridge is untouched.
+@MainActor
+public protocol NowPlayingPublishing: AnyObject {
+  /// Begin publishing the session to the system (Lock Screen, Control Center, accessories).
+  func activate()
+  /// Update the currently-playing metadata.
+  func update(
+    stationName: String, artist: String, title: String, artworkURL: String?, isPlaying: Bool)
+  /// Update only the play/pause state.
+  func updatePlaybackState(isPlaying: Bool)
+}
 
+#if !SKIP
   /// Creates the modern NowPlaying-framework publisher when the platform supports it, otherwise
   /// `nil` (the coordinator then falls back to the bridged MediaPlayer `NowPlayingController`).
   /// Returns `nil` on any SDK/OS without the NowPlaying framework.
@@ -113,13 +117,12 @@ import Foundation
       Task { try? await session.requestToBecomeApplicationPrimary() }
     }
 
-    func deactivate() {
-      session = nil
-    }
-
-    func update(stationName: String, programName: String, artworkURL: String?, isPlaying: Bool) {
+    func update(
+      stationName: String, artist: String, title: String, artworkURL: String?, isPlaying: Bool
+    ) {
       self.stationName = stationName
-      self.programName = programName
+      // Preserves the exact format the coordinator built inline before unification.
+      self.programName = "\(title) — \(artist)"
       self.artworkURL = artworkURL
       self.isPlaying = isPlaying
       self.startedAt = Date()

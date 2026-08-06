@@ -16,16 +16,8 @@ struct CarPlayNowPlayingTests {
 
   @MainActor
   private func makeCoordinator() -> RadioPlayerCoordinator {
-    let player = AudioStreamPlayer()
-    let nowPlaying = NowPlayingController()
     let apiClient = APIClient(baseURL: "https://test.example.com", authToken: "test-key")
-    let artworkService = ArtworkService(apiClient: apiClient)
-    return RadioPlayerCoordinator(
-      player: player,
-      nowPlaying: nowPlaying,
-      apiClient: apiClient,
-      artworkService: artworkService
-    )
+    return makeTestCoordinator(apiClient: apiClient).coordinator
   }
 
   @Test("Placeholder is published for missing artwork")
