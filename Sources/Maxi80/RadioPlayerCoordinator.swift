@@ -56,26 +56,19 @@ public final class RadioPlayerCoordinator {
   /// long is left".
   public private(set) var sleepTimerFiresAt: Date?
 
-  /// The generic cover for the current song when it has no artwork of its own — shown in the
-  /// carousel's "now" slot and published to the system Now Playing info. Follows the song, so
-  /// coverless songs no longer all share one cover picked at launch (issue #70). Falls back to a
-  /// fixed pool member before the first song, when there is nothing to derive a pick from.
-  var nowPlaceholderCover: PlaceholderCover {
-    guard let currentSong else { return placeholderCoverPool[0] }
-    return .forSong(currentSong, from: placeholderCoverPool)
-  }
-
-  /// The covers a coverless song may be given. **The one place the `anniversary_cover` flag is
-  /// read** (issue #71): every placeholder pick — carousel now slot, carousel history, and the
-  /// artwork published to system Now Playing — resolves through this pool, so gating it here gates
-  /// the feature everywhere without a second flag check.
+  /// Asset name of the generic cover for the current song, shown in the carousel's "now" slot and
+  /// published to system Now Playing while that song has no artwork of its own.
   ///
-  /// Computed rather than stored: flags arrive with the station response, well after the coordinator
-  /// is constructed, so a stored pool would be fixed before the backend had spoken. Reading the flag
-  /// per access also lets SwiftUI observe it, so the carousel re-renders when the response lands.
-  var placeholderCoverPool: [PlaceholderCover] {
-    guard featureFlags.isEnabled(.anniversaryCover) else { return PlaceholderCover.all }
-    return PlaceholderCover.all + [.anniversary]
+  /// Read off the newest history entry rather than stored: that entry *is* the current song (it's
+  /// appended/healed the moment the song's artwork resolves), so the cover on screen is by
+  /// construction the one the song keeps as it slides left into history (issue #70) — no second copy
+  /// to keep in step. Falls back to the default cover when the newest entry has real artwork or
+  /// history is still empty, which is also what the now slot shows before the first song.
+  var nowPlaceholderCover: String {
+    guard case .generic(let imageName) = history.last?.cover else {
+      return PlaceholderCover.default.imageName
+    }
+    return imageName
   }
 
   // MARK: - Internal State
@@ -544,22 +537,19 @@ public final class RadioPlayerCoordinator {
     cacheArtworkImage(artwork)
     logger.info("artwork resolved — hasImage=\(artwork.image != nil), url=\(artwork.url ?? "nil")")
 
-    // Update system now-playing info (modern NowPlaying framework if available, else MediaPlayer).
-    publishNowPlaying(
-      artist: metadata.artist,
-      title: metadata.title,
-      artworkURL: artwork.url,
-      isPlaying: true
-    )
-
-    // Record this song in history, carrying the already-resolved artwork URL so the carousel
-    // can render its cover immediately.
+    // Record this song in history, carrying the cover the carousel will show — the already-resolved
+    // artwork, or a generic cover picked now. That entry is the source of `nowPlaceholderCover`, so it
+    // is written before the Now Playing publish below, which reads it.
     let entry = HistoryEntry(
       artist: metadata.artist,
       title: metadata.title,
       artworkKey: nil,
       timestamp: Self.isoTimestampFormatter.string(from: Date()),
-      artworkURL: artwork.url,
+      // Keyed on `isDefault`, not on the URL: a default-cover result can still carry one, and that
+      // generic remote image is exactly what our own bundled covers replace.
+      cover: artwork.isDefault
+        ? .generic(PlaceholderCover.random().imageName)
+        : artwork.url.map(CoverSource.artwork) ?? .pending,
       colors: artwork.rgb.map { ArtworkColors(uniform: $0) }
     )
     // The seeded backend history already ends with the song playing at launch, so the FIRST
@@ -568,11 +558,22 @@ public final class RadioPlayerCoordinator {
     // slot). If the newest entry is already this song (by normalized identity), heal it in place
     // — filling any artwork/colors the backend copy lacked — instead of appending a second copy.
     // A genuine repeat play (A → B → A) doesn't match here: the tail is B, so it still appends.
+    //
+    // Healing also keeps the cover the seeded entry already had (`mergedWith` prefers `self`'s), so
+    // the song playing at launch isn't given a second, different cover a moment after it appears.
     if history.last?.songIdentity == metadata.identity {
       history[history.count - 1] = history[history.count - 1].mergedWith(entry)
     } else {
       history.append(entry)
     }
+
+    // Update system now-playing info (modern NowPlaying framework if available, else MediaPlayer).
+    publishNowPlaying(
+      artist: metadata.artist,
+      title: metadata.title,
+      artworkURL: artwork.url,
+      isPlaying: true
+    )
 
     // If artwork wasn't ready (backend collector hadn't produced it yet), retry in the
     // background — the cover fills in once it appears, without waiting for the next song.
@@ -636,11 +637,13 @@ public final class RadioPlayerCoordinator {
 
     // Update the newest history entry for this song (the live-appended one) in place.
     if let index = history.lastIndex(where: { $0.songIdentity == metadata.identity }) {
+      // Only ever called with real artwork (the retry loop skips default results), so the entry's
+      // generic cover gives way to it — `CoverSource.mergedWith` ranks artwork above generic.
       let patch = HistoryEntry(
         artist: history[index].artist,
         title: metadata.title,
         timestamp: history[index].timestamp,
-        artworkURL: artwork.url,
+        cover: artwork.url.map(CoverSource.artwork) ?? .pending,
         colors: artwork.rgb.map { ArtworkColors(uniform: $0) }
       )
       history[index] = history[index].mergedWith(patch)
@@ -683,10 +686,10 @@ public final class RadioPlayerCoordinator {
   /// a dictionary lookup.
   private var placeholderArtworkFileURL: String? {
     if let injectedPlaceholderArtworkURL { return injectedPlaceholderArtworkURL }
-    let cover = nowPlaceholderCover
-    if let cached = placeholderArtworkFileURLs[cover.imageName] { return cached }
-    let url = materializePlaceholderArtwork(cover)
-    placeholderArtworkFileURLs[cover.imageName] = url
+    let imageName = nowPlaceholderCover
+    if let cached = placeholderArtworkFileURLs[imageName] { return cached }
+    let url = materializePlaceholderArtwork(named: imageName)
+    placeholderArtworkFileURLs[imageName] = url
     return url
   }
 
@@ -707,9 +710,9 @@ public final class RadioPlayerCoordinator {
   /// info by URL. Supported on Apple platforms (UIKit for iOS/tvOS Now Playing + CarPlay, AppKit
   /// for macOS); Android has no platform image APIs so it returns `nil` and no artwork is published.
   /// Idempotent: reuses the file if it already exists.
-  private func materializePlaceholderArtwork(_ cover: PlaceholderCover) -> String? {
+  private func materializePlaceholderArtwork(named imageName: String) -> String? {
     let fileURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("maxi80-\(cover.imageName).png")
+      .appendingPathComponent("maxi80-\(imageName).png")
 
     if FileManager.default.fileExists(atPath: fileURL.path) {
       return fileURL.absoluteString
@@ -717,7 +720,7 @@ public final class RadioPlayerCoordinator {
 
     #if canImport(UIKit)
       guard
-        let image = UIImage(named: cover.imageName, in: .module, compatibleWith: nil),
+        let image = UIImage(named: imageName, in: .module, compatibleWith: nil),
         let data = image.pngData(),
         (try? data.write(to: fileURL)) != nil
       else {
@@ -725,7 +728,7 @@ public final class RadioPlayerCoordinator {
       }
       return fileURL.absoluteString
     #elseif canImport(AppKit)
-      guard let image = NSImage(named: cover.imageName),
+      guard let image = NSImage(named: imageName),
         let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
         let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]),
         (try? data.write(to: fileURL)) != nil
@@ -927,8 +930,8 @@ public final class RadioPlayerCoordinator {
     // Two things are resolved against the backend:
     //   1. Genuinely NEW songs not in memory yet (played while stopped/paused).
     //   2. EXISTING songs still MISSING artwork — a live entry appended before the backend had
-    //      produced the cover carries `artworkURL == nil`; the backend copy now resolves one.
-    //      Without this, keeping the stale nil-artwork live entry would leave it blank forever.
+    //      produced the cover is showing a generic one (`cover.wantsArtwork`); the backend copy now
+    //      resolves the real one. Without this, that entry would keep the generic cover forever.
     // Songs already showing artwork are left untouched (no reload, no flicker). Legitimate
     // repeat plays (same song at different times) are preserved — we edit in place and append,
     // never collapse by song.
@@ -936,7 +939,7 @@ public final class RadioPlayerCoordinator {
     // the same program collapse to one identity, so they heal into a single entry rather than
     // showing a duplicate cover.
     let existingSongs = Set(history.map(\.songIdentity))
-    let songsMissingArtwork = Set(history.filter { $0.artworkURL == nil }.map(\.songIdentity))
+    let songsMissingArtwork = Set(history.filter { $0.cover.wantsArtwork }.map(\.songIdentity))
 
     // Backend entries worth resolving: new songs, or songs an in-memory entry still lacks art for.
     let toResolve = entries.filter {
@@ -983,7 +986,7 @@ public final class RadioPlayerCoordinator {
     //    non-empty `Maxi80` artist and fills artwork/color.
     var healed = 0
     history = history.map { entry in
-      guard entry.artworkURL == nil || entry.artist.isEmpty,
+      guard entry.cover.wantsArtwork || entry.artist.isEmpty,
         let backend = backendBySong[entry.songIdentity]
       else { return entry }
       let merged = entry.mergedWith(backend)
@@ -1008,8 +1011,13 @@ public final class RadioPlayerCoordinator {
   /// Resolves each entry's artwork S3 key into a lightweight presigned URL, concurrently.
   /// AsyncImage loads the image lazily — we do NOT download it here. The background color is
   /// derived from the backend `colors` palette already decoded on the entry; if absent it stays nil.
+  ///
+  /// Entries whose artwork doesn't resolve get a generic cover here, the other half of the rule in
+  /// `handleMetadataChanged`: an entry is given one when it is created without artwork. Backend
+  /// entries never pass through the now slot — on a cold start `/history` seeds ~20 past songs — so
+  /// this is where their covers come from, and every coverless entry in `history` carries one.
   private func resolveArtwork(for entries: [HistoryEntry]) async -> [HistoryEntry] {
-    await withTaskGroup(of: (Int, String?).self) { group in
+    let urlByIndex = await withTaskGroup(of: (Int, String?).self) { group in
       for (index, entry) in entries.enumerated() {
         group.addTask { [artworkService] in
           let url = await artworkService.resolveArtworkURL(artist: entry.artist, title: entry.title)
@@ -1020,11 +1028,14 @@ public final class RadioPlayerCoordinator {
       for await (index, url) in group {
         urlByIndex[index] = url
       }
-      return entries.enumerated().map { index, entry -> HistoryEntry in
-        var copy = entry
-        copy.artworkURL = urlByIndex[index] ?? nil
-        return copy
-      }
+      return urlByIndex
+    }
+
+    return entries.enumerated().map { index, entry -> HistoryEntry in
+      var copy = entry
+      let url = urlByIndex[index] ?? nil
+      copy.cover = url.map(CoverSource.artwork) ?? .generic(PlaceholderCover.random().imageName)
+      return copy
     }
   }
 

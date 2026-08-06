@@ -76,7 +76,7 @@ struct HistoryMergeTests {
 
     let existing = HistoryEntry(
       artist: "Old", title: "Old Song", timestamp: "2026-07-15T10:00:00Z",
-      artworkURL: "already-resolved"
+      cover: .artwork("already-resolved")
     )
     coordinator.history = [existing]
 
@@ -113,7 +113,7 @@ struct HistoryMergeTests {
     coordinator.history = [
       HistoryEntry(
         artist: "Change", title: "A Lover's Holiday",
-        timestamp: "2026-07-15T10:24:27Z", artworkURL: nil
+        timestamp: "2026-07-15T10:24:27Z", cover: .pending
       )
     ]
 
@@ -155,10 +155,10 @@ struct HistoryMergeTests {
     coordinator.history = [
       HistoryEntry(
         artist: "Change", title: "A Lover's Holiday",
-        timestamp: "2026-07-15T10:00:00Z", artworkURL: "url-1"),
+        timestamp: "2026-07-15T10:00:00Z", cover: .artwork("url-1")),
       HistoryEntry(
         artist: "Change", title: "A Lover's Holiday",
-        timestamp: "2026-07-15T11:30:00Z", artworkURL: "url-2"),
+        timestamp: "2026-07-15T11:30:00Z", cover: .artwork("url-2")),
     ]
 
     await coordinator.fetchHistory()
@@ -288,7 +288,7 @@ struct HistoryMergeTests {
     coordinator.history = [
       HistoryEntry(
         artist: "Older", title: "Older Song",
-        timestamp: "2026-07-15T10:00:00Z", artworkURL: "older-url")
+        timestamp: "2026-07-15T10:00:00Z", cover: .artwork("older-url"))
     ]
 
     // Kick off the stale refresh. It resolves artwork for "Song A" and parks on the gate mid-await.
@@ -351,7 +351,7 @@ struct HistoryMergeTests {
     coordinator.history = [
       HistoryEntry(
         artist: "Change", title: "A Lover's Holiday",
-        timestamp: "2026-07-15T10:24:27Z", artworkURL: "live-resolved-url"
+        timestamp: "2026-07-15T10:24:27Z", cover: .artwork("live-resolved-url")
       )
     ]
 
