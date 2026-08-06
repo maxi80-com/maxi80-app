@@ -31,6 +31,8 @@ public final class RadioPlayerCoordinator {
   private let artworkService: ArtworkService
   @ObservationIgnored
   private let shareService: ShareService
+  @ObservationIgnored
+  private let featureFlags: FeatureFlags
 
   // MARK: - Observable State
 
@@ -104,13 +106,15 @@ public final class RadioPlayerCoordinator {
     nowPlaying: NowPlayingController,
     apiClient: any APIClientProtocol,
     artworkService: ArtworkService,
-    shareService: ShareService = ShareService()
+    shareService: ShareService = ShareService(),
+    featureFlags: FeatureFlags = .shared
   ) {
     self.player = player
     self.nowPlaying = nowPlaying
     self.apiClient = apiClient
     self.artworkService = artworkService
     self.shareService = shareService
+    self.featureFlags = featureFlags
 
     setupCallbacks()
     setupReconnection()
@@ -284,6 +288,14 @@ public final class RadioPlayerCoordinator {
   /// fires. Modeled on `startArtworkRetry(for:)`: a stored cancelable `Task` with `Task.isCancelled`
   /// guards. Cancelling or extending mid-run supersedes this task cleanly.
   public func startSleepTimer(minutes: Int) {
+    // Enforce the `sleep_timer` kill switch here too, not only in the view model's
+    // `isSleepTimerAvailable`: CarPlay and the TV UIs reach the coordinator through paths that
+    // don't go through the phone control tray, and a kill switch has to actually kill the feature
+    // rather than just hide its button.
+    guard featureFlags.isEnabled(.sleepTimer) else {
+      logger.info("ignoring sleep timer request — feature disabled by flag")
+      return
+    }
     // Enforce the "only settable while playing" invariant at the API boundary, not only in the UI's
     // `isEnabled`: a sleep timer with no audio is meaningless and would fire a fade/stop on an idle
     // player. Keeps any current/future caller in sync with the UI.
@@ -402,6 +414,11 @@ public final class RadioPlayerCoordinator {
         defaultCoverUrl: ""
       )
     }
+
+    // Apply the flags carried by whichever station won the fallback chain: the fresh response, or
+    // the cached one (whose flags are the last known good), or the hardcoded fallback (no flags at
+    // all → compiled-in defaults).
+    featureFlags.update(from: station?.features)
 
     // Populate the history carousel at launch without blocking station display.
     refreshHistory()

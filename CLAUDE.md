@@ -77,3 +77,23 @@ A known-good, minimal Skip prototype exercising this exact native+transpiled+bri
 - Use `Logger` (OSLog) rather than `print()` for anything that needs to surface on Android — `print()` does not appear in Logcat. (Existing `APIClient` uses `print`; prefer `Logger` for new diagnostics.)
 - Add dependencies by editing `Package.swift` directly — never via Xcode's "Add Package Dependencies" GUI (it doesn't update the manifest Skip requires).
 - Project-wide metadata (bundle id, version, Android package) lives in `Skip.env`.
+
+### Feature flags
+
+Runtime switches live in `FeatureFlags` (`Sources/Maxi80/`), fed by the optional `features`
+(`[String: Bool]`) object on the `/station` response and applied in `loadStation()`. To add a flag:
+add a `Flag` case whose raw value is the backend's `lower_snake_case` name, **and** a matching entry
+in `defaults` (`FeatureFlagsTests` fails if you forget). Rules that must hold:
+
+- **Defaults are ship-safe and fail-open.** No network, no `features` object, or an unreadable
+  payload all leave the compiled-in defaults in charge — a flag must never be the reason a shipped
+  feature disappears. An already-shipped feature therefore defaults *on* (the flag is a kill switch);
+  an unreleased one defaults *off*.
+- **Gate the behavior, not just the button.** Hiding a control in the view is not enough — CarPlay and
+  the TV UIs reach the coordinator by other paths, so enforce the flag at the coordinator API too
+  (see `startSleepTimer`).
+- **Inject, don't reach for the singleton, in the coordinator/view model.** Both take
+  `featureFlags: FeatureFlags = .shared`, so production gets the process-wide store and tests inject
+  a fresh one instead of mutating global state.
+- `Station` has a hand-written `init(from:)` purely so a malformed `features` value degrades that one
+  field to `nil` rather than failing the whole station decode. Keep every other field strict.

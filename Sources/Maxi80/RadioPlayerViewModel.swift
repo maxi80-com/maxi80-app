@@ -214,13 +214,23 @@ public final class RadioPlayerViewModel {
 
   // MARK: - Sleep Timer (read-through)
 
+  /// Whether the sleep-timer feature is switched on at all. Gates the whole control — the tray
+  /// button, its sheet, and the countdown pill — so the backend's `sleep_timer` flag works as a
+  /// kill switch. Defaults on, so losing the station call never removes the feature.
+  public var isSleepTimerAvailable: Bool { featureFlags.isEnabled(.sleepTimer) }
+
   /// Whether a sleep timer is currently running. Drives the moon glyph's filled/idle state and
-  /// whether the countdown pill occupies the status slot.
-  public var isSleepTimerActive: Bool { coordinator.sleepTimerFiresAt != nil }
+  /// whether the countdown pill occupies the status slot. Reads `false` while the feature is
+  /// switched off, so no countdown can be rendered for a killed feature.
+  public var isSleepTimerActive: Bool {
+    isSleepTimerAvailable && coordinator.sleepTimerFiresAt != nil
+  }
 
   /// When the running sleep timer will fire, or `nil` when inactive. The countdown pill computes
   /// its remaining time from this against `Date()` via `TimelineView`, so no ticking state is stored.
-  public var sleepTimerFiresAt: Date? { coordinator.sleepTimerFiresAt }
+  public var sleepTimerFiresAt: Date? {
+    isSleepTimerAvailable ? coordinator.sleepTimerFiresAt : nil
+  }
 
   /// The preset durations (minutes) offered by the picker. Presets only — no custom picker.
   public static let sleepTimerPresets: [Int] = [5, 10, 15, 30, 45, 60, 90]
@@ -270,6 +280,11 @@ public final class RadioPlayerViewModel {
   @ObservationIgnored
   private let coordinator: RadioPlayerCoordinator
 
+  /// Runtime feature switches. Read (not stored) by the gated properties, so a flag applied by a
+  /// station load re-renders the views that consult them.
+  @ObservationIgnored
+  private let featureFlags: FeatureFlags
+
   /// Canonical carousel selection state. `covers` stays computed (pull-based) and syncs the
   /// model's cover ids on every build; the public surface (`selectedCoverID`,
   /// `isBrowsingHistory`, `returnToLive`) is preserved as passthroughs over this model.
@@ -277,8 +292,9 @@ public final class RadioPlayerViewModel {
 
   // MARK: - Initialization
 
-  public init(coordinator: RadioPlayerCoordinator) {
+  public init(coordinator: RadioPlayerCoordinator, featureFlags: FeatureFlags = .shared) {
     self.coordinator = coordinator
+    self.featureFlags = featureFlags
     // The carousel model starts focused on the persistent "now" slot by default.
   }
 
@@ -330,7 +346,7 @@ public final class RadioPlayerViewModel {
   /// (supplied by the pill's `TimelineView`). Returns the bare `MM:SS` string; the accessibility
   /// label wraps it via the "%@ remaining" catalog string. `nil` when no timer is active.
   public func sleepCountdownText(now: Date) -> String? {
-    guard let firesAt = coordinator.sleepTimerFiresAt else { return nil }
+    guard let firesAt = sleepTimerFiresAt else { return nil }
     let remaining = max(0, Int(firesAt.timeIntervalSince(now).rounded(.up)))
     let minutes = remaining / 60
     let seconds = remaining % 60
