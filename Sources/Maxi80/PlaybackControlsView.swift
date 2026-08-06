@@ -156,12 +156,16 @@ struct PlaybackControlsView: View {
   // MARK: - Utility tray tier
 
   /// Three equal ghost-circle buttons, evenly spaced. Order is Share · Sleep · Donate: Sleep (a
-  /// session-mode action) sits centrally between the two "outbound" actions.
+  /// session-mode action) sits centrally between the two "outbound" actions. Sleep drops out
+  /// entirely when the `sleep_timer` flag is off — a switched-off feature should be absent, not a
+  /// permanently dimmed mystery button — leaving Share · Donate evenly spaced.
   @ViewBuilder
   private var utilityTray: some View {
     HStack(spacing: traySpacing) {
       shareControl
-      sleepControl
+      if viewModel.isSleepTimerAvailable {
+        sleepControl
+      }
       donateControl
     }
     // Contrast tween lives on the body's VStack (covers this tray AND the play button).

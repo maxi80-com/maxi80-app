@@ -84,3 +84,33 @@ A known-good, minimal Skip prototype exercising this exact native+transpiled+bri
 - Use `Logger` (OSLog) rather than `print()` for anything that needs to surface on Android — `print()` does not appear in Logcat. (Existing `APIClient` uses `print`; prefer `Logger` for new diagnostics.)
 - Add dependencies by editing `Package.swift` directly — never via Xcode's "Add Package Dependencies" GUI (it doesn't update the manifest Skip requires).
 - Project-wide metadata (bundle id, version, Android package) lives in `Skip.env`.
+
+### Feature flags
+
+Runtime switches live in `FeatureFlags` (`Sources/Maxi80/`), fed by the optional `features`
+(`[String: Bool]`) object on the `/station` response and applied in `loadStation()`. To add a flag:
+add a `Flag` case whose raw value is the backend's `lower_snake_case` name, **and** a matching entry
+in `defaults` (`FeatureFlagsTests` fails if you forget). Rules that must hold:
+
+- **Defaults are ship-safe and fail-open.** No network, no `features` object, or an unreadable
+  payload all leave the compiled-in defaults in charge — a flag must never be the reason a shipped
+  feature disappears. An already-shipped feature therefore defaults *on* (the flag is a kill switch);
+  an unreleased one defaults *off*.
+- **Gate the entry point, not every function the feature touches.** Find the control that *starts*
+  the feature and gate that one place; with no way in, the downstream coordinator methods need no
+  guards of their own (`sleep_timer` gates only `isSleepTimerAvailable`, which hides the tray button
+  that presents the picker). Check first that the entry point really is singular — a feature also
+  reachable from CarPlay or the TV UIs needs its coordinator API gated too.
+- **Leave a feature already in progress able to finish or be cancelled.** The flag stops new
+  entries; it shouldn't strand state that's already running. A sleep timer armed before the switch
+  arrives keeps its countdown pill, because that pill is how the user calls off a stop that's already
+  scheduled — hiding it would be worse than leaving the feature on.
+- **Inject, don't reach for the singleton, in the coordinator/view model.** Both take
+  `featureFlags: FeatureFlags = .shared`, so production gets the process-wide store and tests inject
+  a fresh one instead of mutating global state.
+- `Station` has a hand-written `init(from:)` purely so a malformed `features` value degrades that one
+  field rather than failing the whole station decode, and decodes flags **key by key** so one bad
+  value can't discard a kill switch sent in the same payload. Keep every other field strict.
+- **Flags land at station-load time only**, so a change reaches iOS/macOS/tvOS on the next cold launch
+  but Android within minutes (its `loadStation()` re-runs on every foreground). Don't rely on a flag
+  taking effect promptly on Apple platforms.

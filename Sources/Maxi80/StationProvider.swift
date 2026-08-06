@@ -6,6 +6,10 @@ import Maxi80Services
 /// 1. Fetch from API (GET /station)
 /// 2. Return cached station from previous successful fetch
 /// 3. Return hardcoded default station
+///
+/// Note: this type decodes `Station` but does **not** apply `Station.features` to `FeatureFlags` —
+/// `RadioPlayerCoordinator.loadStation()` is the only place flags are applied. It runs the same
+/// fallback chain and is what the live app uses; this type is currently exercised only by tests.
 @MainActor
 public final class StationProvider {
   private let apiClient: any APIClientProtocol

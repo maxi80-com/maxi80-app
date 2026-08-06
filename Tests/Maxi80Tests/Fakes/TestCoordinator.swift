@@ -13,12 +13,16 @@
 /// `makeTestCoordinator()` behaves exactly like the shipping coordinator; tests that exercise a
 /// real-time path (the sleep-timer fade ramp, the reconnect backoff + confirmation wait) scale them
 /// down so the suite stays in milliseconds instead of seconds.
+///
+/// `featureFlags` defaults to a fresh store (compiled-in defaults) rather than `.shared`, so no test
+/// can leak a flag override into another.
 @MainActor
 func makeTestCoordinator(
   apiClient: (any APIClientProtocol)? = nil,
   player: FakeAudioPlayer? = nil,
   shareService: FakeSharing? = nil,
   nowPlaying: FakeNowPlayingPublisher? = nil,
+  featureFlags: FeatureFlags? = nil,
   reconnectConfirmationDelay: UInt64 = 3_000_000_000,
   reconnectTimeScale: Double = 1.0,
   sleepFadeDuration: UInt64 = 2_500_000_000,
@@ -32,6 +36,7 @@ func makeTestCoordinator(
     apiClient: client,
     artworkService: ArtworkService(apiClient: client),
     shareService: shareService ?? FakeSharing(),
+    featureFlags: featureFlags ?? FeatureFlags(),
     reconnectConfirmationDelay: reconnectConfirmationDelay,
     reconnectTimeScale: reconnectTimeScale,
     sleepFadeDuration: sleepFadeDuration,

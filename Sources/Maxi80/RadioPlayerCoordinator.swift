@@ -31,6 +31,8 @@ public final class RadioPlayerCoordinator {
   private let artworkService: ArtworkService
   @ObservationIgnored
   private let shareService: any Sharing
+  @ObservationIgnored
+  private let featureFlags: FeatureFlags
 
   // MARK: - Observable State
 
@@ -98,6 +100,7 @@ public final class RadioPlayerCoordinator {
     apiClient: any APIClientProtocol,
     artworkService: ArtworkService,
     shareService: any Sharing,
+    featureFlags: FeatureFlags = .shared,
     reconnectConfirmationDelay: UInt64 = 3_000_000_000,
     reconnectTimeScale: Double = 1.0,
     sleepFadeDuration: UInt64 = 2_500_000_000,
@@ -108,6 +111,7 @@ public final class RadioPlayerCoordinator {
     self.apiClient = apiClient
     self.artworkService = artworkService
     self.shareService = shareService
+    self.featureFlags = featureFlags
     self.reconnectConfirmationDelay = reconnectConfirmationDelay
     self.reconnectionManager = ReconnectionManager(timeScale: reconnectTimeScale)
     self.sleepFadeDuration = sleepFadeDuration
@@ -391,6 +395,11 @@ public final class RadioPlayerCoordinator {
         defaultCoverUrl: ""
       )
     }
+
+    // Apply the flags carried by whichever station won the fallback chain: the fresh response, or
+    // the cached one (whose flags are the last known good), or the hardcoded fallback (no flags at
+    // all → compiled-in defaults).
+    featureFlags.update(from: station?.features)
 
     // Populate the history carousel at launch without blocking station display.
     refreshHistory()
