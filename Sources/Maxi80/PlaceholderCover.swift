@@ -1,3 +1,4 @@
+import Maxi80Model
 import SwiftUI
 
 /// One of the generic "Maxi'80" covers shown before any song has played, paired with the
@@ -19,8 +20,19 @@ struct PlaceholderCover: Equatable, Sendable {
       imageName: "NoCover-c", dominantColor: Color(red: 61 / 255, green: 42 / 255, blue: 28 / 255)),
   ]
 
-  /// A random generic cover, used once per app launch.
-  static func random() -> PlaceholderCover {
-    all.randomElement() ?? all[0]
+  /// An arbitrary cover for a song with no artwork of its own, so coverless slots vary across a
+  /// session instead of all showing one cover picked at launch (issue #70).
+  ///
+  /// Derived from the song rather than rolled with `randomElement()`, because the caller is a
+  /// SwiftUI computed property that re-evaluates on every render — a fresh roll there would make
+  /// the cover flicker as the carousel redraws. Deriving it makes the pick stable for as long as
+  /// the song is on screen, with no state to store. `SongMetadata` is `Hashable`, but `hashValue`
+  /// is salted per process, so a bit-mixed FNV-1a over the text keeps this reproducible in tests.
+  static func forSong(_ song: SongMetadata) -> PlaceholderCover {
+    var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+    for byte in "\(song.artist)|\(song.title)".utf8 {
+      hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+    }
+    return all[Int(hash % UInt64(all.count))]
   }
 }
