@@ -269,7 +269,7 @@ import Foundation
       /// timer on anything except an explicit user cancel or the timer firing (pause, interruption,
       /// and disconnect all leave it running), so in principle a duck could now coincide with this
       /// fade. In practice they don't overlap: this fade runs ONLY once, at fire time, inside
-      /// `fireSleepTimer()`, and it ends by calling `stopForDisconnect()` (which stops the player and
+      /// `SleepTimerManager.fire()`, and it ends by stopping playback (which stops the player and
       /// resets attenuation to 1.0). A transient focus loss suppresses/pauses playback (ExoPlayer
       /// ducks toward silence and stops advancing) rather than starting a competing fade ramp, and if
       /// the timer fires during that window the fade still drives to silence and stops — the intended

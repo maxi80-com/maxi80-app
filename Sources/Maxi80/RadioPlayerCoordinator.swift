@@ -219,7 +219,8 @@ public final class RadioPlayerCoordinator {
   /// Pausing, an audio interruption, and a headphone disconnect all leave it running toward its
   /// original absolute `sleepTimerFiresAt`. If the user resumes before it fires, playback stops on
   /// schedule; if they don't, the timer simply elapses while already stopped (a harmless no-op —
-  /// see `fireSleepTimer`, whose fade/stop on an already-stopped player does nothing audible).
+  /// see `SleepTimerManager.fire()`, whose fade on an already-stopped player does nothing audible,
+  /// and whose `onFired` lands back here).
   private func stopForDisconnect() {
     reconnectionManager.cancel()
     player.stop()

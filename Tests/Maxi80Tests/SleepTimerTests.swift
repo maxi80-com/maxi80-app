@@ -266,4 +266,32 @@ struct SleepTimerTests {
     let near = firesAt.addingTimeInterval(-5)
     #expect(viewModel.sleepCountdownText(now: near) == "0:05")
   }
+
+  // MARK: - Firing
+
+  @Test("An elapsed timer fades to silence, stops playback, and restores full volume")
+  @MainActor
+  func firingFadesThenStops() async {
+    // A 0-minute timer fires immediately; a millisecond-scale fade keeps the test in milliseconds.
+    let (coordinator, player) = makeTestCoordinator(sleepFadeDuration: 12_000_000)
+    await startPlaying(coordinator)
+
+    let beforeFire = player.commands.count
+    coordinator.startSleepTimer(minutes: 0)
+
+    // Wait for the fade ramp plus the stop, without assuming a fixed number of hops.
+    for _ in 0..<200 where coordinator.sleepTimerFiresAt != nil || player.isPlaying {
+      try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+
+    #expect(coordinator.sleepTimerFiresAt == nil)
+    #expect(coordinator.playbackState == .paused)
+
+    let ramp = player.attenuations(in: player.commands[beforeFire...])
+    // The ramp must reach exact silence before the stop, else the stream is briefly audible at the
+    // moment it cuts — and end back at 1.0 so the next play isn't silent.
+    #expect(ramp.contains(0.0))
+    #expect(ramp.last == 1.0)
+    #expect(player.attenuation == 1.0)
+  }
 }
