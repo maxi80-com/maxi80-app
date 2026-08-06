@@ -538,7 +538,10 @@ ship-with-metadata: ## Like 'ship', but also uploads changed store listing text/
 	@echo ""
 	@echo "==> SHIPPED (with metadata). Verify on TestFlight / Play internal, then: make promote-all"
 
-# --- Metadata uploads (listing text + screenshots as draft; no binary, no review) ---
+# --- Metadata uploads (listing text + screenshots; no binary) -----------------
+# NOT uniformly review-free: the Apple lanes land as an editable draft, but the Play
+# listing is app-global, so publish-metadata-android QUEUES A PLAY REVIEW. See its
+# comment below.
 publish-metadata-ios: ## App Store iOS listing (text + iPhone screenshots) as draft
 	cd Darwin && fastlane metadata
 
