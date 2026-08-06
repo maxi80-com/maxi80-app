@@ -16,10 +16,17 @@ public final class ReconnectionManager {
 
   /// Multiplies every backoff delay. `1.0` in production; tests pass a tiny value so the
   /// 2s/4s/8s ladder doesn't dominate the suite. Does not change the 2^n shape.
+  ///
+  /// Always finite and `>= 0`: the initializer clamps, because this is a `public` knob on a
+  /// `public` type and `delay(for:)` converts `timeScale`-scaled seconds to `UInt64` nanoseconds.
+  /// A negative or NaN scale would make that conversion trap at runtime rather than merely
+  /// produce a silly delay.
   private let timeScale: Double
 
+  /// - Parameter timeScale: Backoff multiplier. Negative and non-finite values are clamped to
+  ///   `0` (fire immediately) so every derived delay stays representable as `UInt64` nanoseconds.
   public init(timeScale: Double = 1.0) {
-    self.timeScale = timeScale
+    self.timeScale = timeScale.isFinite ? max(0, timeScale) : 0
   }
 
   // MARK: - State
@@ -101,10 +108,16 @@ public final class ReconnectionManager {
 
   /// Calculate the delay for a given attempt number (1-indexed).
   /// Formula: 2^n seconds, yielding 2s, 4s, 8s for attempts 1, 2, 3.
+  ///
+  /// The result is saturated into `UInt64`'s range rather than converted blindly: `attempt` is
+  /// `public` input too, so a large one makes `2^n` nanoseconds exceed `UInt64.max` and the
+  /// conversion would trap. Saturating yields an absurdly long sleep instead of a crash.
   /// - Parameter attempt: The attempt number (1-indexed).
   /// - Returns: Delay in nanoseconds.
   public func delay(for attempt: Int) -> UInt64 {
-    let seconds = pow(2.0, Double(attempt)) * timeScale
-    return UInt64(seconds * 1_000_000_000)
+    let nanoseconds = pow(2.0, Double(attempt)) * timeScale * 1_000_000_000
+    guard nanoseconds.isFinite else { return .max }
+    guard nanoseconds > 0 else { return 0 }
+    return nanoseconds < Double(UInt64.max) ? UInt64(nanoseconds) : .max
   }
 }
