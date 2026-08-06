@@ -64,7 +64,8 @@ struct ShareTextPropertyTests {
     coordinator.currentArtwork = ArtworkResult(
       image: nil, dominantColor: .black, isDefault: false, url: "https://cdn/live.jpg")
     let past = HistoryEntry(
-      artist: "A", title: "T", timestamp: "2026-01-01T00:00:00Z", artworkURL: "https://cdn/past.jpg"
+      artist: "A", title: "T", timestamp: "2026-01-01T00:00:00Z",
+      cover: .artwork("https://cdn/past.jpg")
     )
     coordinator.history = [past]
     // Sync the carousel model's cover list (normally done by the view computing `covers`);

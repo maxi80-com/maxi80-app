@@ -20,25 +20,36 @@ struct PlaceholderCover: Equatable, Sendable {
       imageName: "NoCover-c", dominantColor: Color(red: 61 / 255, green: 42 / 255, blue: 28 / 255)),
   ]
 
-  /// An arbitrary cover for a song with no artwork of its own, so coverless slots vary across a
-  /// session instead of all showing one cover picked at launch (issue #70).
+  /// The 25th-anniversary cover (issue #71), which joins the pool only while the
+  /// `anniversary_cover` flag is on so the celebration artwork can be switched off once the window
+  /// closes without shipping a build. Kept out of `all` rather than filtered back out of it, so the
+  /// default pool needs no knowledge of the flag.
+  static let anniversary = PlaceholderCover(
+    imageName: "NoCover-25ans", dominantColor: Color(red: 47 / 255, green: 31 / 255, blue: 55 / 255)
+  )
+
+  /// The cover to show when there is nothing to pick for yet — before the first song of a session.
+  static let `default` = all[0]
+
+  /// The covers a coverless song may be given. **The one place the `anniversary_cover` flag is
+  /// read** (issue #71): every generic cover — the now slot's and every history entry's — comes from
+  /// this pool, so gating it here gates the feature everywhere without a second flag check.
   ///
-  /// Derived from the song rather than rolled with `randomElement()`, because the caller is a
-  /// SwiftUI computed property that re-evaluates on every render — a fresh roll there would make
-  /// the cover flicker as the carousel redraws. Deriving it makes the pick stable for as long as
-  /// the song is on screen, with no state to store. `SongMetadata` is `Hashable`, but `hashValue`
-  /// is salted per process, so a bit-mixed FNV-1a over the text keeps this reproducible in tests.
-  ///
-  /// Hashes `song.identity`, not the raw fields: a DJ program arrives artist-less from the live
-  /// stream and as `Maxi80` from the backend, and history dedup/`mergedWith` already treat those as
-  /// one play. Hashing the raw artist would give the two representations different covers, so the
-  /// cover would visibly change as the program slid from the now slot into a healed history entry.
-  static func forSong(_ song: SongMetadata) -> PlaceholderCover {
-    let identity = song.identity
-    var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-    for byte in "\(identity.artist)|\(identity.title)".utf8 {
-      hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
-    }
-    return all[Int(hash % UInt64(all.count))]
+  /// Which flag that is belongs here, not to callers: they ask for a cover and get whichever ones are
+  /// currently eligible. Resolved per call, not once, because flags arrive with the station response,
+  /// well after the app's objects are built. The parameter exists only so tests can inject a store
+  /// instead of mutating the process-wide one; production calls it bare.
+  @MainActor
+  static func pool(for featureFlags: FeatureFlags = .shared) -> [PlaceholderCover] {
+    guard featureFlags.isEnabled(.anniversaryCover) else { return all }
+    return all + [anniversary]
+  }
+
+  /// One cover at random from the flag-resolved pool. Call only where a coverless entry is
+  /// *created*, never from a SwiftUI computed property — a roll during rendering would give the same
+  /// song a new cover on every redraw.
+  @MainActor
+  static func random(for featureFlags: FeatureFlags = .shared) -> PlaceholderCover {
+    pool(for: featureFlags).randomElement() ?? `default`
   }
 }
