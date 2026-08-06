@@ -24,8 +24,3 @@ public struct ArtworkResult: Sendable {
     self.rgb = rgb
   }
 }
-
-/// Decodes the `/artwork` endpoint response: `{"url": "..."}`.
-public struct ArtworkURLResponse: Decodable, Sendable {
-  public let url: String
-}

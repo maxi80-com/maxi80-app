@@ -24,6 +24,22 @@ import Foundation
     /// `true` when running on an iPad; `false` on iPhone, macOS, tvOS, and Android.
     public static let isPad: Bool = computeIsPad()
 
+    /// Whether the UI should use the roomier "big canvas" treatment — enlarged hero, capped
+    /// info/controls column, larger type and control sizes — instead of the compact phone layout.
+    /// True on iPad and macOS (both fill a large window); iPhone and Android phones keep the phone
+    /// layout. Lives here rather than on each view because `RadioPlayerView` and
+    /// `PlaybackControlsView` must agree: they render one continuous column, so a view sizing its
+    /// half for the phone while the other sized for the tablet is always a bug.
+    public static let usesExpandedLayout: Bool = computeUsesExpandedLayout()
+
+    private static func computeUsesExpandedLayout() -> Bool {
+      #if os(macOS)
+        return true
+      #else
+        return isPad
+      #endif
+    }
+
     private static func computeIsPad() -> Bool {
       #if os(iOS)
         #if canImport(UIKit)

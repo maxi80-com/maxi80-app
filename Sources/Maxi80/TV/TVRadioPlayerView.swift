@@ -218,20 +218,15 @@ public struct TVRadioPlayerView: View {
   #endif
 
   /// The background wash: a soft vertical gradient of the artwork's dominant color, or the branded
-  /// dusk gradient when there's no color.
+  /// dusk gradient when there's no color. Both shapes come from `BrandedWash`, shared with the phone
+  /// UI; the brand one drops the radial glows, whose point sizes are tuned for a hand-held canvas.
   @ViewBuilder
   private func gradient(for color: Color?) -> some View {
     if let color {
-      LinearGradient(
-        gradient: Gradient(colors: [color, color.opacity(0.9)]),
-        startPoint: .top, endPoint: .bottom
-      )
-      .opacity(0.9)
+      BrandedWash.wash(color, isPortrait: true)
+        .opacity(0.9)
     } else {
-      LinearGradient(
-        colors: [Maxi80Palette.duskTop, Maxi80Palette.night, Maxi80Palette.duskBottom],
-        startPoint: .topLeading, endPoint: .bottomTrailing
-      )
+      BrandedWash.brand(glows: false)
     }
   }
 
@@ -239,34 +234,18 @@ public struct TVRadioPlayerView: View {
   // `alignment` is `.center` for the stacked tvOS layout and `.leading` for the Android layout,
   // where the labels sit to the right of the hero.
   private func songLabel(alignment: HorizontalAlignment = .center) -> some View {
-    VStack(alignment: alignment, spacing: 12) {
-      Text(viewModel.displayedTitle)
-        .font(.system(size: titleFontSize, weight: .bold))
-        .foregroundStyle(titleColor)
-        .lineLimit(2)
-        .minimumScaleFactor(0.5)
-      Text(viewModel.displayedArtist)
-        .font(.system(size: artistFontSize, weight: .semibold))
-        .foregroundStyle(subtitleColor)
-        .lineLimit(2)
-        .minimumScaleFactor(0.5)
-      // Air time of the browsed history entry ("Diffusé à 14:30"), so the row below reads as
-      // history. Hidden on the live slot. Locale picks 24h vs AM-PM.
-      // `formatted(date:time:)` and `Bundle.localizedString` (not the `.hour().minute()`
-      // builder / `String(localized:)`) because those are the forms SkipFoundation provides.
-      if let date = viewModel.focusedEntryDate {
-        Text(
-          String(
-            format: Bundle.module.localizedString(forKey: "Played at %@", value: nil, table: nil),
-            date.formatted(date: .omitted, time: .shortened)
-          )
-        )
-        .font(.system(size: airTimeFontSize, weight: .regular))
-        .foregroundStyle(subtitleColor.opacity(0.6))
-        .lineLimit(1)
-      }
-    }
-    .multilineTextAlignment(alignment == .leading ? .leading : .center)
+    // The TV block leads with the TITLE (the phone leads with the artist) — a deliberate 10-foot
+    // difference, expressed by which field goes in `primary`.
+    SongLabelView(
+      primary: viewModel.displayedTitle,
+      secondary: viewModel.displayedArtist,
+      airDate: viewModel.focusedEntryDate,
+      primarySize: titleFontSize,
+      secondarySize: artistFontSize,
+      airTimeSize: airTimeFontSize,
+      alignment: alignment,
+      contrast: contrast
+    )
     .padding(.horizontal, alignment == .leading ? 0 : 80)
   }
 
@@ -417,14 +396,14 @@ public struct TVRadioPlayerView: View {
 
   // Title/artist sit directly on the dominant-color wash, so their color tracks the background's
   // brightness via `viewModel.isBackgroundDark` (computed from its luminance; always true for the
-  // branded dark gradient): white text on dark backgrounds, dark text on bright ones.
-  private var titleColor: Color {
-    viewModel.isBackgroundDark ? .white : .black
+  // branded dark gradient): white text on dark backgrounds, dark text on bright ones. Shared with
+  // the phone UI through `ContrastStyle`, which owns that white/black + dimmed-subtitle pairing.
+  private var contrast: ContrastStyle {
+    .tv(isBackgroundDark: viewModel.isBackgroundDark)
   }
 
-  private var subtitleColor: Color {
-    viewModel.isBackgroundDark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
-  }
+  private var titleColor: Color { contrast.title }
+  private var subtitleColor: Color { contrast.subtitle }
 
   @ViewBuilder
   private func errorBanner(message: String) -> some View {

@@ -372,11 +372,11 @@ public final class RadioPlayerCoordinator {
   /// effect immediately. Uses the current song when known, else the station as a placeholder
   /// title so Now Playing isn't blank before the first song.
   private func republishNowPlaying() {
-    let playing = { if case .playing = playbackState { return true } else { return false } }()
     let artist = currentSong?.artist ?? station?.name ?? BrandConstants.name
     let title = currentSong?.title ?? station?.shortDesc ?? ""
     let url = currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
-    publishNowPlaying(artist: artist, title: title, artworkURL: url, isPlaying: playing)
+    publishNowPlaying(
+      artist: artist, title: title, artworkURL: url, isPlaying: playbackState.isPlaying)
   }
 
   /// Fetch station metadata on launch with fallback chain.
@@ -384,7 +384,7 @@ public final class RadioPlayerCoordinator {
     logger.info("loadStation: GET /station")
     let stationJSON = try? await apiClient.fetchStation()
 
-    if let json = stationJSON, let parsed = parseStation(from: json) {
+    if let json = stationJSON, let parsed = try? json.decodedJSON(as: Station.self) {
       logger.info(
         "loadStation: station loaded — name=\(parsed.name), streamUrl=\(parsed.streamUrl)")
       station = parsed
@@ -627,12 +627,11 @@ public final class RadioPlayerCoordinator {
   private func applyRetriedArtwork(_ artwork: ArtworkResult, for metadata: SongMetadata) {
     currentArtwork = artwork
     cacheArtworkImage(artwork)
-    let playing = { if case .playing = playbackState { return true } else { return false } }()
     publishNowPlaying(
       artist: metadata.artist,
       title: metadata.title,
       artworkURL: artwork.url,
-      isPlaying: playing
+      isPlaying: playbackState.isPlaying
     )
 
     // Update the newest history entry for this song (the live-appended one) in place.
@@ -897,7 +896,7 @@ public final class RadioPlayerCoordinator {
   func fetchHistory() async {
     logger.info("fetchHistory: GET /history")
     guard let json = try? await apiClient.fetchHistory(),
-      let entries = parseHistoryEntries(from: json)
+      let entries = try? json.decodedJSON(as: HistoryResponse.self).entries
     else {
       logger.notice("fetchHistory: no data or decode failed")
       return
@@ -1039,15 +1038,4 @@ public final class RadioPlayerCoordinator {
     }
   }
 
-  // MARK: - JSON Parsing Helpers
-
-  private func parseStation(from json: String) -> Station? {
-    guard let data = json.data(using: .utf8) else { return nil }
-    return try? JSONDecoder().decode(Station.self, from: data)
-  }
-
-  private func parseHistoryEntries(from json: String) -> [HistoryEntry]? {
-    guard let data = json.data(using: .utf8) else { return nil }
-    return try? JSONDecoder().decode(HistoryResponse.self, from: data).entries
-  }
 }
