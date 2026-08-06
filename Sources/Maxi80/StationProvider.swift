@@ -43,11 +43,9 @@ public final class StationProvider {
   public func loadStation() async -> Station {
     let jsonString = try? await apiClient.fetchStation()
 
-    if let jsonString,
-      let data = jsonString.data(using: .utf8)
-    {
+    if let jsonString {
       do {
-        let station = try JSONDecoder().decode(Station.self, from: data)
+        let station = try jsonString.decodedJSON(as: Station.self)
         cachedStation = station
         return station
       } catch {

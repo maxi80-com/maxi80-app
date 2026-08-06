@@ -74,14 +74,9 @@ struct PlaybackControlsView: View {
   // MARK: - Sizing / spacing (per idiom)
 
   /// The roomier treatment used on iPad and macOS (both fill a large window); iPhone/Android phones
-  /// keep the compact phone sizes. Mirrors `RadioPlayerView.usesExpandedLayout`.
-  private var usesExpandedLayout: Bool {
-    #if os(macOS)
-      return true
-    #else
-      return PlatformEnvironment.isPad
-    #endif
-  }
+  /// keep the compact phone sizes. The same flag `RadioPlayerView` reads, so the two halves of the
+  /// column can't disagree.
+  private var usesExpandedLayout: Bool { PlatformEnvironment.usesExpandedLayout }
 
   /// Diameter of the play/pause hero disc.
   private var heroSize: CGFloat { usesExpandedLayout ? 84 : 72 }
@@ -127,14 +122,13 @@ struct PlaybackControlsView: View {
             // backing circle is well inside the orange disc (the Material glyph occupies the
             // icon's center) so no ring ever shows around the button.
             ZStack {
-              Circle()
-                .fill(Color.white)
-                .frame(width: heroSize * 0.5, height: heroSize * 0.5)
-                .opacity(1 - contrastDarkFade)
-              Circle()
-                .fill(Color.black)
-                .frame(width: heroSize * 0.5, height: heroSize * 0.5)
-                .opacity(contrastDarkFade)
+              // Opaque white/black, not the tray's translucent tints: this disc is knocked out of
+              // the orange glyph, so it must fully color the play/pause shape.
+              contrastCrossfade(light: .white, dark: .black) { tint in
+                Circle()
+                  .fill(tint)
+                  .frame(width: heroSize * 0.5, height: heroSize * 0.5)
+              }
               AndroidIcon(
                 symbol: viewModel.isPlaying ? .pause : .play, size: heroSize, tint: .orange)
             }
@@ -242,6 +236,35 @@ struct PlaybackControlsView: View {
     }
   }
 
+  #if os(Android)
+    /// Render `content` twice — once in the light contrast tint, once in the dark — and cross-fade
+    /// the pair by `contrastDarkFade`, so the element dissolves between contrasts in lockstep with
+    /// the background wash and the song label.
+    ///
+    /// Two layers rather than one animated color because SkipUI renders a color change as a
+    /// single-frame snap; only opacity is proven to fade cleanly on Compose (see
+    /// `SkipUI Android Animation Rules`). The tween itself lives on the body's `VStack`, so
+    /// everything here moves on one curve.
+    ///
+    /// - Parameters:
+    ///   - light/dark: the two fixed tints, defaulting to the tray's translucent pair. The play
+    ///     button's knockout disc overrides them with opaque white/black.
+    ///   - dim: a flat attenuation applied to both layers, carrying the disabled/placeholder
+    ///     dimming that call sites used to bake into the tint's own opacity.
+    @ViewBuilder
+    private func contrastCrossfade<Content: View>(
+      light: Color = Self.lightControl,
+      dark: Color = Self.darkControl,
+      dim: Double = 1,
+      @ViewBuilder content: (Color) -> Content
+    ) -> some View {
+      ZStack {
+        content(light).opacity((1 - contrastDarkFade) * dim)
+        content(dark).opacity(contrastDarkFade * dim)
+      }
+    }
+  #endif
+
   // MARK: - Ghost-circle wrapper
 
   /// Wrap a utility glyph in a subtle circular background so the three read as deliberate peer
@@ -253,9 +276,8 @@ struct PlaybackControlsView: View {
       label()
         .frame(width: secondaryFrame, height: secondaryFrame)
         .background(
-          ZStack {
-            Circle().fill(Self.lightControl.opacity(0.12)).opacity(1 - contrastDarkFade)
-            Circle().fill(Self.darkControl.opacity(0.12)).opacity(contrastDarkFade)
+          contrastCrossfade { tint in
+            Circle().fill(tint.opacity(0.12))
           }
         )
     #else
@@ -284,11 +306,8 @@ struct PlaybackControlsView: View {
         AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: fixedTint)
           .frame(width: secondaryGlyphSize, height: secondaryGlyphSize)
       } else {
-        ZStack {
-          AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: Self.lightControl)
-            .opacity((1 - contrastDarkFade) * dim)
-          AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: Self.darkControl)
-            .opacity(contrastDarkFade * dim)
+        contrastCrossfade(dim: dim) { tint in
+          AndroidIcon(symbol: android, size: secondaryGlyphSize, tint: tint)
         }
         .frame(width: secondaryGlyphSize, height: secondaryGlyphSize)
       }
@@ -307,32 +326,15 @@ struct PlaybackControlsView: View {
 /// a moon glyph + a live `MM:SS` count + an `✕` to cancel. Tapping the count re-opens the picker to
 /// extend/change the duration.
 ///
-/// The 1-second tick is platform-split: Apple uses `TimelineView(.periodic)`, which SkipUI does not
-/// surface on Android, so there a lightweight `Task` re-reads the clock into `@State` each second —
-/// no `Timer`/Combine and no per-second observable writes on the coordinator either way.
+/// The 1-second tick comes from `PeriodicClock`, which owns the per-platform mechanism.
 struct SleepCountdownPill: View {
   @Bindable var viewModel: RadioPlayerViewModel
   @Binding var showPicker: Bool
-  #if os(Android)
-    // `TimelineView` isn't in SkipUI's surface, so tick a `@State` clock via a `Task` (below).
-    // Internal, not private: Skip's bridge requires @State properties to be non-private.
-    @State var now = Date()
-  #endif
 
   var body: some View {
-    #if os(Android)
+    PeriodicClock(interval: 1) { now in
       SleepCountdownPillBody(viewModel: viewModel, showPicker: $showPicker, now: now)
-        .task {
-          while !Task.isCancelled {
-            now = Date()
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-          }
-        }
-    #else
-      TimelineView(.periodic(from: .now, by: 1)) { context in
-        SleepCountdownPillBody(viewModel: viewModel, showPicker: $showPicker, now: context.date)
-      }
-    #endif
+    }
   }
 }
 
@@ -523,18 +525,18 @@ struct DurationChipLabel: View {
 }
 
 /// The live "MM:SS remaining" line shown in the sheet while a timer is active. Ticks via the same
-/// platform-split clock as the countdown pill and reuses the view model's countdown formatter.
+/// `PeriodicClock` as the countdown pill and reuses the view model's countdown formatter.
+///
+/// Sharing that clock also gives Android a ticking readout here for the first time: this view used to
+/// pass a bare `Date()` on the Android branch, so the sheet's remaining time froze at whatever it was
+/// when the sheet opened.
 struct SleepTimerSheetRemaining: View {
   @Bindable var viewModel: RadioPlayerViewModel
 
   var body: some View {
-    #if os(Android)
-      SleepTimerSheetRemainingBody(viewModel: viewModel, now: Date())
-    #else
-      TimelineView(.periodic(from: Date(), by: 1)) { context in
-        SleepTimerSheetRemainingBody(viewModel: viewModel, now: context.date)
-      }
-    #endif
+    PeriodicClock(interval: 1) { now in
+      SleepTimerSheetRemainingBody(viewModel: viewModel, now: now)
+    }
   }
 }
 

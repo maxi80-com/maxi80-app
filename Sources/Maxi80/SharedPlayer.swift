@@ -9,6 +9,14 @@ private let logger = Logger(subsystem: "com.stormacq.maxi80", category: "SharedP
 /// The phone's SwiftUI root and the CarPlay scene must drive the SAME coordinator — one audio
 /// pipeline and one Now Playing session — so playback and metadata stay consistent across both.
 /// This is the composition root; it builds the dependency graph exactly once.
+///
+/// A `static enum` rather than an injectable `AppDependencies` container (issue #68 item 11 raised the
+/// idea) because the two reasons to prefer a container don't apply here. Testability isn't blocked: the
+/// coordinator takes every dependency through its `public init`, so tests build their own graph with
+/// fakes (`makeTestCoordinator`) and never touch this type — a container would give them nothing they
+/// don't already have. And "exactly one" is a hard requirement, not a default: the phone root and the
+/// CarPlay scene are separate entry points into the same process, so anything they could each construct
+/// for themselves would be two audio pipelines. The staticness is what makes that impossible.
 @MainActor
 public enum SharedPlayer {
 

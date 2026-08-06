@@ -9,6 +9,13 @@ import Foundation
 /// Declared in the native module and `public` because it appears in `RadioPlayerCoordinator`'s
 /// `public init` — see `AudioPlaying`. It never crosses the JNI boundary, so the `Maxi80Services`
 /// bridge is untouched.
+///
+/// This protocol *is* the consolidation of the two publishing paths (issue #68 item 1c asked for a
+/// `NowPlayingFacade` holding a modern publisher plus a bridged fallback). A facade would have to hold
+/// both sinks and branch per call; selecting one conformance once, at the composition root
+/// (`SharedPlayer`), removes the branch entirely instead of relocating it: the coordinator publishes
+/// through a single reference and contains no `#if` guard on this subject at all. Keep it that way —
+/// a new sink is a new conformance and a line in `SharedPlayer`, not a case inside a facade.
 @MainActor
 public protocol NowPlayingPublishing: AnyObject {
   /// Begin publishing the session to the system (Lock Screen, Control Center, accessories).

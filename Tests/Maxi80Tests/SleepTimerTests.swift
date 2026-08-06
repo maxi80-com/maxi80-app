@@ -7,10 +7,11 @@ import Testing
 
 /// Tests for the sleep-timer feature (GitHub issue #1).
 ///
-/// The fire-time / remaining-minutes arithmetic is extracted into pure static functions on
-/// `RadioPlayerCoordinator` so it can be verified against a fixed reference date without real
+/// The fire-time / remaining-minutes arithmetic lives in pure static functions on
+/// `SleepTimerManager` so it can be verified against a fixed reference date without real
 /// sleeping. The coordinator-level tests then assert the observable state transitions (start,
-/// cancel, cancel-on-play/pause) that the UI reads through.
+/// cancel, cancel-on-play/pause) that the UI reads through — the coordinator still owns the
+/// "only settable while playing" policy, so those tests belong at that level.
 @Suite("Sleep Timer Tests")
 struct SleepTimerTests {
 
@@ -33,15 +34,15 @@ struct SleepTimerTests {
   @Test("Fire date is the reference date plus the requested minutes")
   func fireDateAddsMinutes() {
     let base = Date(timeIntervalSince1970: 1_000_000)
-    let firesAt = RadioPlayerCoordinator.sleepTimerFireDate(minutes: 30, from: base)
+    let firesAt = SleepTimerManager.fireDate(minutes: 30, from: base)
     #expect(firesAt == base.addingTimeInterval(30 * 60))
   }
 
   @Test("A non-positive duration clamps to the reference date (fires immediately)")
   func fireDateClampsNonPositive() {
     let base = Date(timeIntervalSince1970: 1_000_000)
-    #expect(RadioPlayerCoordinator.sleepTimerFireDate(minutes: 0, from: base) == base)
-    #expect(RadioPlayerCoordinator.sleepTimerFireDate(minutes: -10, from: base) == base)
+    #expect(SleepTimerManager.fireDate(minutes: 0, from: base) == base)
+    #expect(SleepTimerManager.fireDate(minutes: -10, from: base) == base)
   }
 
   @Test("Remaining minutes rounds a partial final minute up")
@@ -49,10 +50,10 @@ struct SleepTimerTests {
     let base = Date(timeIntervalSince1970: 1_000_000)
     // 90 seconds left → 2 minutes.
     let firesAt = base.addingTimeInterval(90)
-    #expect(RadioPlayerCoordinator.remainingMinutes(until: firesAt, from: base) == 2)
+    #expect(SleepTimerManager.remainingMinutes(until: firesAt, from: base) == 2)
     // Exactly 15 minutes left → 15.
     #expect(
-      RadioPlayerCoordinator.remainingMinutes(until: base.addingTimeInterval(15 * 60), from: base)
+      SleepTimerManager.remainingMinutes(until: base.addingTimeInterval(15 * 60), from: base)
         == 15)
   }
 
@@ -60,17 +61,17 @@ struct SleepTimerTests {
   func remainingMinutesClampsPast() {
     let base = Date(timeIntervalSince1970: 1_000_000)
     let firesAt = base.addingTimeInterval(-60)
-    #expect(RadioPlayerCoordinator.remainingMinutes(until: firesAt, from: base) == 0)
+    #expect(SleepTimerManager.remainingMinutes(until: firesAt, from: base) == 0)
   }
 
   @Test("The fade ramp ends at exactly zero (no faded-but-audible final step)")
   func fadeMultiplierEndsAtSilence() {
     // The last step must be full silence so the stream is never audible at the moment of stop.
-    #expect(RadioPlayerCoordinator.fadeMultiplier(step: 12) == 0.0)
+    #expect(SleepTimerManager.fadeMultiplier(step: 12) == 0.0)
     // The ramp is monotonic and starts below 1.0.
-    #expect(RadioPlayerCoordinator.fadeMultiplier(step: 1) < 1.0)
+    #expect(SleepTimerManager.fadeMultiplier(step: 1) < 1.0)
     #expect(
-      RadioPlayerCoordinator.fadeMultiplier(step: 1) > RadioPlayerCoordinator.fadeMultiplier(step: 6)
+      SleepTimerManager.fadeMultiplier(step: 1) > SleepTimerManager.fadeMultiplier(step: 6)
     )
   }
 
@@ -79,7 +80,7 @@ struct SleepTimerTests {
     let base = Date(timeIntervalSince1970: 1_000_000)
     // 20 minutes remaining, extend by 15 → the new timer is 35 minutes from now.
     let firesAt = base.addingTimeInterval(20 * 60)
-    let remaining = RadioPlayerCoordinator.remainingMinutes(until: firesAt, from: base)
+    let remaining = SleepTimerManager.remainingMinutes(until: firesAt, from: base)
     #expect(remaining + 15 == 35)
   }
 
@@ -264,5 +265,33 @@ struct SleepTimerTests {
     // 5 seconds before firing → "0:05" (zero-padded seconds).
     let near = firesAt.addingTimeInterval(-5)
     #expect(viewModel.sleepCountdownText(now: near) == "0:05")
+  }
+
+  // MARK: - Firing
+
+  @Test("An elapsed timer fades to silence, stops playback, and restores full volume")
+  @MainActor
+  func firingFadesThenStops() async {
+    // A 0-minute timer fires immediately; a millisecond-scale fade keeps the test in milliseconds.
+    let (coordinator, player) = makeTestCoordinator(sleepFadeDuration: 12_000_000)
+    await startPlaying(coordinator)
+
+    let beforeFire = player.commands.count
+    coordinator.startSleepTimer(minutes: 0)
+
+    // Wait for the fade ramp plus the stop, without assuming a fixed number of hops.
+    for _ in 0..<200 where coordinator.sleepTimerFiresAt != nil || player.isPlaying {
+      try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+
+    #expect(coordinator.sleepTimerFiresAt == nil)
+    #expect(coordinator.playbackState == .paused)
+
+    let ramp = player.attenuations(in: player.commands[beforeFire...])
+    // The ramp must reach exact silence before the stop, else the stream is briefly audible at the
+    // moment it cuts — and end back at 1.0 so the next play isn't silent.
+    #expect(ramp.contains(0.0))
+    #expect(ramp.last == 1.0)
+    #expect(player.attenuation == 1.0)
   }
 }

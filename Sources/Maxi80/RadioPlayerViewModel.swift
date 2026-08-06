@@ -47,19 +47,9 @@ public final class RadioPlayerViewModel {
 
   // MARK: - Coordinator-Derived State (read-through, tracked by Observation)
 
-  public var isPlaying: Bool {
-    if case .playing = coordinator.playbackState { return true }
-    return false
-  }
+  public var isPlaying: Bool { coordinator.playbackState.isPlaying }
 
-  public var isLoading: Bool {
-    switch coordinator.playbackState {
-    case .loading, .reconnecting:
-      return true
-    default:
-      return false
-    }
-  }
+  public var isLoading: Bool { coordinator.playbackState.isLoading }
 
   public var currentSong: SongMetadata? {
     coordinator.currentSong
@@ -316,6 +306,8 @@ public final class RadioPlayerViewModel {
 
   // MARK: - Actions
 
+  /// The only action carrying logic of its own: which coordinator call a tap means depends on the
+  /// current playback state (a tap while still connecting cancels rather than re-starts).
   public func togglePlayback() {
     if isPlaying || isLoading {
       coordinator.pause()
@@ -323,6 +315,14 @@ public final class RadioPlayerViewModel {
       coordinator.play()
     }
   }
+
+  // MARK: - Coordinator Passthroughs
+  //
+  // Pure delegation — no transformation, no gating, no state of their own. They exist because the
+  // view model is the views' single API boundary: views never hold the coordinator, so every action
+  // they can take must have a door here. Read them as that door, not as behavior; behavior for all
+  // of these lives in `RadioPlayerCoordinator`. Anything in this section that grows a condition or
+  // a computation belongs above, with `togglePlayback`.
 
   public func setVolume(_ volume: Double) {
     // Writes to the system STREAM_MUSIC level (Android); the coordinator's observable `volume`
@@ -333,8 +333,6 @@ public final class RadioPlayerViewModel {
   public func retry() {
     coordinator.retryConnection()
   }
-
-  // MARK: - Sleep Timer Actions
 
   public func startSleepTimer(minutes: Int) {
     coordinator.startSleepTimer(minutes: minutes)
@@ -347,6 +345,8 @@ public final class RadioPlayerViewModel {
   public func extendSleepTimer(minutes: Int) {
     coordinator.extendSleepTimer(minutes: minutes)
   }
+
+  // MARK: - Sharing
 
   /// The localized "MM:SS remaining"-style label for the countdown pill, computed against `now`
   /// (supplied by the pill's `TimelineView`). Returns the bare `MM:SS` string; the accessibility

@@ -23,9 +23,21 @@ public struct ArtworkResult: Sendable {
     self.url = url
     self.rgb = rgb
   }
-}
 
-/// Decodes the `/artwork` endpoint response: `{"url": "..."}`.
-public struct ArtworkURLResponse: Decodable, Sendable {
-  public let url: String
+  /// Seed the shared decoded-image cache from this result. `ArtworkService.fetchArtwork` already
+  /// decoded the SwiftUI `Image` (Apple only), so registering it under its URL lets the hero and the
+  /// carousel render the cover synchronously the instant it becomes current — instead of re-loading
+  /// by URL via `AsyncImage`, which flashes the generic placeholder for a frame.
+  ///
+  /// A no-op for default/placeholder results and on Android, which has no platform image decode.
+  /// Lives here rather than on whoever happens to be holding the result: the fact that a resolved
+  /// artwork carries a decoded image worth caching is a property of the artwork, and both the
+  /// first-fetch and the retry path need it.
+  @MainActor
+  public func cacheDecodedImage() {
+    #if canImport(UIKit) || canImport(AppKit)
+      guard !isDefault, let url, let image else { return }
+      CoverImageCache.shared.store(image, for: url)
+    #endif
+  }
 }

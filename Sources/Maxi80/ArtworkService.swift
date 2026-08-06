@@ -80,15 +80,21 @@ public final class ArtworkService {
   /// The endpoint returns `{"url": "..."}` on success, or an empty body when no artwork
   /// exists — both handled here. Returns `nil` when unavailable.
   public func resolveArtworkURL(artist: String, title: String) async -> String? {
+    // An empty body (no artwork) simply fails to decode, which is the same `nil` as a missing or
+    // malformed response — no separate emptiness check needed.
     guard let json = try? await apiClient.fetchArtworkURL(artist: artist, title: title),
-      let data = json.data(using: .utf8),
-      !data.isEmpty,
-      let response = try? JSONDecoder().decode(ArtworkURLResponse.self, from: data)
+      let response = try? json.decodedJSON(as: ArtworkURLResponse.self)
     else {
       logger.debug("no artwork for \(artist) — \(title)")
       return nil
     }
     return response.url
+  }
+
+  /// Decodes the `/artwork` endpoint response: `{"url": "..."}`. Nested here because this is the
+  /// only endpoint that returns this shape and the only code that reads it.
+  private struct ArtworkURLResponse: Decodable {
+    let url: String
   }
 
   // MARK: - Private Helpers

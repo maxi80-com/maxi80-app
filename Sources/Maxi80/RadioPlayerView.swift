@@ -223,13 +223,9 @@ public struct RadioPlayerView: View {
     #endif
   }
 
-  /// Artwork-driven soft wash of a cover's dominant color.
+  /// Artwork-driven soft wash of a cover's dominant color. Shape shared with the TV UI.
   private func washGradient(_ color: Color, isPortrait: Bool) -> some View {
-    LinearGradient(
-      gradient: Gradient(colors: [color, color.opacity(0.9)]),
-      startPoint: isPortrait ? .top : .leading,
-      endPoint: isPortrait ? .bottom : .trailing
-    )
+    BrandedWash.wash(color, isPortrait: isPortrait)
   }
 
   /// Peak wash opacity over the brand base (the pre-crossfade constant, unchanged).
@@ -244,45 +240,19 @@ public struct RadioPlayerView: View {
     return "\(rgb.red)-\(rgb.green)-\(rgb.blue)"
   }
 
-  /// Default on-brand background when no artwork color is available: a dark neon-dusk drawn
-  /// from the Maxi'80 logo (deep violet → night → warm ember), with a soft violet glow behind
-  /// the hero. Deliberately dark in both color schemes to match the logo's black base.
+  /// Default on-brand background when no artwork color is available. Shape shared with the TV UI —
+  /// see `BrandedWash.brand`.
   @ViewBuilder
   private func brandBackground() -> some View {
-    ZStack {
-      LinearGradient(
-        colors: [Maxi80Palette.duskTop, Maxi80Palette.night, Maxi80Palette.duskBottom],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-      // Neon glow behind the artwork, echoing the logo's violet→orange sweep.
-      RadialGradient(
-        colors: [Maxi80Palette.violet.opacity(0.35), .clear],
-        center: .init(x: 0.5, y: 0.34),
-        startRadius: 0,
-        endRadius: 460
-      )
-      RadialGradient(
-        colors: [Maxi80Palette.orange.opacity(0.16), .clear],
-        center: .init(x: 0.85, y: 0.1),
-        startRadius: 0,
-        endRadius: 340
-      )
-    }
+    BrandedWash.brand()
   }
 
   // MARK: - Layout Sizing
 
   /// Whether to use the roomier "big canvas" treatment (enlarged hero + capped info/controls
-  /// column) instead of the phone layout. True on iPad and on macOS — both have a large window to
-  /// fill; iPhone/Android phones keep the compact phone layout.
-  private var usesExpandedLayout: Bool {
-    #if os(macOS)
-      return true
-    #else
-      return PlatformEnvironment.isPad
-    #endif
-  }
+  /// column) instead of the phone layout. Shared with `PlaybackControlsView`, which renders the
+  /// lower half of the same column and must make the same choice.
+  private var usesExpandedLayout: Bool { PlatformEnvironment.usesExpandedLayout }
 
   /// Width cap for the info/controls column in the expanded landscape layout.
   private let expandedColumnWidth: CGFloat = 420
@@ -469,16 +439,10 @@ public struct RadioPlayerView: View {
 
   // MARK: - Song Label
 
-  /// The song-info block for the browsed/live track.
-  ///
-  /// Line 1 is the artist, rendered in the big primary style (`titleFontSize`/`titleColor`/bold);
-  /// line 2 is the song name in the smaller secondary style (`subtitleFontSize`/`subtitleColor`).
-  /// The browsed history entry's air time appears in the dim `subtitleColor.opacity(0.6)` in both
-  /// orientations — the only difference is placement, because they have opposite vertical budgets:
-  /// portrait has room for a discreet "Played at 14:30" third line, while landscape's info column
-  /// is short (a third line shrank the lines via `minimumScaleFactor`), so it inlines the bare time
-  /// in parentheses beside the song name instead. `focusedEntryDate` is nil on the live slot, so
-  /// the time is hidden there in both.
+  /// The song-info block for the browsed/live track: artist on the big primary line, song name on
+  /// the secondary line, and the browsed entry's air time — placed per `inlineHistoryTime`, since
+  /// portrait and landscape have opposite vertical budgets. `SongLabelView` renders all three; this
+  /// wrapper supplies the phone's sizes/contrast and the Android tear workaround below.
   @ViewBuilder
   private func songLabel(inlineHistoryTime: Bool = false) -> some View {
     // Both platforms render the label's color INSTANTLY (no fade): the title/artist STRING
@@ -492,60 +456,16 @@ public struct RadioPlayerView: View {
     // pixel-aligned Text layers (light tint under, dark over, identical font/lineLimit/
     // minimumScaleFactor) cross-faded by `.opacity(1 - textDarkFade)` / `.opacity(textDarkFade)`
     // — accepting that a new string then appears in the outgoing color and dissolves.
-    let label = VStack(alignment: .center, spacing: 12) {
-      // Line 1 — artist, the primary (big/bold) line.
-      Text(viewModel.displayedArtist)
-        .foregroundStyle(titleColor)
-        .font(.system(size: titleFontSize, weight: .bold))
-        .lineLimit(2)
-        .minimumScaleFactor(0.5)
-
-      if inlineHistoryTime {
-        // Line 2 — song name with the air time inlined after it (baseline-aligned so the smaller
-        // time sits on the name's baseline). Same dim `subtitleColor.opacity(0.6)` as the portrait
-        // third line. Bare parenthesized locale time (no "Played at" prefix) keeps the line short;
-        // `formatted(date:time:)` is the SkipFoundation-safe form and picks 24h vs AM-PM.
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-          Text(viewModel.displayedTitle)
-            .font(.system(size: subtitleFontSize, weight: .semibold))
-            .foregroundStyle(subtitleColor)
-            .lineLimit(2)
-            .minimumScaleFactor(0.5)
-
-          if let date = viewModel.focusedEntryDate {
-            Text(verbatim: "(\(date.formatted(date: .omitted, time: .shortened)))")
-              .font(.system(size: airTimeFontSize, weight: .regular))
-              .foregroundStyle(subtitleColor.opacity(0.6))
-              .lineLimit(1)
-          }
-        }
-      } else {
-        // Line 2 — song name.
-        Text(viewModel.displayedTitle)
-          .font(.system(size: subtitleFontSize, weight: .semibold))
-          .foregroundStyle(subtitleColor)
-          .lineLimit(2)
-          .minimumScaleFactor(0.5)
-
-        // Line 3 (portrait only) — air time of the browsed history entry ("Diffusé à 14:30"), so
-        // the block reads as history. Locale picks 24h vs AM-PM. `formatted(date:time:)` and
-        // `Bundle.localizedString` (not the `.hour().minute()` builder / `String(localized:)`)
-        // because those are the forms SkipFoundation provides. Colored from `subtitleColor` so it
-        // tracks the background like the lines above it, just dimmer. Mirrors the TV view.
-        if let date = viewModel.focusedEntryDate {
-          Text(
-            String(
-              format: Bundle.module.localizedString(forKey: "Played at %@", value: nil, table: nil),
-              date.formatted(date: .omitted, time: .shortened)
-            )
-          )
-          .font(.system(size: airTimeFontSize, weight: .regular))
-          .foregroundStyle(subtitleColor.opacity(0.6))
-          .lineLimit(1)
-        }
-      }
-    }
-    .multilineTextAlignment(.center)
+    let label = SongLabelView(
+      primary: viewModel.displayedArtist,
+      secondary: viewModel.displayedTitle,
+      airDate: viewModel.focusedEntryDate,
+      primarySize: titleFontSize,
+      secondarySize: subtitleFontSize,
+      airTimeSize: airTimeFontSize,
+      inlineAirTime: inlineHistoryTime,
+      contrast: contrast
+    )
     .padding(.horizontal, 20)
 
     #if os(Android)
@@ -599,36 +519,15 @@ public struct RadioPlayerView: View {
     #endif
   }
 
-  /// The effective color scheme behind the song label: the branded background is always dark, so
-  /// force dark there; otherwise follow the device. Mirrors the `.environment(\.colorScheme, …)`
-  /// override applied in `body`.
-  private var effectiveColorScheme: ColorScheme {
-    viewModel.dominantColor == nil ? .dark : colorScheme
+  /// The title/subtitle colors for text over the wash. `ContrastStyle.phone` owns the per-platform
+  /// rule (semantic on Apple, luminance-derived on Android) that this view and `TVRadioPlayerView`
+  /// used to each spell out.
+  private var contrast: ContrastStyle {
+    .phone(isBackgroundDark: viewModel.isBackgroundDark)
   }
 
-  /// Title color. On Apple platforms the semantic `.primary` already tracks the forced scheme.
-  /// On Android the forced `colorScheme` environment override does not recolor semantic text
-  /// styles, so resolve an explicit high-contrast color — from the BACKGROUND's actual
-  /// luminance (`isBackgroundDark`), not the device scheme: the Android wash composites over
-  /// the always-dark brand base, so what's behind the text is governed by the dominant
-  /// color's brightness (dark artwork → white text, light artwork → dark text), regardless
-  /// of the device's light/dark setting.
-  private var titleColor: Color {
-    #if os(Android)
-      viewModel.isBackgroundDark ? .white : .black
-    #else
-      .primary
-    #endif
-  }
-
-  /// Subtitle color — a dimmed counterpart to `titleColor`, matching `.secondary` on Apple.
-  private var subtitleColor: Color {
-    #if os(Android)
-      viewModel.isBackgroundDark ? Color.white.opacity(0.7) : Color.black.opacity(0.6)
-    #else
-      .secondary
-    #endif
-  }
+  private var titleColor: Color { contrast.title }
+  private var subtitleColor: Color { contrast.subtitle }
 
   // MARK: - Back to Live
 
