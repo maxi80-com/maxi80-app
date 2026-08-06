@@ -84,7 +84,7 @@ public final class RadioPlayerCoordinator {
   /// Retries the artwork lookup for the current song when it wasn't available on first fetch
   /// (backend collector hadn't produced it yet). Cancelled whenever the song changes.
   @ObservationIgnored
-  private var artworkRetryTask: Task<Void, Never>?
+  private let artworkRetry: ArtworkRetryManager
 
   /// Owns the sleep timer's fire date, fade ramp, and task. `@ObservationIgnored` because the
   /// reference never changes; the manager is itself `@Observable`, so reading `sleepTimerFiresAt`
@@ -126,12 +126,19 @@ public final class RadioPlayerCoordinator {
     self.reconnectConfirmationDelay = reconnectConfirmationDelay
     self.reconnectionManager = ReconnectionManager(timeScale: reconnectTimeScale)
     self.sleepTimer = SleepTimerManager(player: player, fadeDuration: sleepFadeDuration)
+    self.artworkRetry = ArtworkRetryManager(artworkService: artworkService)
     self.injectedPlaceholderArtworkURL = placeholderArtworkURL
 
-    // Assigned here rather than injected: the handler captures `self`, which can't exist while the
+    // Assigned here rather than injected: the handlers capture `self`, which can't exist while the
     // stored properties above are still being initialized. Same shape as the player callbacks below.
     sleepTimer.onFired = { [weak self] in
       self?.stopForDisconnect()
+    }
+    artworkRetry.isStillCurrent = { [weak self] metadata in
+      self?.currentSong == metadata
+    }
+    artworkRetry.onResolved = { [weak self] artwork, metadata in
+      self?.applyRetriedArtwork(artwork, for: metadata)
     }
 
     setupCallbacks()
@@ -471,13 +478,13 @@ public final class RadioPlayerCoordinator {
     currentSong = metadata
 
     // A new song supersedes any in-flight artwork retry for the previous one.
-    artworkRetryTask?.cancel()
+    artworkRetry.cancel()
 
     // Fetch artwork asynchronously
     logger.info("fetching artwork for current song")
     let artwork = await artworkService.fetchArtwork(artist: metadata.artist, title: metadata.title)
     currentArtwork = artwork
-    cacheArtworkImage(artwork)
+    artwork.cacheDecodedImage()
     logger.info("artwork resolved — hasImage=\(artwork.image != nil), url=\(artwork.url ?? "nil")")
 
     // Record this song in history, carrying the cover the carousel will show — the already-resolved
@@ -521,55 +528,16 @@ public final class RadioPlayerCoordinator {
     // If artwork wasn't ready (backend collector hadn't produced it yet), retry in the
     // background — the cover fills in once it appears, without waiting for the next song.
     if artwork.isDefault {
-      startArtworkRetry(for: metadata)
+      artworkRetry.start(for: metadata)
     }
-  }
-
-  /// Delays between artwork retries when the first lookup found nothing. Grows so we catch up
-  /// quickly then back off; the sequence spans ~65s, comfortably covering the collector's cadence.
-  private static let artworkRetryDelays: [UInt64] = [5, 10, 20, 30].map { $0 * 1_000_000_000 }
-
-  /// Retry the artwork lookup for `metadata` with backoff until it resolves or the song changes.
-  /// The `ArtworkService` no longer caches misses, so each attempt actually re-queries the backend.
-  private func startArtworkRetry(for metadata: SongMetadata) {
-    artworkRetryTask = Task { [weak self] in
-      for delay in Self.artworkRetryDelays {
-        try? await Task.sleep(nanoseconds: delay)
-        if Task.isCancelled { return }
-        guard let self else { return }
-
-        // Bail if the song moved on while we were waiting.
-        guard self.currentSong == metadata else { return }
-
-        let artwork = await self.artworkService.fetchArtwork(
-          artist: metadata.artist, title: metadata.title)
-        if Task.isCancelled || self.currentSong != metadata { return }
-        guard !artwork.isDefault else { continue }
-
-        logger.info("artwork retry succeeded for \(metadata.artist) — \(metadata.title)")
-        self.applyRetriedArtwork(artwork, for: metadata)
-        return
-      }
-      logger.debug("artwork retry exhausted for \(metadata.artist) — \(metadata.title)")
-    }
-  }
-
-  /// Seed the shared decoded-image cache from a freshly-resolved artwork result. `fetchArtwork`
-  /// already decoded the SwiftUI `Image` (Apple only), so registering it under its URL lets the
-  /// hero/carousel render the new cover synchronously the instant it becomes current — instead of
-  /// re-loading by URL via `AsyncImage`, which flashes the generic placeholder for a frame.
-  private func cacheArtworkImage(_ artwork: ArtworkResult) {
-    #if canImport(UIKit) || canImport(AppKit)
-      guard !artwork.isDefault, let url = artwork.url, let image = artwork.image else { return }
-      CoverImageCache.shared.store(image, for: url)
-    #endif
   }
 
   /// Apply artwork that arrived on retry: update the current-song cover/background, the system
   /// Now Playing info, and the matching (most recent) history entry so the carousel cover fills in.
+  /// Wired to `artworkRetry.onResolved` in `init`; only ever called with a real (non-default) result.
   private func applyRetriedArtwork(_ artwork: ArtworkResult, for metadata: SongMetadata) {
     currentArtwork = artwork
-    cacheArtworkImage(artwork)
+    artwork.cacheDecodedImage()
     publishNowPlaying(
       artist: metadata.artist,
       title: metadata.title,
