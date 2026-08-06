@@ -62,7 +62,10 @@ struct PlaceholderCoverRotationTests {
       seen.insert(coordinator.nowPlaceholderCover)
     }
 
-    // The bug this issue is about: one cover picked at launch and reused all session.
+    // The bug this issue is about: one cover picked at launch and reused all session. Asserting the
+    // WHOLE pool is reached, not merely "more than one cover", is what catches the real regression
+    // shape — a pool that silently collapses to a subset of itself. 60 draws over 3 covers leaves
+    // P(some cover unseen) = 3·(2/3)^60 ≈ 3e-10, so this is not a practical flake.
     #expect(seen.count == PlaceholderCover.all.count)
   }
 
@@ -71,15 +74,18 @@ struct PlaceholderCoverRotationTests {
   func backendEntriesGetCovers() async {
     // These never pass through the now slot — on a cold start `/history` seeds past songs directly —
     // so their covers have to come from the fetch path or they'd render blank.
+    // 90 entries over 3 covers: P(some cover unseen) = 3·(2/3)^90 ≈ 5e-16. Same whole-pool
+    // assertion as above, at a draw count where chance failure is not a consideration.
+    let entryCount = 90
     let json = HistoryMergeTests.historyJSON(
-      (0..<40).map { ("Artist \($0)", "Title \($0)", "2026-07-15T10:00:\(1000 + $0)Z") })
+      (0..<entryCount).map { ("Artist \($0)", "Title \($0)", "2026-07-15T10:00:\(1000 + $0)Z") })
     let coordinator = makeTestCoordinator(
       apiClient: HistoryMergeTests.HistoryMockAPIClient(historyJSON: json)
     ).coordinator
 
     await coordinator.fetchHistory()
 
-    #expect(coordinator.history.count == 40)
+    #expect(coordinator.history.count == entryCount)
     #expect(coordinator.history.allSatisfy { genericCover($0) != nil })
     #expect(
       Set(coordinator.history.compactMap { genericCover($0) }).count == PlaceholderCover.all.count)

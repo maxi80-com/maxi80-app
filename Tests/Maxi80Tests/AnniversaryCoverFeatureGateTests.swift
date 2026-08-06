@@ -20,6 +20,12 @@ struct AnniversaryCoverFeatureGateTests {
 
   /// Draws enough covers that every member of the pool is reached, so "is the anniversary cover
   /// among them" is a fair test. Mirrors what the coordinator does per coverless song.
+  ///
+  /// The draw count is what makes the randomness a non-issue rather than a flake: with the flag on,
+  /// P(the anniversary cover is never drawn in 200 tries over a 4-cover pool) = (3/4)^200 ≈ 1e-25.
+  /// Checking the pool's *contents* instead would be deterministic but weaker — that is already
+  /// `flagAddsAnniversaryToPool`, and it says nothing about `random(for:)` drawing from the
+  /// flag-resolved pool, which is the only thing these two tests exist to prove.
   @MainActor
   private func coversForManyDraws(_ flags: FeatureFlags) -> Set<String> {
     Set((0..<200).map { _ in PlaceholderCover.random(for: flags).imageName })
