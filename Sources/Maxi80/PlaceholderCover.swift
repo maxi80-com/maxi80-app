@@ -28,9 +28,15 @@ struct PlaceholderCover: Equatable, Sendable {
   /// the cover flicker as the carousel redraws. Deriving it makes the pick stable for as long as
   /// the song is on screen, with no state to store. `SongMetadata` is `Hashable`, but `hashValue`
   /// is salted per process, so a bit-mixed FNV-1a over the text keeps this reproducible in tests.
+  ///
+  /// Hashes `song.identity`, not the raw fields: a DJ program arrives artist-less from the live
+  /// stream and as `Maxi80` from the backend, and history dedup/`mergedWith` already treat those as
+  /// one play. Hashing the raw artist would give the two representations different covers, so the
+  /// cover would visibly change as the program slid from the now slot into a healed history entry.
   static func forSong(_ song: SongMetadata) -> PlaceholderCover {
+    let identity = song.identity
     var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-    for byte in "\(song.artist)|\(song.title)".utf8 {
+    for byte in "\(identity.artist)|\(identity.title)".utf8 {
       hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
     }
     return all[Int(hash % UInt64(all.count))]

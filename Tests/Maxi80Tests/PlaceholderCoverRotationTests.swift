@@ -55,6 +55,44 @@ struct PlaceholderCoverRotationTests {
     #expect(differs)
   }
 
+  @Test("A station-artist program and its artist-less live copy get the same cover")
+  func pickFollowsNormalizedIdentity() {
+    // A DJ program reaches us in three shapes for the same play: artist-less from the live stream,
+    // and `Maxi80`/`Maxi 80` from the backend. `SongMetadata.identity` collapses all three to one
+    // song, and history dedup/merging relies on that — so the placeholder must too, or the cover
+    // visibly changes as the program slides from the now slot into a healed history entry.
+    for title in ["Le Grand Mix", "Nuit 80", "Top 50", "Emission Speciale", "Dance Floor"] {
+      let live = PlaceholderCover.forSong(SongMetadata(artist: "", title: title))
+      #expect(PlaceholderCover.forSong(SongMetadata(artist: "Maxi80", title: title)) == live)
+      #expect(PlaceholderCover.forSong(SongMetadata(artist: "Maxi 80", title: title)) == live)
+      #expect(PlaceholderCover.forSong(SongMetadata(artist: "maxi 80", title: title)) == live)
+    }
+  }
+
+  @Test("A DJ program keeps its cover when history heals the artist to the station name")
+  @MainActor
+  func stationArtistPlaceholderSurvivesHistoryHealing() {
+    // The end-to-end shape of the bug: the live entry is artist-less while it is the now slot,
+    // then `mergedWith` promotes the backend's `Maxi80` artist once it is a past cover.
+    let (vm, coordinator) = makeViewModel()
+    let liveEntry = HistoryEntry(artist: "", title: "Le Grand Mix", timestamp: "3000")
+    coordinator.history = [coverlessEntry(0), liveEntry]
+    coordinator.currentSong = SongMetadata(artist: "", title: "Le Grand Mix")
+
+    let nowPlaceholder = vm.covers.last?.assetName
+    #expect(nowPlaceholder != nil)
+
+    // Next song starts, and the backend copy heals the program's artist to the station name.
+    coordinator.currentSong = SongMetadata(artist: "Next", title: "Next Song")
+    coordinator.history[1] = liveEntry.mergedWith(
+      HistoryEntry(artist: "Maxi80", title: "Le Grand Mix", timestamp: "3000"))
+    coordinator.history.append(HistoryEntry(artist: "Next", title: "Next Song", timestamp: "4000"))
+
+    let healedPast = vm.covers.dropLast().last
+    #expect(healedPast?.artworkURL == nil)
+    #expect(healedPast?.assetName == nowPlaceholder)
+  }
+
   // MARK: - Carousel placeholders
 
   @Test("Coverless history entries don't all share one cover")
