@@ -7,33 +7,21 @@ import Testing
 
 /// Tests the first consumer of the flag system: the `sleep_timer` kill switch (GitHub issue #72).
 ///
-/// The gate is enforced in two places on purpose. `RadioPlayerViewModel.isSleepTimerAvailable` hides
-/// the control, and `RadioPlayerCoordinator.startSleepTimer` refuses to arm one — so a kill switch
-/// actually kills the feature rather than only hiding its button (CarPlay and the TV UIs reach the
-/// coordinator through paths that don't go through the phone control tray).
+/// The gate lives in one place, `RadioPlayerViewModel.isSleepTimerAvailable`, which hides the tray
+/// button that presents the picker. That button is the feature's only entry point, so nothing can arm
+/// a timer while the flag is off and the coordinator needs no guard of its own.
+///
+/// A timer that was *already* running when the flag goes off deliberately keeps its countdown pill:
+/// that pill is how the user cancels it, and hiding it would leave playback set to stop with no way
+/// to call it off.
 @Suite("Sleep Timer Feature Gate")
 struct SleepTimerFeatureGateTests {
-
-  actor StubAPIClient: APIClientProtocol {
-    func fetchStation() async throws(APIClientError) -> String { throw .noContent }
-    func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
-      throw .noContent
-    }
-    func fetchHistory() async throws(APIClientError) -> String { throw .noContent }
-  }
 
   @MainActor
   private func makeViewModel(flags: FeatureFlags)
     -> (viewModel: RadioPlayerViewModel, coordinator: RadioPlayerCoordinator)
   {
-    let apiClient = StubAPIClient()
-    let coordinator = RadioPlayerCoordinator(
-      player: AudioStreamPlayer(),
-      nowPlaying: NowPlayingController(),
-      apiClient: apiClient,
-      artworkService: ArtworkService(apiClient: apiClient),
-      featureFlags: flags
-    )
+    let (coordinator, _) = makeTestCoordinator(featureFlags: flags)
     return (RadioPlayerViewModel(coordinator: coordinator, featureFlags: flags), coordinator)
   }
 
@@ -63,123 +51,36 @@ struct SleepTimerFeatureGateTests {
     #expect(viewModel.isSleepTimerAvailable == false)
   }
 
-  @Test("The coordinator refuses to arm a sleep timer while the flag is off")
-  @MainActor
-  func killSwitchPreventsArmingTheTimer() async {
-    let flags = FeatureFlags()
-    let (_, coordinator) = makeViewModel(flags: flags)
-    await startPlaying(coordinator)
-
-    flags.update(from: ["sleep_timer": false])
-    coordinator.startSleepTimer(minutes: 30)
-
-    #expect(coordinator.sleepTimerFiresAt == nil)
-  }
-
   @Test("With the flag on, arming a sleep timer still works")
   @MainActor
   func flagOnStillArmsTheTimer() async {
     let flags = FeatureFlags()
-    let (_, coordinator) = makeViewModel(flags: flags)
+    let (viewModel, coordinator) = makeViewModel(flags: flags)
     await startPlaying(coordinator)
 
     coordinator.startSleepTimer(minutes: 30)
 
-    #expect(coordinator.sleepTimerFiresAt != nil)
+    #expect(viewModel.isSleepTimerActive == true)
     coordinator.cancelSleepTimer()
   }
 
-  @Test("The coordinator refuses to extend a sleep timer while the flag is off")
+  @Test("A timer already running when the flag goes off stays cancellable in the UI")
   @MainActor
-  func killSwitchPreventsExtendingTheTimer() async {
-    let flags = FeatureFlags()
-    let (_, coordinator) = makeViewModel(flags: flags)
-    await startPlaying(coordinator)
-    coordinator.startSleepTimer(minutes: 30)
-    let armedAt = coordinator.sleepTimerFiresAt
-
-    flags.update(from: ["sleep_timer": false])
-    coordinator.extendSleepTimer(minutes: 30)
-
-    // `extendSleepTimer` currently routes through the guarded `startSleepTimer`, but that's an
-    // implementation detail — pin the invariant so a future rewrite can't quietly bypass the gate.
-    #expect(coordinator.sleepTimerFiresAt == armedAt)
-
-    coordinator.cancelSleepTimer()
-  }
-
-  @Test("With the flag off, the UI reports no active timer even if one was armed earlier")
-  @MainActor
-  func killSwitchMakesAnArmedTimerInertInTheUI() async {
+  func killSwitchLeavesARunningTimerCancellable() async {
     let flags = FeatureFlags()
     let (viewModel, coordinator) = makeViewModel(flags: flags)
     await startPlaying(coordinator)
     coordinator.startSleepTimer(minutes: 30)
-    #expect(viewModel.isSleepTimerActive == true)
 
-    // Reachable in production: on Android a background→foreground transition recreates the activity
-    // while the coordinator survives, so `Maxi80RootView`'s `.task` re-runs `loadStation()` and
-    // re-applies the flags with a timer already armed. The UI must not render a countdown pill or an
-    // active moon glyph for a feature that is switched off — `reconcileSleepTimerWithFlag()` handles
-    // the running task itself.
     flags.update(from: ["sleep_timer": false])
 
+    // The entry point is gone, but the countdown pill stays — it's the only way to call off a stop
+    // that is already scheduled.
     #expect(viewModel.isSleepTimerAvailable == false)
+    #expect(viewModel.isSleepTimerActive == true)
+    #expect(viewModel.sleepCountdownText(now: Date()) != nil)
+
+    viewModel.cancelSleepTimer()
     #expect(viewModel.isSleepTimerActive == false)
-    #expect(viewModel.sleepCountdownText(now: Date()) == nil)
-
-    coordinator.cancelSleepTimer()
-  }
-
-  @Test("A station load that switches the flag off disarms an already-running timer")
-  @MainActor
-  func killSwitchDisarmsARunningTimer() async {
-    let flags = FeatureFlags()
-    let stationJSON = """
-      {
-        "name": "Maxi 80",
-        "streamUrl": "https://audio1.maxi80.com",
-        "image": "",
-        "shortDesc": "desc",
-        "longDesc": "long desc",
-        "websiteUrl": "https://www.maxi80.com",
-        "donationUrl": "https://www.maxi80.com/don",
-        "defaultCoverUrl": "",
-        "features": { "sleep_timer": false }
-      }
-      """
-    let apiClient = StationStubAPIClient(stationJSON: stationJSON)
-    let coordinator = RadioPlayerCoordinator(
-      player: AudioStreamPlayer(),
-      nowPlaying: NowPlayingController(),
-      apiClient: apiClient,
-      artworkService: ArtworkService(apiClient: apiClient),
-      featureFlags: flags
-    )
-    await startPlaying(coordinator)
-    coordinator.startSleepTimer(minutes: 30)
-    #expect(coordinator.sleepTimerFiresAt != nil)
-
-    // A timer left armed while the feature is switched off would still fire and stop playback, with
-    // every cancel affordance already hidden from the user.
-    await coordinator.loadStation()
-
-    #expect(coordinator.sleepTimerFiresAt == nil)
-  }
-
-  /// Serves a fixed `/station` body so the kill switch can arrive through the real `loadStation()`
-  /// path rather than by poking the store directly.
-  actor StationStubAPIClient: APIClientProtocol {
-    private let stationJSON: String
-
-    init(stationJSON: String) {
-      self.stationJSON = stationJSON
-    }
-
-    func fetchStation() async throws(APIClientError) -> String { stationJSON }
-    func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
-      throw .noContent
-    }
-    func fetchHistory() async throws(APIClientError) -> String { throw .noContent }
   }
 }

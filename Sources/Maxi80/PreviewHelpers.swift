@@ -19,14 +19,15 @@ import SwiftUI
       hasError: Bool = false
     ) -> RadioPlayerViewModel {
       let player = AudioStreamPlayer()
-      let nowPlaying = NowPlayingController()
+      let nowPlaying = BridgedNowPlayingPublisher(controller: NowPlayingController())
       let apiClient = APIClient(baseURL: "https://preview.example.com", authToken: "preview")
       let artworkService = ArtworkService(apiClient: apiClient)
       let coordinator = RadioPlayerCoordinator(
         player: player,
         nowPlaying: nowPlaying,
         apiClient: apiClient,
-        artworkService: artworkService
+        artworkService: artworkService,
+        shareService: ShareService()
       )
 
       // Configure coordinator state — the ViewModel reads through to it.

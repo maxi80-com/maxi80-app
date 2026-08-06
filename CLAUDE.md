@@ -60,13 +60,20 @@ A known-good, minimal Skip prototype exercising this exact native+transpiled+bri
 ### Cross-module bridging rules (important, and easy to get wrong)
 
 - **Transpiled → native communication is callback-based, not Combine/ObservableObject.** `AudioStreamPlayer` and `NowPlayingController` expose closures (`onMetadataChanged`, `onError`, `onInterruption`, `onRemoteCommand`); the coordinator wires them in `setupCallbacks()` and hops to `@MainActor`. Closures bridge cleanly across the Swift/Kotlin boundary — plain `@Observable`/ObservableObject do not, because the transpiled Kotlin context lacks SkipModel/Compose.
+- **The coordinator depends on protocols, not the bridged classes.** `AudioPlaying`, `Sharing`, and
+  `NowPlayingPublishing` are declared in the **native `Maxi80` module** (`Sources/Maxi80/`)
+  and the bridged `Maxi80Services` classes conform retroactively. Declare any future service seam
+  the same way — a protocol in the native module never crosses the JNI boundary, so it can't break
+  the bridge. The `#if SKIP` platform dispatch stays inside the bridged class.
+- Coordinator tests inject fakes via `makeTestCoordinator(...)` in `Tests/Maxi80Tests/Fakes/`.
+  Never construct a real `AudioStreamPlayer()` in a test — it starts the platform audio path.
 - The two bridged service classes are wrapped in `/* SKIP @bridge */` + `#if !SKIP_BRIDGE`. Platform method bodies live in separate files under `Sources/Maxi80Services/Platform/{iOS,Android}/` and are dispatched via `#if SKIP` (Android) / `#elseif os(iOS) || os(tvOS)`.
 - `APIClient` is marked `// SKIP @nobridge` and uses completion handlers (`@escaping @Sendable (String?) -> Void`) that callers adapt to async with `withCheckedContinuation`. It returns raw JSON strings; JSON decoding into Codable types happens in the native coordinator, because transpiled modules can't synthesize Codable.
 - `Maxi80Services` pulls in ExoPlayer/media3 Gradle deps declared directly in its `skip.yml` `build.contents` block.
 
 ### Platform-specific patterns to preserve
 
-- **Apple-only code** (the `Maxi80App`/`App` protocol conformance, previews) is guarded with `#if !SKIP_BRIDGE`.
+- **Apple-only code** (the `Maxi80App`/`App` protocol conformance, previews) is guarded with `#if !SKIP_BRIDGE`. Note: do **not** use bare `#if !SKIP` to guard Apple-only frameworks inside the native `Maxi80` module — `Maxi80` is Fuse mode, so `SKIP` is *not* defined when the Swift is cross-compiled for Android, and `#if !SKIP` evaluates to `true` there. Use `#if canImport(NowPlaying)` (or the appropriate framework) instead; `canImport` is the gate that actually keeps Apple-only symbols out of the Android build.
 - **Image/color extraction** in `ArtworkService` uses `#if canImport(UIKit)` / `#elseif canImport(AppKit)`, with an Android fallback that returns a default color and no image (no platform image APIs).
 - **Previews are gated behind `ENABLE_PREVIEWS`**, defined in `Package.swift` only for Xcode-driven builds (detected via the `__CFBundleIdentifier` env var), because the `#Preview` macro plugin ships only with Xcode's toolchain, not the bare `swift build` toolchain. Keep new preview code inside that gate.
 
@@ -89,12 +96,15 @@ in `defaults` (`FeatureFlagsTests` fails if you forget). Rules that must hold:
   payload all leave the compiled-in defaults in charge — a flag must never be the reason a shipped
   feature disappears. An already-shipped feature therefore defaults *on* (the flag is a kill switch);
   an unreleased one defaults *off*.
-- **Gate the behavior, not just the button.** Hiding a control in the view is not enough — the
-  coordinator's API is public and reachable from the CarPlay, TV, and remote-command paths that never
-  render the phone tray, so enforce the flag there too (see `startSleepTimer`). Also reconcile
-  *already-running* state: `loadStation()` calls `reconcileSleepTimerWithFlag()`, because a flag can
-  flip off after the feature was switched on (Android re-runs `loadStation()` on every foreground)
-  and a hidden control leaves the user no way to cancel.
+- **Gate the entry point, not every function the feature touches.** Find the control that *starts*
+  the feature and gate that one place; with no way in, the downstream coordinator methods need no
+  guards of their own (`sleep_timer` gates only `isSleepTimerAvailable`, which hides the tray button
+  that presents the picker). Check first that the entry point really is singular — a feature also
+  reachable from CarPlay or the TV UIs needs its coordinator API gated too.
+- **Leave a feature already in progress able to finish or be cancelled.** The flag stops new
+  entries; it shouldn't strand state that's already running. A sleep timer armed before the switch
+  arrives keeps its countdown pill, because that pill is how the user calls off a stop that's already
+  scheduled — hiding it would be worse than leaving the feature on.
 - **Inject, don't reach for the singleton, in the coordinator/view model.** Both take
   `featureFlags: FeatureFlags = .shared`, so production gets the process-wide store and tests inject
   a fresh one instead of mutating global state.

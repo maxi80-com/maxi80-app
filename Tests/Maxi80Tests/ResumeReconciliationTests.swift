@@ -16,28 +16,9 @@ import Testing
 @Suite("Resume Reconciliation Tests")
 struct ResumeReconciliationTests {
 
-  actor StubAPIClient: APIClientProtocol {
-    func fetchStation() async throws(APIClientError) -> String { throw .noContent }
-    func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
-      throw .noContent
-    }
-    func fetchHistory() async throws(APIClientError) -> String { throw .noContent }
-  }
-
   @MainActor
-  private func makeCoordinator() -> (coordinator: RadioPlayerCoordinator, player: AudioStreamPlayer)
-  {
-    let player = AudioStreamPlayer()
-    let nowPlaying = NowPlayingController()
-    let apiClient = StubAPIClient()
-    let artworkService = ArtworkService(apiClient: apiClient)
-    let coordinator = RadioPlayerCoordinator(
-      player: player,
-      nowPlaying: nowPlaying,
-      apiClient: apiClient,
-      artworkService: artworkService
-    )
-    return (coordinator, player)
+  private func makeCoordinator() -> (coordinator: RadioPlayerCoordinator, player: FakeAudioPlayer) {
+    makeTestCoordinator()
   }
 
   // MARK: - Axis B: playback state reconciliation

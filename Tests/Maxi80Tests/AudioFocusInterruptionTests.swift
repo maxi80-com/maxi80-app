@@ -11,28 +11,9 @@ import Testing
 @Suite("Audio Focus Interruption Tests")
 struct AudioFocusInterruptionTests {
 
-  actor StubAPIClient: APIClientProtocol {
-    func fetchStation() async throws(APIClientError) -> String { throw .noContent }
-    func fetchArtworkURL(artist: String, title: String) async throws(APIClientError) -> String {
-      throw .noContent
-    }
-    func fetchHistory() async throws(APIClientError) -> String { throw .noContent }
-  }
-
   @MainActor
-  private func makeCoordinator() -> (coordinator: RadioPlayerCoordinator, player: AudioStreamPlayer)
-  {
-    let player = AudioStreamPlayer()
-    let nowPlaying = NowPlayingController()
-    let apiClient = StubAPIClient()
-    let artworkService = ArtworkService(apiClient: apiClient)
-    let coordinator = RadioPlayerCoordinator(
-      player: player,
-      nowPlaying: nowPlaying,
-      apiClient: apiClient,
-      artworkService: artworkService
-    )
-    return (coordinator, player)
+  private func makeCoordinator() -> (coordinator: RadioPlayerCoordinator, player: FakeAudioPlayer) {
+    makeTestCoordinator()
   }
 
   /// Brings coordinator to `.playing` by simulating the normal play→metadata flow.
@@ -48,7 +29,7 @@ struct AudioFocusInterruptionTests {
   /// The coordinator wires `onInterruption` via `Task { @MainActor ... }`, so we must yield
   /// after invoking the callback to give that task a chance to run.
   @MainActor
-  private func fireInterruption(_ player: AudioStreamPlayer, began: Bool) async {
+  private func fireInterruption(_ player: FakeAudioPlayer, began: Bool) async {
     player.onInterruption?(began)
     await Task.yield()
   }

@@ -22,15 +22,15 @@ public final class RadioPlayerCoordinator {
   // MARK: - Dependencies
 
   @ObservationIgnored
-  private let player: AudioStreamPlayer
+  private let player: any AudioPlaying
   @ObservationIgnored
-  private let nowPlaying: NowPlayingController
+  private let nowPlayingPublisher: any NowPlayingPublishing
   @ObservationIgnored
   private let apiClient: any APIClientProtocol
   @ObservationIgnored
   private let artworkService: ArtworkService
   @ObservationIgnored
-  private let shareService: ShareService
+  private let shareService: any Sharing
   @ObservationIgnored
   private let featureFlags: FeatureFlags
 
@@ -63,7 +63,7 @@ public final class RadioPlayerCoordinator {
   // MARK: - Internal State
 
   @ObservationIgnored
-  private let reconnectionManager = ReconnectionManager()
+  private let reconnectionManager: ReconnectionManager
   @ObservationIgnored
   private var cachedStation: Station?
   @ObservationIgnored
@@ -81,19 +81,12 @@ public final class RadioPlayerCoordinator {
   @ObservationIgnored
   private var sleepTimerTask: Task<Void, Never>?
 
-  #if !SKIP
-    /// Modern NowPlaying-framework publisher (iOS 26+). `nil` on platforms/SDKs without the
-    /// framework, in which case the bridged MediaPlayer `nowPlaying` is used instead.
-    @ObservationIgnored
-    private var modernNowPlaying: (any NowPlayingPublishing)?
-  #endif
-
   /// Default stream URL used when station hasn't loaded yet.
   private let defaultStreamURL = BrandConstants.streamURL
 
   /// How long to wait after issuing a reconnect `play()` before checking whether the
-  /// stream actually resumed.
-  private let reconnectConfirmationDelay: UInt64 = 3_000_000_000
+  /// stream actually resumed. Injectable so tests don't pay the full 3s; production keeps the default.
+  private let reconnectConfirmationDelay: UInt64
 
   /// Produces backend-compatible ISO-8601 timestamps for live history entries so they
   /// sort consistently against entries fetched from the API.
@@ -102,35 +95,30 @@ public final class RadioPlayerCoordinator {
   // MARK: - Initialization
 
   public init(
-    player: AudioStreamPlayer,
-    nowPlaying: NowPlayingController,
+    player: any AudioPlaying,
+    nowPlaying: any NowPlayingPublishing,
     apiClient: any APIClientProtocol,
     artworkService: ArtworkService,
-    shareService: ShareService = ShareService(),
-    featureFlags: FeatureFlags = .shared
+    shareService: any Sharing,
+    featureFlags: FeatureFlags = .shared,
+    reconnectConfirmationDelay: UInt64 = 3_000_000_000,
+    reconnectTimeScale: Double = 1.0,
+    sleepFadeDuration: UInt64 = 2_500_000_000,
+    placeholderArtworkURL: String? = nil
   ) {
     self.player = player
-    self.nowPlaying = nowPlaying
+    self.nowPlayingPublisher = nowPlaying
     self.apiClient = apiClient
     self.artworkService = artworkService
     self.shareService = shareService
     self.featureFlags = featureFlags
+    self.reconnectConfirmationDelay = reconnectConfirmationDelay
+    self.reconnectionManager = ReconnectionManager(timeScale: reconnectTimeScale)
+    self.sleepFadeDuration = sleepFadeDuration
+    self.injectedPlaceholderArtworkURL = placeholderArtworkURL
 
     setupCallbacks()
     setupReconnection()
-
-    #if !SKIP
-      // Prefer the modern NowPlaying framework when available (iOS 27+); nil elsewhere, so the
-      // bridged MediaPlayer `nowPlaying` remains the fallback.
-      modernNowPlaying = makeModernNowPlaying(
-        onPlay: { [weak self] in self?.handleRemoteCommand("play") },
-        onPause: { [weak self] in self?.handleRemoteCommand("pause") }
-      )
-      let nowPlayingPath =
-        modernNowPlaying == nil
-        ? "FALLBACK (MPNowPlayingInfoCenter)" : "MODERN (NowPlaying framework)"
-      logger.info("NowPlaying path: \(nowPlayingPath)")
-    #endif
 
     // Seed the volume from the system's current level and start tracking hardware-button changes.
     // `startObservingVolume()` is a no-op on Apple platforms (iOS/tvOS track hardware volume through
@@ -255,8 +243,9 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Sleep Timer
 
-  /// How long the fade-out runs before playback stops, in nanoseconds.
-  private static let sleepFadeDurationNanos: UInt64 = 2_500_000_000
+  /// How long the fade-out runs before playback stops, in nanoseconds. Injectable so tests can
+  /// drive the ramp in milliseconds; production keeps the 2.5s default.
+  private let sleepFadeDuration: UInt64
   /// Number of attenuation steps across the fade. ~12 steps over ~2.5s is smooth without spinning.
   /// `nonisolated` so the pure `fadeMultiplier(step:)` helper can read it off the main actor.
   nonisolated private static let sleepFadeSteps = 12
@@ -288,14 +277,6 @@ public final class RadioPlayerCoordinator {
   /// fires. Modeled on `startArtworkRetry(for:)`: a stored cancelable `Task` with `Task.isCancelled`
   /// guards. Cancelling or extending mid-run supersedes this task cleanly.
   public func startSleepTimer(minutes: Int) {
-    // Enforce the `sleep_timer` kill switch here too, not only in the view model's
-    // `isSleepTimerAvailable`: defense in depth, because this API is public and reachable from the
-    // CarPlay, TV, and remote-command paths that never render the phone control tray. A kill switch
-    // has to actually kill the feature rather than just hide its button.
-    guard featureFlags.isEnabled(.sleepTimer) else {
-      logger.info("ignoring sleep timer request — feature disabled by flag")
-      return
-    }
     // Enforce the "only settable while playing" invariant at the API boundary, not only in the UI's
     // `isEnabled`: a sleep timer with no audio is meaningless and would fire a fade/stop on an idle
     // player. Keeps any current/future caller in sync with the UI.
@@ -330,20 +311,6 @@ public final class RadioPlayerCoordinator {
     logger.info("sleep timer cancelled")
   }
 
-  /// Disarm a running sleep timer when the `sleep_timer` kill switch is off, called after every
-  /// station load applies the flags.
-  ///
-  /// Blocking `startSleepTimer` isn't sufficient: a timer armed *before* the switch arrives would
-  /// keep running and still fade playback out, while `isSleepTimerAvailable` has already hidden the
-  /// countdown pill and the tray button — leaving no way to cancel it. This ordering is reachable on
-  /// Android, where a background→foreground transition recreates the activity (re-running the root
-  /// view's `.task`, and so `loadStation()`) while the coordinator survives.
-  private func reconcileSleepTimerWithFlag() {
-    guard !featureFlags.isEnabled(.sleepTimer), sleepTimerFiresAt != nil else { return }
-    logger.info("disarming running sleep timer — feature disabled by flag")
-    cancelSleepTimer()
-  }
-
   /// Extend the running timer by `minutes`, folding in whatever time is currently left. When no
   /// timer is running this is a no-op (the UI only offers extend while active).
   public func extendSleepTimer(minutes: Int) {
@@ -361,7 +328,7 @@ public final class RadioPlayerCoordinator {
     sleepTimerFiresAt = nil
     sleepTimerTask = nil
 
-    let stepDelay = Self.sleepFadeDurationNanos / UInt64(Self.sleepFadeSteps)
+    let stepDelay = sleepFadeDuration / UInt64(Self.sleepFadeSteps)
     for step in 1...Self.sleepFadeSteps {
       if Task.isCancelled { player.setPlaybackAttenuation(1.0); return }
       player.setPlaybackAttenuation(Self.fadeMultiplier(step: step))
@@ -433,7 +400,6 @@ public final class RadioPlayerCoordinator {
     // the cached one (whose flags are the last known good), or the hardcoded fallback (no flags at
     // all → compiled-in defaults).
     featureFlags.update(from: station?.features)
-    reconcileSleepTimerWithFlag()
 
     // Populate the history carousel at launch without blocking station display.
     refreshHistory()
@@ -519,11 +485,8 @@ public final class RadioPlayerCoordinator {
       }
     }
 
-    nowPlaying.onRemoteCommand = { [weak self] command in
-      Task { @MainActor [weak self] in
-        self?.handleRemoteCommand(command)
-      }
-    }
+    // Remote commands (lock screen, media3 notification, car) are wired at the composition root,
+    // which owns the bridged `NowPlayingController` — see `SharedPlayer` and `handleRemote(_:)`.
   }
 
   // MARK: - Metadata Handling
@@ -668,34 +631,28 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Now Playing Publishing
 
-  /// Publish current-track metadata to the system. Uses the modern NowPlaying framework when
-  /// available (iOS 26+), otherwise the bridged MediaPlayer controller.
+  /// Publish current-track metadata to the system through the injected publisher. Which sink that
+  /// is — the modern NowPlaying framework or the bridged MediaPlayer / MediaSession controller — is
+  /// decided once at the composition root (`SharedPlayer`).
   private func publishNowPlaying(
     artist: String, title: String, artworkURL: String?, isPlaying: Bool
   ) {
     // On CarPlay, substitute the bundled generic cover for a missing remote one so the car's
-    // Now Playing template is never blank. Both sinks below load artwork by URL and accept a
-    // `file://` URL, so the placeholder rides the same path — the phone is unaffected because
-    // this only fires while CarPlay is connected.
+    // Now Playing template is never blank. Both sinks load artwork by URL and accept a `file://`
+    // URL, so the placeholder rides the same path.
     let publishedArtworkURL =
       shouldPublishPlaceholderArtwork(forArtworkURL: artworkURL)
       ? placeholderArtworkFileURL
       : artworkURL
 
-    #if !SKIP
-      if let modernNowPlaying {
-        modernNowPlaying.activate()
-        modernNowPlaying.update(
-          stationName: station?.name ?? BrandConstants.name,
-          programName: "\(title) — \(artist)",
-          artworkURL: publishedArtworkURL,
-          isPlaying: isPlaying
-        )
-        return
-      }
-    #endif
-    nowPlaying.updateNowPlaying(
-      artist: artist, title: title, artworkURL: publishedArtworkURL, isPlaying: isPlaying)
+    nowPlayingPublisher.activate()
+    nowPlayingPublisher.update(
+      stationName: station?.name ?? BrandConstants.name,
+      artist: artist,
+      title: title,
+      artworkURL: publishedArtworkURL,
+      isPlaying: isPlaying
+    )
   }
 
   /// A `file://` URL string for this launch's generic placeholder cover, materialized once from
@@ -703,7 +660,16 @@ public final class RadioPlayerCoordinator {
   /// `nil` on platforms without image APIs (Android) or if materialization fails — callers then
   /// simply publish no artwork, as before.
   @ObservationIgnored
-  private lazy var placeholderArtworkFileURL: String? = materializePlaceholderArtwork()
+  private lazy var placeholderArtworkFileURL: String? =
+    injectedPlaceholderArtworkURL ?? materializePlaceholderArtwork()
+
+  /// Overrides the materialized placeholder when non-nil. Injectable because materialization needs a
+  /// real asset catalog: in the host test bundle `UIImage`/`NSImage(named:)` find nothing, so the
+  /// production path resolves to `nil` there — indistinguishable from publishing no artwork at all,
+  /// which would let a deletion of the substitution at the publish site go unnoticed. Tests stage a
+  /// sentinel URL so the substitution is observable. Production passes nothing.
+  @ObservationIgnored
+  private let injectedPlaceholderArtworkURL: String?
 
   /// Write the placeholder cover to a temp file so it can be published to the system Now Playing
   /// info by URL. Supported on Apple platforms (UIKit for iOS/tvOS Now Playing + CarPlay, AppKit
@@ -740,15 +706,9 @@ public final class RadioPlayerCoordinator {
     #endif
   }
 
-  /// Publish only the play/pause state, via the same modern-or-fallback routing.
+  /// Publish only the play/pause state, through the same single publisher.
   private func publishPlaybackState(isPlaying: Bool) {
-    #if !SKIP
-      if let modernNowPlaying {
-        modernNowPlaying.updatePlaybackState(isPlaying: isPlaying)
-        return
-      }
-    #endif
-    nowPlaying.updatePlaybackState(isPlaying: isPlaying)
+    nowPlayingPublisher.updatePlaybackState(isPlaying: isPlaying)
   }
 
   // MARK: - Reconnection
@@ -776,7 +736,9 @@ public final class RadioPlayerCoordinator {
 
   // MARK: - Error Handling
 
-  private func handleError(_ message: String) {
+  // Internal (not private) so tests can drive the reconnection cycle directly — the production
+  // caller is the `player.onError` closure wired in `setupCallbacks()`.
+  func handleError(_ message: String) {
     // A stream error triggers the backoff reconnection cycle rather than failing outright.
     // ReconnectionManager drives playbackState to .reconnecting/.playing/.error via its callback.
     errorMessage = nil
@@ -867,6 +829,13 @@ public final class RadioPlayerCoordinator {
   }
 
   // MARK: - Remote Command Handling
+
+  /// Handle a transport command from a system surface (lock screen, notification, car).
+  /// Public so the composition root can forward the bridged controller's callback, which it now
+  /// owns. Values: "play", "pause", "togglePlayPause".
+  public func handleRemote(_ command: String) {
+    handleRemoteCommand(command)
+  }
 
   private func handleRemoteCommand(_ command: String) {
     switch command {

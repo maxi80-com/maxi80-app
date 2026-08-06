@@ -57,13 +57,7 @@ struct CoordinatorFeatureFlagsTests {
     -> (coordinator: RadioPlayerCoordinator, apiClient: StationMockAPIClient)
   {
     let apiClient = StationMockAPIClient(stationJSON: stationJSON)
-    let coordinator = RadioPlayerCoordinator(
-      player: AudioStreamPlayer(),
-      nowPlaying: NowPlayingController(),
-      apiClient: apiClient,
-      artworkService: ArtworkService(apiClient: apiClient),
-      featureFlags: flags
-    )
+    let (coordinator, _) = makeTestCoordinator(apiClient: apiClient, featureFlags: flags)
     return (coordinator, apiClient)
   }
 

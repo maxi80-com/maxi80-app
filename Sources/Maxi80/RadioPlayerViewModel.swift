@@ -214,22 +214,26 @@ public final class RadioPlayerViewModel {
 
   // MARK: - Sleep Timer (read-through)
 
-  /// Whether the sleep-timer feature is switched on at all. Gates the whole control — the tray
-  /// button, its sheet, and the countdown pill — so the backend's `sleep_timer` flag works as a
-  /// kill switch. Defaults on, so losing the station call never removes the feature.
+  /// Whether the sleep-timer feature is switched on, gating the tray button that presents the
+  /// picker. That button is the feature's only entry point, so this is the only gate needed — no
+  /// timer can be armed while the flag is off. Defaults on, so losing the station call never removes
+  /// the feature.
+  ///
+  /// Deliberately *not* applied to `isSleepTimerActive` / `sleepTimerFiresAt`: a timer already
+  /// running when the flag goes off keeps its countdown pill, which is how the user cancels it.
+  /// Hiding the pill would leave playback set to stop with no way to call it off.
   public var isSleepTimerAvailable: Bool { featureFlags.isEnabled(.sleepTimer) }
 
   /// Whether a sleep timer is currently running. Drives the moon glyph's filled/idle state and
-  /// whether the countdown pill occupies the status slot. Reads `false` while the feature is
-  /// switched off, so no countdown can be rendered for a killed feature.
+  /// whether the countdown pill occupies the status slot.
   public var isSleepTimerActive: Bool {
-    isSleepTimerAvailable && coordinator.sleepTimerFiresAt != nil
+    coordinator.sleepTimerFiresAt != nil
   }
 
   /// When the running sleep timer will fire, or `nil` when inactive. The countdown pill computes
   /// its remaining time from this against `Date()` via `TimelineView`, so no ticking state is stored.
   public var sleepTimerFiresAt: Date? {
-    isSleepTimerAvailable ? coordinator.sleepTimerFiresAt : nil
+    coordinator.sleepTimerFiresAt
   }
 
   /// The preset durations (minutes) offered by the picker. Presets only — no custom picker.

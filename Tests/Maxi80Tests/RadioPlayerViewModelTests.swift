@@ -16,16 +16,8 @@ struct RadioPlayerViewModelTests {
   /// so tests configure state on the returned coordinator.
   @MainActor
   private func makeViewModel() -> (vm: RadioPlayerViewModel, coordinator: RadioPlayerCoordinator) {
-    let player = AudioStreamPlayer()
-    let nowPlaying = NowPlayingController()
     let apiClient = APIClient(baseURL: "https://test.example.com", authToken: "test-key")
-    let artworkService = ArtworkService(apiClient: apiClient)
-    let coordinator = RadioPlayerCoordinator(
-      player: player,
-      nowPlaying: nowPlaying,
-      apiClient: apiClient,
-      artworkService: artworkService
-    )
+    let (coordinator, _) = makeTestCoordinator(apiClient: apiClient)
     return (RadioPlayerViewModel(coordinator: coordinator), coordinator)
   }
 
