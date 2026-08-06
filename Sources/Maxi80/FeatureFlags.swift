@@ -44,7 +44,7 @@ public final class FeatureFlags {
 
   /// Backend overrides from the last station load, keyed by raw flag name. Unknown keys are kept but
   /// never read, so the backend may enable a flag before the client build that consumes it exists.
-  private var overrides: [String: Bool] = [:]
+  private var overrides: [Flag: Bool] = [:]
 
   /// Deliberately not `public`: production code shares `shared`, so a stray instance elsewhere in
   /// the app can't end up never receiving backend updates. Tests build their own via
@@ -54,7 +54,7 @@ public final class FeatureFlags {
   /// Whether `flag` is currently on: the backend override if the last station response carried one,
   /// otherwise the compiled-in default, otherwise `true` (fail-open).
   public func isEnabled(_ flag: Flag) -> Bool {
-    overrides[flag.rawValue] ?? defaults[flag] ?? true
+    overrides[flag] ?? defaults[flag] ?? true
   }
 
   /// The compiled-in default for `flag`, ignoring any backend override. Exposed so tests can assert
@@ -71,10 +71,20 @@ public final class FeatureFlags {
   /// the overrides and puts the defaults back in charge.
   public func update(from features: [String: Bool]?) {
     let incoming = features ?? [:]
+
+    // The wire format is `[String: Bool]`; convert once, here, so nothing downstream handles a
+    // string key. Names that aren't a known `Flag` fall out — the backend may name a flag before
+    // the client build that consumes it exists.
+    let recognized = Dictionary(
+      uniqueKeysWithValues: incoming.compactMap { name, value in
+        Flag(rawValue: name).map { ($0, value) }
+      }
+    )
+
     // Skip identical payloads: every station load would otherwise invalidate observers and
     // recompose the controls tray, and on Android `loadStation()` re-runs on every foreground.
-    guard incoming != overrides else { return }
-    overrides = incoming
+    guard recognized != overrides else { return }
+    overrides = recognized
 
     logger.info(
       "flags applied: \(Flag.allCases.map { "\($0.rawValue)=\(isEnabled($0))" }.joined(separator: " "))"
