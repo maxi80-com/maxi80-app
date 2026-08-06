@@ -150,21 +150,24 @@ public final class RadioPlayerViewModel {
   /// song's artwork while playing.
   var covers: [Cover] {
     let past = pastEntries.map { entry in
-      // Fall back to the launch placeholder art for entries whose artwork
-      // couldn't be resolved, so no cover is ever blank.
+      // Fall back to generic art for entries whose artwork couldn't be resolved, so no cover is
+      // ever blank. The pick follows the song, so coverless entries don't all show one cover.
       Cover(
         id: entry.id,
         artworkURL: entry.artworkURL,
-        assetName: entry.artworkURL == nil ? coordinator.placeholderCover.imageName : nil
+        assetName: entry.artworkURL == nil
+          ? PlaceholderCover.forSong(entry.songMetadata).imageName : nil
       )
     }
 
-    // The persistent "now" slot: current artwork while playing, generic cover otherwise.
+    // The persistent "now" slot: current artwork while playing, generic cover otherwise. Its
+    // placeholder follows the current song, so it matches the cover the song keeps once it slides
+    // left into history.
     let nowArtworkURL = coordinator.currentArtwork.flatMap { $0.isDefault ? nil : $0.url }
     let nowSlot = Cover(
       id: Self.nowSlotID,
       artworkURL: nowArtworkURL,
-      assetName: nowArtworkURL == nil ? coordinator.placeholderCover.imageName : nil
+      assetName: nowArtworkURL == nil ? coordinator.nowPlaceholderCover.imageName : nil
     )
 
     let all = past + [nowSlot]

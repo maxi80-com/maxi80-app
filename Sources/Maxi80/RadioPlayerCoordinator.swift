@@ -56,9 +56,14 @@ public final class RadioPlayerCoordinator {
   /// long is left".
   public private(set) var sleepTimerFiresAt: Date?
 
-  /// The generic cover shown before any song has played. Chosen once per launch.
-  @ObservationIgnored
-  let placeholderCover: PlaceholderCover = .random()
+  /// The generic cover for the current song when it has no artwork of its own — shown in the
+  /// carousel's "now" slot and published to the system Now Playing info. Follows the song, so
+  /// coverless songs no longer all share one cover picked at launch (issue #70). Falls back to a
+  /// fixed pool member before the first song, when there is nothing to derive a pick from.
+  var nowPlaceholderCover: PlaceholderCover {
+    guard let currentSong else { return PlaceholderCover.all[0] }
+    return .forSong(currentSong)
+  }
 
   // MARK: - Internal State
 
@@ -655,13 +660,22 @@ public final class RadioPlayerCoordinator {
     )
   }
 
-  /// A `file://` URL string for this launch's generic placeholder cover, materialized once from
-  /// the asset catalog (the covers live in `.xcassets`, which have no directly loadable URL).
-  /// `nil` on platforms without image APIs (Android) or if materialization fails — callers then
-  /// simply publish no artwork, as before.
-  @ObservationIgnored
-  private lazy var placeholderArtworkFileURL: String? =
-    injectedPlaceholderArtworkURL ?? materializePlaceholderArtwork()
+  /// A `file://` URL string for the current song's generic cover, materialized from the asset
+  /// catalog (the covers live in `.xcassets`, which have no directly loadable URL). `nil` on
+  /// platforms without image APIs (Android) or if materialization fails — callers then simply
+  /// publish no artwork, as before.
+  ///
+  /// The cover follows the song (issue #70), so this materializes per cover and memoizes: each
+  /// pool member is written at most once per launch, and a repeat publish for the same cover costs
+  /// a dictionary lookup.
+  private var placeholderArtworkFileURL: String? {
+    if let injectedPlaceholderArtworkURL { return injectedPlaceholderArtworkURL }
+    let cover = nowPlaceholderCover
+    if let cached = placeholderArtworkFileURLs[cover.imageName] { return cached }
+    let url = materializePlaceholderArtwork(cover)
+    placeholderArtworkFileURLs[cover.imageName] = url
+    return url
+  }
 
   /// Overrides the materialized placeholder when non-nil. Injectable because materialization needs a
   /// real asset catalog: in the host test bundle `UIImage`/`NSImage(named:)` find nothing, so the
@@ -671,13 +685,18 @@ public final class RadioPlayerCoordinator {
   @ObservationIgnored
   private let injectedPlaceholderArtworkURL: String?
 
-  /// Write the placeholder cover to a temp file so it can be published to the system Now Playing
+  /// Materialized placeholder files by asset name. The value is `String?` so a materialization
+  /// failure is remembered too, rather than retried on every publish.
+  @ObservationIgnored
+  private var placeholderArtworkFileURLs: [String: String?] = [:]
+
+  /// Write a placeholder cover to a temp file so it can be published to the system Now Playing
   /// info by URL. Supported on Apple platforms (UIKit for iOS/tvOS Now Playing + CarPlay, AppKit
   /// for macOS); Android has no platform image APIs so it returns `nil` and no artwork is published.
-  /// Idempotent per launch: reuses the file if it already exists.
-  private func materializePlaceholderArtwork() -> String? {
+  /// Idempotent: reuses the file if it already exists.
+  private func materializePlaceholderArtwork(_ cover: PlaceholderCover) -> String? {
     let fileURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("maxi80-\(placeholderCover.imageName).png")
+      .appendingPathComponent("maxi80-\(cover.imageName).png")
 
     if FileManager.default.fileExists(atPath: fileURL.path) {
       return fileURL.absoluteString
@@ -685,7 +704,7 @@ public final class RadioPlayerCoordinator {
 
     #if canImport(UIKit)
       guard
-        let image = UIImage(named: placeholderCover.imageName, in: .module, compatibleWith: nil),
+        let image = UIImage(named: cover.imageName, in: .module, compatibleWith: nil),
         let data = image.pngData(),
         (try? data.write(to: fileURL)) != nil
       else {
@@ -693,7 +712,7 @@ public final class RadioPlayerCoordinator {
       }
       return fileURL.absoluteString
     #elseif canImport(AppKit)
-      guard let image = NSImage(named: placeholderCover.imageName),
+      guard let image = NSImage(named: cover.imageName),
         let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
         let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]),
         (try? data.write(to: fileURL)) != nil
