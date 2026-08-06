@@ -49,10 +49,15 @@ public final class RadioPlayerCoordinator {
   /// `Slider` to this value (through `viewModel.volume`).
   public var volume: Double = 1.0
 
-  /// When the sleep timer will fire, or `nil` when no timer is running. Reads through to
-  /// `SleepTimerManager`, which is the single source of truth for both "is a timer running" and "how
-  /// long is left"; this stays on the coordinator because the view model's surface is the coordinator.
-  public var sleepTimerFiresAt: Date? { sleepTimer.firesAt }
+  /// When the sleep timer will fire, or `nil` when no timer is running. Both "is a timer running" and
+  /// "how long is left" derive from it (see `SleepTimerManager`, which owns the timer itself and
+  /// mirrors every change here through `onFiresAtChanged`).
+  ///
+  /// Mirrored rather than read through the manager on purpose: this is the property the views track,
+  /// so it has to be a stored `@Observable` member of the type they observe — reading through a second
+  /// observable object would make the countdown pill's appearance depend on nested-observation
+  /// propagation surviving the Skip/Compose bridge.
+  public private(set) var sleepTimerFiresAt: Date?
 
   /// Asset name of the generic cover for the current song, shown in the carousel's "now" slot and
   /// published to system Now Playing while that song has no artwork of its own.
@@ -91,9 +96,9 @@ public final class RadioPlayerCoordinator {
   @ObservationIgnored
   private let reconciler: HistoryReconciler
 
-  /// Owns the sleep timer's fire date, fade ramp, and task. `@ObservationIgnored` because the
-  /// reference never changes; the manager is itself `@Observable`, so reading `sleepTimerFiresAt`
-  /// through it still re-renders the views that consult it.
+  /// Owns the sleep timer's fire date, fade ramp, and task, mirroring the date into
+  /// `sleepTimerFiresAt` above. `@ObservationIgnored` because the reference never changes — what the
+  /// views track is the mirrored property, not this.
   @ObservationIgnored
   private let sleepTimer: SleepTimerManager
 
@@ -137,6 +142,9 @@ public final class RadioPlayerCoordinator {
 
     // Assigned here rather than injected: the handlers capture `self`, which can't exist while the
     // stored properties above are still being initialized. Same shape as the player callbacks below.
+    sleepTimer.onFiresAtChanged = { [weak self] firesAt in
+      self?.sleepTimerFiresAt = firesAt
+    }
     sleepTimer.onFired = { [weak self] in
       self?.stopForDisconnect()
     }

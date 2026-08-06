@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 import SkipFuse
 
 private let logger = Logger(subsystem: "com.stormacq.maxi80", category: "SleepTimer")
@@ -15,17 +14,28 @@ private let logger = Logger(subsystem: "com.stormacq.maxi80", category: "SleepTi
 /// `playbackState`, which the coordinator owns. This type will arm a timer whenever asked; the
 /// coordinator decides whether asking is allowed. Keeping the policy with the state it consults is
 /// what lets this type stay ignorant of playback.
+///
+/// Deliberately NOT `@Observable`: the views read the fire date off the coordinator, and the
+/// coordinator's own `@Observable` property is the one thing that must re-render them. Making this a
+/// second observable object and reading through it would put the countdown pill's appearance at the
+/// mercy of nested-observation propagation across the Skip/Compose bridge. `onFiresAtChanged` pushes
+/// the value out to the coordinator instead, so the tracked property is exactly where it was.
 @MainActor
-@Observable
 final class SleepTimerManager {
 
   /// When the timer will fire, or `nil` when none is running. Storing the absolute fire *date*
   /// (rather than a countdown integer) makes the remaining time always computable fresh, so the
   /// countdown survives backgrounding/activity recreation without drift and needs no ticking state of
-  /// its own. This is the single source of truth for both "is a timer running" and "how long is left".
-  private(set) var firesAt: Date?
+  /// its own. This is the single source of truth for both "is a timer running" and "how long is left";
+  /// every write mirrors it out through `onFiresAtChanged`.
+  private(set) var firesAt: Date? {
+    didSet { onFiresAtChanged?(firesAt) }
+  }
 
-  @ObservationIgnored
+  /// Called on every change to `firesAt`, so the coordinator's observable copy — the one the views
+  /// actually track — stays in step. Assigned after construction, like `onFired`.
+  var onFiresAtChanged: ((Date?) -> Void)?
+
   private let player: any AudioPlaying
 
   /// Called when the timer elapses and the fade has finished, so the coordinator can perform its own
@@ -34,17 +44,14 @@ final class SleepTimerManager {
   /// Assigned after construction rather than injected, because the coordinator's handler captures
   /// `self` and so cannot exist while the coordinator's own stored properties are still being
   /// initialized. This mirrors how the coordinator wires the player's callbacks in `setupCallbacks()`.
-  @ObservationIgnored
   var onFired: (() -> Void)?
 
   /// How long the fade-out runs before playback stops, in nanoseconds. Injectable so tests can drive
   /// the ramp in milliseconds; production keeps the 2.5s default.
-  @ObservationIgnored
   private let fadeDuration: UInt64
 
   /// The running task: sleeps until the fire time, then fades out and stops playback. Cancelled by
   /// `cancel()` and superseded by `start(minutes:)`.
-  @ObservationIgnored
   private var task: Task<Void, Never>?
 
   init(player: any AudioPlaying, fadeDuration: UInt64 = 2_500_000_000) {
