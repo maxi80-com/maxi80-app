@@ -73,7 +73,7 @@ struct RemoteCommandTests {
   func remoteTogglePlaysWhenPaused() async {
     let (coordinator, player) = makeTestCoordinator()
     await startPlaying(coordinator)
-    coordinator.pause()   // land in .paused
+    coordinator.pause()  // land in .paused
     player.reset()
 
     coordinator.handleRemote("togglePlayPause")

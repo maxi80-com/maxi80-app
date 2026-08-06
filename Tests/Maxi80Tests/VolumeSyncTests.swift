@@ -83,14 +83,15 @@ struct VolumeSyncTests {
     let (_, _, player) = make()
     #expect(
       player.commands.contains(.startObservingVolume),
-      "coordinator must call startObservingVolume on the player during init; got \(player.commands)")
+      "coordinator must call startObservingVolume on the player during init; got \(player.commands)"
+    )
   }
 
   @Test("Setting volume via setVolume calls updateVolume on the player")
   @MainActor
   func setVolumeSendsUpdateVolumeToPlayer() {
     let (_, coordinator, player) = make()
-    player.reset()   // clear init-time commands
+    player.reset()  // clear init-time commands
 
     coordinator.setVolume(0.7)
 

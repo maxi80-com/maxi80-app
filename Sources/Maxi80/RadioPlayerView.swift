@@ -392,7 +392,7 @@ public struct RadioPlayerView: View {
           liveIndicator()
           Spacer().frame(height: 32)
           PlaybackControlsView(
-          viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
+            viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
           Spacer().frame(height: 32)
           volumeControl()
           Spacer()
@@ -413,7 +413,7 @@ public struct RadioPlayerView: View {
           liveIndicator()
           Spacer()
           PlaybackControlsView(
-          viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
+            viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
           volumeControl()
           Spacer()
         }

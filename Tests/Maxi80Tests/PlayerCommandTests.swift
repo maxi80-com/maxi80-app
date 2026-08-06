@@ -193,7 +193,8 @@ struct PlayerCommandTests {
 
     // The error must enter the backoff ladder rather than surfacing straight to the user.
     #expect(observed.contains(.reconnecting(1)), "expected a reconnect attempt; saw \(observed)")
-    #expect(!observed.contains(where: { if case .error = $0 { return true } else { return false } }),
+    #expect(
+      !observed.contains(where: { if case .error = $0 { return true } else { return false } }),
       "a recoverable drop must not surface as .error; saw \(observed)")
     #expect(player.playedURLs() == ["https://stream.example/live.mp3"])
     #expect(coordinator.playbackState == .playing, "a confirmed replay resolves to playing")

@@ -69,7 +69,8 @@ import Foundation
           player.isPlaying = false
           player.onPlaybackStateChanged?(false)
           player.onDisconnectStop?()
-        } else if !playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS {
+        } else if !playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+        {
           player.isPlaying = false
           player.onPlaybackStateChanged?(false)
           player.onInterruption?(true)
@@ -77,11 +78,15 @@ import Foundation
       }
 
       override func onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
-        if playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS {
+        if playbackSuppressionReason
+          == Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
+        {
           player.isPlaying = false
           player.onPlaybackStateChanged?(false)
           player.onInterruption?(true)
-        } else if playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE && player._exoPlayer?.playWhenReady == true {
+        } else if playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE
+          && player._exoPlayer?.playWhenReady == true
+        {
           player.isPlaying = true
           player.onPlaybackStateChanged?(true)
           player.onInterruption?(false)

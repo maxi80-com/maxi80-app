@@ -140,7 +140,10 @@ final class SleepTimerManager {
 
     let stepDelay = fadeDuration / UInt64(Self.fadeSteps)
     for step in 1...Self.fadeSteps {
-      if Task.isCancelled { player.setPlaybackAttenuation(1.0); return }
+      if Task.isCancelled {
+        player.setPlaybackAttenuation(1.0)
+        return
+      }
       player.setPlaybackAttenuation(Self.fadeMultiplier(step: step))
       try? await Task.sleep(nanoseconds: stepDelay)
     }

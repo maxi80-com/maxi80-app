@@ -143,7 +143,8 @@ struct CarouselGeometryTests {
     // target can never exceed the last valid index.
     let projected = geometry.projectedTranslation(
       translation: -geometry.slotWidth * 0.5, velocity: -12_000)
-    let target = geometry.snapTarget(anchorIndex: 5, predictedEndTranslation: projected, coverCount: 10)
+    let target = geometry.snapTarget(
+      anchorIndex: 5, predictedEndTranslation: projected, coverCount: 10)
     #expect(target > 6)  // coasted well past the immediate neighbor
     #expect(target == 9)  // clamped to count − 1
     // A hard rightward flick clamps at 0 likewise.
@@ -162,7 +163,8 @@ struct CarouselGeometryTests {
     let translation = -geometry.slotWidth * 0.6
     let velocity: CGFloat = -600  // clears the flick threshold but is not a hard fling
     let projected = geometry.projectedTranslation(translation: translation, velocity: velocity)
-    let target = geometry.snapTarget(anchorIndex: 5, predictedEndTranslation: projected, coverCount: 20)
+    let target = geometry.snapTarget(
+      anchorIndex: 5, predictedEndTranslation: projected, coverCount: 20)
     #expect(target == 6)
   }
 
@@ -331,7 +333,8 @@ struct CarouselGeometryTests {
 
   @Test("visibleIndexRange evaluates O(windowRadius) indices, not the whole history")
   func visibleIndexRangeIsBounded() {
-    let range = geometry.visibleIndexRange(anchorIndex: 5000, dragTranslation: 0, coverCount: 10_000)
+    let range = geometry.visibleIndexRange(
+      anchorIndex: 5000, dragTranslation: 0, coverCount: 10_000)
     #expect(range.count <= 2 * (geometry.windowRadius + 1) + 1)
   }
 

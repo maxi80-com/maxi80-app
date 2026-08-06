@@ -112,6 +112,7 @@ struct NowPlayingPublishingTests {
     // The default cover's URL must be suppressed; the placeholder must be published instead.
     #expect(
       publisher.updates.last?.artworkURL == placeholder,
-      "a default-cover artwork must be replaced by the placeholder; got \(String(describing: publisher.updates.last?.artworkURL))")
+      "a default-cover artwork must be replaced by the placeholder; got \(String(describing: publisher.updates.last?.artworkURL))"
+    )
   }
 }
