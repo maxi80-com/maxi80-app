@@ -289,9 +289,9 @@ public final class RadioPlayerCoordinator {
   /// guards. Cancelling or extending mid-run supersedes this task cleanly.
   public func startSleepTimer(minutes: Int) {
     // Enforce the `sleep_timer` kill switch here too, not only in the view model's
-    // `isSleepTimerAvailable`: CarPlay and the TV UIs reach the coordinator through paths that
-    // don't go through the phone control tray, and a kill switch has to actually kill the feature
-    // rather than just hide its button.
+    // `isSleepTimerAvailable`: defense in depth, because this API is public and reachable from the
+    // CarPlay, TV, and remote-command paths that never render the phone control tray. A kill switch
+    // has to actually kill the feature rather than just hide its button.
     guard featureFlags.isEnabled(.sleepTimer) else {
       logger.info("ignoring sleep timer request — feature disabled by flag")
       return
@@ -328,6 +328,20 @@ public final class RadioPlayerCoordinator {
     sleepTimerFiresAt = nil
     player.setPlaybackAttenuation(1.0)
     logger.info("sleep timer cancelled")
+  }
+
+  /// Disarm a running sleep timer when the `sleep_timer` kill switch is off, called after every
+  /// station load applies the flags.
+  ///
+  /// Blocking `startSleepTimer` isn't sufficient: a timer armed *before* the switch arrives would
+  /// keep running and still fade playback out, while `isSleepTimerAvailable` has already hidden the
+  /// countdown pill and the tray button — leaving no way to cancel it. This ordering is reachable on
+  /// Android, where a background→foreground transition recreates the activity (re-running the root
+  /// view's `.task`, and so `loadStation()`) while the coordinator survives.
+  private func reconcileSleepTimerWithFlag() {
+    guard !featureFlags.isEnabled(.sleepTimer), sleepTimerFiresAt != nil else { return }
+    logger.info("disarming running sleep timer — feature disabled by flag")
+    cancelSleepTimer()
   }
 
   /// Extend the running timer by `minutes`, folding in whatever time is currently left. When no
@@ -419,6 +433,7 @@ public final class RadioPlayerCoordinator {
     // the cached one (whose flags are the last known good), or the hardcoded fallback (no flags at
     // all → compiled-in defaults).
     featureFlags.update(from: station?.features)
+    reconcileSleepTimerWithFlag()
 
     // Populate the history carousel at launch without blocking station display.
     refreshHistory()

@@ -89,11 +89,18 @@ in `defaults` (`FeatureFlagsTests` fails if you forget). Rules that must hold:
   payload all leave the compiled-in defaults in charge — a flag must never be the reason a shipped
   feature disappears. An already-shipped feature therefore defaults *on* (the flag is a kill switch);
   an unreleased one defaults *off*.
-- **Gate the behavior, not just the button.** Hiding a control in the view is not enough — CarPlay and
-  the TV UIs reach the coordinator by other paths, so enforce the flag at the coordinator API too
-  (see `startSleepTimer`).
+- **Gate the behavior, not just the button.** Hiding a control in the view is not enough — the
+  coordinator's API is public and reachable from the CarPlay, TV, and remote-command paths that never
+  render the phone tray, so enforce the flag there too (see `startSleepTimer`). Also reconcile
+  *already-running* state: `loadStation()` calls `reconcileSleepTimerWithFlag()`, because a flag can
+  flip off after the feature was switched on (Android re-runs `loadStation()` on every foreground)
+  and a hidden control leaves the user no way to cancel.
 - **Inject, don't reach for the singleton, in the coordinator/view model.** Both take
   `featureFlags: FeatureFlags = .shared`, so production gets the process-wide store and tests inject
   a fresh one instead of mutating global state.
 - `Station` has a hand-written `init(from:)` purely so a malformed `features` value degrades that one
-  field to `nil` rather than failing the whole station decode. Keep every other field strict.
+  field rather than failing the whole station decode, and decodes flags **key by key** so one bad
+  value can't discard a kill switch sent in the same payload. Keep every other field strict.
+- **Flags land at station-load time only**, so a change reaches iOS/macOS/tvOS on the next cold launch
+  but Android within minutes (its `loadStation()` re-runs on every foreground). Don't rely on a flag
+  taking effect promptly on Apple platforms.

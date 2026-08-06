@@ -46,7 +46,10 @@ public final class FeatureFlags {
   /// never read, so the backend may enable a flag before the client build that consumes it exists.
   private var overrides: [String: Bool] = [:]
 
-  public init() {}
+  /// Deliberately not `public`: production code shares `shared`, so a stray instance elsewhere in
+  /// the app can't end up never receiving backend updates. Tests build their own via
+  /// `@testable import`.
+  init() {}
 
   /// Whether `flag` is currently on: the backend override if the last station response carried one,
   /// otherwise the compiled-in default, otherwise `true` (fail-open).
@@ -67,7 +70,20 @@ public final class FeatureFlags {
   /// leaving a stale override behind. `nil` — no `features` object, or one we couldn't read — clears
   /// the overrides and puts the defaults back in charge.
   public func update(from features: [String: Bool]?) {
-    overrides = features ?? [:]
-    logger.info("flags applied: \(Flag.allCases.map { "\($0.rawValue)=\(isEnabled($0))" }.joined(separator: " "))")
+    let incoming = features ?? [:]
+    // Skip identical payloads: every station load would otherwise invalidate observers and
+    // recompose the controls tray, and on Android `loadStation()` re-runs on every foreground.
+    guard incoming != overrides else { return }
+    overrides = incoming
+
+    logger.info(
+      "flags applied: \(Flag.allCases.map { "\($0.rawValue)=\(isEnabled($0))" }.joined(separator: " "))"
+    )
+    // Neither side validates flag names, so a backend typo would otherwise be completely silent.
+    let known = Set(Flag.allCases.map(\.rawValue))
+    let unrecognized = incoming.keys.filter { !known.contains($0) }.sorted()
+    if !unrecognized.isEmpty {
+      logger.info("ignoring unrecognized flags: \(unrecognized.joined(separator: " "))")
+    }
   }
 }

@@ -84,6 +84,9 @@ struct CoordinatorFeatureFlagsTests {
   func defaultsWhenResponseOmitsFeatures() async {
     let flags = FeatureFlags()
     let (coordinator, _) = makeCoordinator(stationJSON: Self.stationJSON(), flags: flags)
+    // Seed non-default values first, so the assertions below can only pass if `loadStation()`
+    // actually applies the (absent) features — a fresh store would satisfy them for free.
+    flags.update(from: ["anniversary_cover": true, "sleep_timer": false])
 
     await coordinator.loadStation()
 
@@ -96,6 +99,7 @@ struct CoordinatorFeatureFlagsTests {
   func defaultsWhenStationLoadFails() async {
     let flags = FeatureFlags()
     let (coordinator, _) = makeCoordinator(stationJSON: nil, flags: flags)
+    flags.update(from: ["anniversary_cover": true, "sleep_timer": false])
 
     await coordinator.loadStation()
 

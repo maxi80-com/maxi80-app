@@ -34,8 +34,14 @@ existing construction site keeps compiling.
 `Station` gains a hand-written `init(from:)`. The synthesized one would fail the **whole** decode on
 a malformed `features` value (`"anniversary_cover": "yes"`), which would drop the app to the
 hardcoded fallback station — losing the stream URL and descriptions over a flag typo. The manual
-decoder instead does `try? decodeIfPresent` for `features` only, so bad flag data degrades to `nil`
-while the rest of the station still decodes. `encode(to:)` stays synthesized.
+decoder narrows the leniency to `features` alone; every other field stays strict. `encode(to:)` stays
+synthesized.
+
+Within `features`, flags are decoded **key by key** through a nested container rather than as one
+`[String: Bool]`. An all-or-nothing decode would let an unrelated typo discard an emergency kill
+switch carried in the same payload — and neither side validates flag names or values. A missing,
+`null`, or non-object `features` still yields `nil`; individually bad values are dropped and their
+keys logged by `update(from:)`.
 
 `Maxi80Model` is native+bridging mode, so real Swift `Codable` works here; the decode itself still
 happens in the native coordinator.
@@ -90,11 +96,25 @@ At the end of `loadStation()`, after the 3-tier fallback has settled on a `Stati
 
 ```swift
 featureFlags.update(from: station?.features)
+reconcileSleepTimerWithFlag()
 ```
 
 Applying it to the *resolved* station — not just the fresh API response — means the cached-station
 path carries the last-known flags forward, and the hardcoded-fallback path (`features == nil`) lands
 on defaults.
+
+`reconcileSleepTimerWithFlag()` disarms a *running* sleep timer when the switch is off. Refusing to
+arm a new one isn't sufficient: a timer armed before the switch arrived would still fade playback out,
+while `isSleepTimerAvailable` has already hidden both the countdown pill and the tray button, leaving
+no way to cancel. That ordering is reachable on Android, where a background→foreground transition
+recreates the activity — re-running the root view's `.task`, and so `loadStation()` — while the
+coordinator survives.
+
+**Latency is asymmetric.** Flags land only at station-load time, so a change reaches Android within
+minutes (`loadStation()` re-runs on every foreground) but iOS/macOS/tvOS only on the next cold launch,
+since `.task` fires once per launch there. A foreground-triggered or periodic re-fetch would even this
+out and is a reasonable follow-up if a flag ever needs to act as a true emergency switch on Apple
+platforms.
 
 ### First consumer
 

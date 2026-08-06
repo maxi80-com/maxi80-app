@@ -64,14 +64,26 @@ struct StationFeaturesDecodingTests {
     #expect(station.features?.isEmpty == true)
   }
 
-  @Test("Malformed feature values degrade to nil features without failing the station decode")
+  @Test("Malformed feature values are dropped without failing the station decode")
   func malformedFeaturesDoNotFailStationDecode() throws {
     let station = try Self.decode(Self.stationJSON(features: #"{ "anniversary_cover": "yes" }"#))
 
-    #expect(station.features == nil)
+    #expect(station.features?.isEmpty == true)
     // The important part: the rest of the station survived.
     #expect(station.name == "Maxi 80")
     #expect(station.streamUrl == "https://audio1.maxi80.com")
+  }
+
+  @Test("One malformed flag value does not discard the other flags in the same payload")
+  func malformedFlagDoesNotDiscardItsNeighbours() throws {
+    // An all-or-nothing decode would make an emergency kill switch a silent no-op whenever some
+    // unrelated flag in the same payload carries a bad value.
+    let station = try Self.decode(
+      Self.stationJSON(features: #"{ "sleep_timer": false, "new_flag": "yes" }"#))
+
+    #expect(station.features?["sleep_timer"] == false)
+    #expect(station.features?["new_flag"] == nil)
+    #expect(station.features?.count == 1)
   }
 
   @Test("A features value of the wrong JSON type degrades to nil features")
