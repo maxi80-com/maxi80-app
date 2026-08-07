@@ -1,4 +1,4 @@
-"""Build the 1440x1440 anniversary placeholder cover from brand/25 ans.png (issue #71).
+"""Build the 1440x1440 anniversary placeholder cover from brand/25 ans 1.png (issue #71).
 
 One-shot generator, kept because the output can't be re-derived from the PNG alone. Run from the
 repo root; needs only Pillow:
@@ -9,6 +9,19 @@ repo root; needs only Pillow:
 It also prints the 40x40-average dominant color, sampled the same way `ImageColorSampler` samples
 real artwork — that value is what `PlaceholderCover.anniversary` carries as its `dominantColor`
 (currently rgb(47, 31, 55)), so re-run this if the artwork is ever replaced.
+
+This script applies to `brand/25 ans 1.png` ONLY. The three later anniversary artworks
+(`brand/25 ans {2,3,4}.png` -> `NoCover-25ans-{2,3,4}`) need none of the un-flattening below: they
+are already square, already full-bleed on their own dark background, and have no baked
+transparency checker. They were produced with a two-line resize + palette reduction, kept as a
+comment rather than a script because there is nothing to re-derive:
+
+    src = Image.open(f"brand/25 ans {n}.png").convert("RGB").resize((1440, 1440), Image.LANCZOS)
+    src.quantize(colors=256, method=Image.MEDIANCUT, dither=Image.FLOYDSTEINBERG).save(out, optimize=True)
+
+The palette reduction is what keeps them near the ~1MB of the other bundled covers (2.4-2.6MB of
+truecolor each otherwise); at cover-flow and Now Playing sizes it is not distinguishable from the
+truecolor original. Their dominant colors are sampled the same 40x40 way as below.
 
 The source is a flattened Photoshop export: what looks like a white background is the
 transparency checkerboard (241/253 greys, ~24px cells), and the logo's wide neon glow
@@ -43,7 +56,7 @@ from collections import deque
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-SRC = "brand/25 ans.png"
+SRC = "brand/25 ans 1.png"
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/25ans/nocover-25ans.png"
 SIZE = 1440
 MARGIN = float(sys.argv[2]) if len(sys.argv) > 2 else 0.05

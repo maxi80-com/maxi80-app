@@ -20,13 +20,24 @@ struct PlaceholderCover: Equatable, Sendable {
       imageName: "NoCover-c", dominantColor: Color(red: 61 / 255, green: 42 / 255, blue: 28 / 255)),
   ]
 
-  /// The 25th-anniversary cover (issue #71), which joins the pool only while the
+  /// The 25th-anniversary covers (issue #71), which join the pool only while the
   /// `anniversary_cover` flag is on so the celebration artwork can be switched off once the window
   /// closes without shipping a build. Kept out of `all` rather than filtered back out of it, so the
   /// default pool needs no knowledge of the flag.
-  static let anniversary = PlaceholderCover(
-    imageName: "NoCover-25ans", dominantColor: Color(red: 47 / 255, green: 31 / 255, blue: 55 / 255)
-  )
+  static let anniversary: [PlaceholderCover] = [
+    PlaceholderCover(
+      imageName: "NoCover-25ans",
+      dominantColor: Color(red: 47 / 255, green: 31 / 255, blue: 55 / 255)),
+    PlaceholderCover(
+      imageName: "NoCover-25ans-2",
+      dominantColor: Color(red: 84 / 255, green: 50 / 255, blue: 65 / 255)),
+    PlaceholderCover(
+      imageName: "NoCover-25ans-3",
+      dominantColor: Color(red: 76 / 255, green: 53 / 255, blue: 57 / 255)),
+    PlaceholderCover(
+      imageName: "NoCover-25ans-4",
+      dominantColor: Color(red: 82 / 255, green: 68 / 255, blue: 89 / 255)),
+  ]
 
   /// The cover to show when there is nothing to pick for yet — before the first song of a session.
   static let `default` = all[0]
@@ -42,7 +53,7 @@ struct PlaceholderCover: Equatable, Sendable {
   @MainActor
   static func pool(for featureFlags: FeatureFlags = .shared) -> [PlaceholderCover] {
     guard featureFlags.isEnabled(.anniversaryCover) else { return all }
-    return all + [anniversary]
+    return all + anniversary
   }
 
   /// One cover at random from the flag-resolved pool. Call only where a coverless entry is
