@@ -35,7 +35,11 @@ extension RadioPlayerView {
 
   /// Vertical room the card leaves at its bottom for the `versionFooter` overlay, which stays
   /// pinned to the screen edge on top of the card (brand logo ~22pt + its 4pt inset, plus margin).
-  private var footerClearance: CGFloat { 34 }
+  ///
+  /// Shared with `phonePortraitChromeHeight`, which budgets the same clearance when sizing the
+  /// portrait hero: two literals for one gap would let the hero's estimate drift from the space the
+  /// card actually reserves.
+  static let footerClearance: CGFloat = 34
 
   /// Wraps content in a rounded card with the adjacent artwork color, visually separating it from
   /// the carousel area. Forces an appropriate colorScheme on the card so text colors track the
@@ -53,7 +57,7 @@ extension RadioPlayerView {
   ) -> some View {
     let scheme = effectiveColorScheme
     content()
-      .padding(.bottom, footerClearance)
+      .padding(.bottom, Self.footerClearance)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(alignment: .top) {
         ControlsCardStyle.cardFill(

@@ -81,13 +81,19 @@ struct VolumeSliderView: View {
         value: Binding(get: { viewModel.volume }, set: { viewModel.setVolume($0) }),
         in: 0...1
       )
-      .tint(Color.secondary)
       #if os(Android)
+        // SkipUI forwards the tint to Compose as the thumb and active-track colors, and `.secondary`
+        // does not follow the forced scheme on Android (see `speakerIcon`), so it would leave both
+        // too dark to read on the card's charcoal surface in dark mode. Use the same adaptive gray
+        // as the speaker glyphs flanking it.
+        .tint(secondaryControlColor)
         // Compose gives the slider a touch target taller than its track and draws the track
         // top-biased within it, so at its natural height the track floats above the centre-aligned
         // speaker glyphs and crowds the tray above. Constraining the frame to the glyph height
         // leaves no vertical slack for that bias — the same reason the iOS branch pins its frame.
         .frame(height: speakerGlyphSize)
+      #else
+        .tint(Color.secondary)
       #endif
     #endif
   }

@@ -62,7 +62,7 @@ extension RadioPlayerView {
     phonePortraitSubviewsHeight
       + phonePortraitTopPadding  // outer top
       + phonePortraitVSpacing  // song label top padding inside card
-      + 36  // bottom clearance for the pinned footer overlay
+      + footerClearance  // the clearance the card reserves for the pinned footer overlay
       + phonePortraitVSpacing * 3  // 3 gaps between 4 card children
   }
 
