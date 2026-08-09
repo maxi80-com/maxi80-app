@@ -82,11 +82,18 @@ public struct RadioPlayerView: View {
           if isPortrait {
             portraitView(containerWidth: geo.size.width, containerHeight: geo.size.height)
           } else {
-            landscapeView(containerWidth: geo.size.width)
+            landscapeView(containerWidth: geo.size.width, containerHeight: geo.size.height)
           }
         }
         // GeometryReader top-left-aligns its child; expand so the layout fills the pane as before.
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The container's exact size, not `maxWidth/maxHeight: .infinity`: a max frame adopts its
+        // child's size when the child asks for more height than the pane offers, and the
+        // bottom-aligned `versionFooter` overlay anchors to this frame. A fixed frame fills the pane
+        // identically while keeping that anchor on the pane's own bottom edge, so the footer stays
+        // on screen whatever the layout inside asks for.
+        // `.top` sends any such excess downward, past the edge the card already bleeds off, instead
+        // of splitting it between top and bottom where it would also clip the title.
+        .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
         .background { dynamicBackground(isPortrait: isPortrait).ignoresSafeArea() }
         // The branded default background is always dark, so force dark text/controls when
         // it's showing (no artwork color). With artwork, respect the device scheme.

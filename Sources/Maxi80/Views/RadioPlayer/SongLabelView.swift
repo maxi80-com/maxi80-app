@@ -7,11 +7,11 @@ import SwiftUI
 /// — differing only in what each surface can afford: type sizes, alignment, which field leads, and
 /// where the air time goes.
 ///
-/// **Air time placement** is the one genuinely conditional bit. Portrait canvases have room for a
-/// discreet "Played at 14:30" third line; a short landscape info column does not (a third line made
-/// `minimumScaleFactor` shrink the lines above it), so there the bare parenthesized time is inlined
-/// beside the secondary line on its baseline. `airDate` is nil on the live slot, so both placements
-/// simply render nothing there.
+/// **Air time placement** is the one genuinely conditional bit, and the caller picks it with
+/// `inlineAirTime` according to the height it has: a discreet "Played at 14:30" third line where
+/// there is room for one, or the bare parenthesized time inlined beside the secondary line on its
+/// baseline where there is not. `airDate` is nil on the live slot, so both placements render nothing
+/// there.
 ///
 /// **Field order differs by surface and is deliberate**, not an inconsistency to fix here: the phone
 /// leads with the artist, the 10-foot TV layout leads with the title. The caller passes whichever
@@ -33,6 +33,15 @@ struct SongLabelView: View {
   /// landscape info columns.
   var inlineAirTime: Bool = false
 
+  /// Line cap for `primary` and `secondary`. At `1` the two lines truncate at full type size rather
+  /// than wrapping, which keeps this block's height constant.
+  ///
+  /// That matters because the height is load-bearing for the caller: a surface whose column is
+  /// already at its height budget cannot absorb a second line, and in the phone's landscape layout
+  /// the column shares a height-linked `HStack` with the carousel. Defaults to 2 for the roomier
+  /// surfaces (portrait, TV).
+  var maxLines: Int = 2
+
   var contrast: ContrastStyle = .semantic
 
   var body: some View {
@@ -40,8 +49,7 @@ struct SongLabelView: View {
       Text(primary)
         .foregroundStyle(contrast.title)
         .font(.system(size: primarySize, weight: .bold))
-        .lineLimit(2)
-        .minimumScaleFactor(0.5)
+        .lineLimit(maxLines)
 
       if inlineAirTime {
         // Baseline-aligned so the smaller time sits on the secondary line's baseline. Bare
@@ -83,7 +91,6 @@ struct SongLabelView: View {
     Text(secondary)
       .font(.system(size: secondarySize, weight: .semibold))
       .foregroundStyle(contrast.subtitle)
-      .lineLimit(2)
-      .minimumScaleFactor(0.5)
+      .lineLimit(maxLines)
   }
 }

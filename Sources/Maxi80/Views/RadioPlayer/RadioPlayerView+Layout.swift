@@ -11,9 +11,19 @@ extension RadioPlayerView {
   var usesExpandedLayout: Bool { PlatformEnvironment.usesExpandedLayout }
 
   /// Width cap for the info/controls column in the expanded landscape layout.
-  private var expandedColumnWidth: CGFloat { 420 }
-  private var expandedHSpacing: CGFloat { 24 }
+  ///
+  /// This is also what sizes the hero: the carousel gets the width the column leaves, and the hero is
+  /// a fraction of that (see `expandedCoverSize`). Raising it therefore trades hero size for room in
+  /// the column — at 520 a 38pt artist line has ~440pt of text width after the card's and the label's
+  /// horizontal insets, which fits the long names that truncated at 420.
+  private var expandedColumnWidth: CGFloat { 520 }
   private var expandedHPadding: CGFloat { 24 }
+
+  /// Gap between the carousel column and the controls card in landscape (both idioms). Zero so the
+  /// card butts straight against the carousel and reads as one continuous surface anchored to the
+  /// trailing edge, rather than a panel floating on the wash. Feeds the two hero-size formulas as
+  /// well as the HStack spacing, so the carousel's share of the width stays correct.
+  private var landscapeColumnGap: CGFloat { 0 }
 
   /// Hero size for the expanded layouts, derived from the width actually available to the carousel
   /// so its left/right neighbor covers always peek through — a fixed size clipped them on narrower
@@ -22,8 +32,9 @@ extension RadioPlayerView {
   private func expandedCoverSize(containerWidth: CGFloat, isLandscape: Bool) -> CGFloat {
     let carouselWidth: CGFloat
     if isLandscape {
-      // Left cell of the HStack: total minus padding, inter-column spacing, and the capped column.
-      carouselWidth = containerWidth - expandedHPadding * 2 - expandedHSpacing - expandedColumnWidth
+      // Left cell of the HStack: total minus the (leading-only) padding, the inter-column gap,
+      // and the capped column. Only one padding term — the card is flush to the trailing edge.
+      carouselWidth = containerWidth - expandedHPadding - landscapeColumnGap - expandedColumnWidth
     } else {
       carouselWidth = containerWidth
     }
@@ -36,23 +47,23 @@ extension RadioPlayerView {
   // adaptive-hero chrome budget below (rather than being hardcoded in two places).
   static let phonePortraitVSpacing: CGFloat = 20
   static let phonePortraitTopPadding: CGFloat = 12
-  // Clearance for the pinned bottom footer. Sized for the brand-logo row (~22pt tall) plus a
-  // small margin above it, so the volume row never sits under the logo/version stamp.
-  static let phonePortraitBottomPadding: CGFloat = 36
 
   /// Estimated height of the non-hero *subviews* in phone portrait — song labels + status slot +
   /// two-tier controls + volume row. Kept separate from the paddings/spacing (which are derived
   /// from the named constants above) so only this genuine content estimate is hand-tuned. If those
-  /// subviews change materially, update this one number. Verified against iPhone SE → Pro Max.
+  /// subviews change materially, update this one number.
   /// (This is only the subviews estimate; the derived chrome total adds paddings + gaps below.)
   private static let phonePortraitSubviewsHeight: CGFloat = 332
 
   /// Total fixed chrome height the adaptive hero must leave room for: the subview estimate plus the
-  /// column's own paddings and the 4 inter-element gaps (5 children → 4 spacings).
+  /// column's own paddings and the inter-element gaps (4 children in the card VStack → 3 spacings,
+  /// plus the song label's top inset and footer overlay clearance).
   private static var phonePortraitChromeHeight: CGFloat {
     phonePortraitSubviewsHeight
-      + phonePortraitTopPadding + phonePortraitBottomPadding
-      + phonePortraitVSpacing * 4
+      + phonePortraitTopPadding  // outer top
+      + phonePortraitVSpacing  // song label top padding inside card
+      + footerClearance  // the clearance the card reserves for the pinned footer overlay
+      + phonePortraitVSpacing * 3  // 3 gaps between 4 card children
   }
 
   /// Phone-portrait hero size, adapted to the container height so the spacer-free column always
@@ -81,7 +92,7 @@ extension RadioPlayerView {
   /// the width roughly in half between the strip and the info/controls column; size the hero as
   /// ~58% of the strip's share (same fraction as the expanded layouts) so ~21% shows on each side.
   private func compactLandscapeCoverSize(containerWidth: CGFloat) -> CGFloat {
-    let carouselWidth = (containerWidth - expandedHSpacing) / 2
+    let carouselWidth = (containerWidth - landscapeColumnGap) / 2
     return max(160, min(260, carouselWidth * 0.58))
   }
 
@@ -90,91 +101,125 @@ extension RadioPlayerView {
   @ViewBuilder
   func portraitView(containerWidth: CGFloat, containerHeight: CGFloat) -> some View {
     if usesExpandedLayout {
-      // iPad's tall canvas: anchor the enlarged hero + song info near the top and the controls
-      // near the bottom, with flexible air between the two groups so the space reads as
-      // intentional breathing room rather than one empty void above everything.
-      VStack(spacing: 28) {
+      // iPad's tall canvas: carousel above, controls card below with breathing room.
+      VStack(spacing: 0) {
         Spacer().frame(height: 32)
         coverFlow(coverSize: expandedCoverSize(containerWidth: containerWidth, isLandscape: false))
-        songLabel()
-        liveIndicator()
-        Spacer()
-        PlaybackControlsView(
-          viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
-        Spacer().frame(height: 32)
-        // The volume row would otherwise stretch edge-to-edge on iPad's wide portrait canvas;
-        // cap it so it sits as a centered cluster with generous side insets.
-        volumeControl()
-          .frame(maxWidth: 520)
-        Spacer().frame(height: 48)
+        Spacer().frame(height: 16)
+        controlsCard(attachedTo: .bottom) {
+          VStack(spacing: 28) {
+            Spacer().frame(height: 24)
+            songLabel(contrastOverride: cardContrast)
+            liveIndicator()
+            Spacer()
+            PlaybackControlsView(
+              viewModel: viewModel, contrastDarkFade: cardContrastDarkFade)
+            Spacer().frame(height: 32)
+            volumeControl()
+              .frame(maxWidth: 520)
+          }
+        }
       }
     } else {
-      // No flexible spacers: they let the column overflow on shorter phones (collapsing to 0 and
-      // pushing the footer off-screen) while leaving a dead gap on taller ones. Instead the hero
-      // absorbs all the slack — it's sized to exactly the height left after the fixed chrome, so the
-      // column always fills the screen precisely: nothing clips, and the coverflow (the app's key
-      // element) is as large as the device allows.
-      VStack(spacing: Self.phonePortraitVSpacing) {
+      // Phone portrait: carousel on the wash, info+controls in the card.
+      VStack(spacing: 0) {
         coverFlow(
           coverSize: phonePortraitCoverSize(
             containerWidth: containerWidth, containerHeight: containerHeight))
 
-        songLabel()
+        controlsCard(attachedTo: .bottom) {
+          VStack(spacing: Self.phonePortraitVSpacing) {
+            songLabel(contrastOverride: cardContrast)
+              .padding(.top, Self.phonePortraitVSpacing)
 
-        liveIndicator()
+            liveIndicator()
 
-        PlaybackControlsView(
-          viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
+            PlaybackControlsView(
+              viewModel: viewModel, contrastDarkFade: cardContrastDarkFade)
 
-        volumeControl()
+            volumeControl()
+
+            Spacer(minLength: 0)
+          }
+        }
       }
       .padding(.top, Self.phonePortraitTopPadding)
-      .padding(.bottom, Self.phonePortraitBottomPadding)  // clearance for the pinned version footer
     }
   }
 
   // MARK: - Landscape Layout
 
+  /// Top inset holding the song label clear of the landscape card's top edge.
+  ///
+  /// The column relies on `Spacer`s for that clearance, and they only provide it when there is slack
+  /// to distribute. The column's content fills a landscape pane on both platforms, so the spacers
+  /// resolve to zero and the label would otherwise sit flush against the edge. This inset is the
+  /// floor that survives that collapse.
+  private var landscapeCardTopInset: CGFloat { 24 }
+
+  /// Both landscape rows are pinned to the pane's height.
+  ///
+  /// An unpinned `HStack` takes the height of its tallest child and centres every child against it,
+  /// which makes the carousel's vertical position a function of the card column's height — grow the
+  /// column and the carousel moves. Pinning holds the row constant so the two columns are
+  /// independent: the card's own `Spacer`s absorb its content instead.
+  ///
+  /// The `.frame` goes after the `.padding` so the inset is taken out of the pane rather than added
+  /// to it.
   @ViewBuilder
-  func landscapeView(containerWidth: CGFloat) -> some View {
+  func landscapeView(containerWidth: CGFloat, containerHeight: CGFloat) -> some View {
     if usesExpandedLayout {
-      // iPad / macOS landscape: let the hero fill the left half and vertically center the info +
-      // controls as one block in the right half (title/artist/back-to-live sat too high before).
-      HStack(spacing: expandedHSpacing) {
+      // iPad / macOS landscape: hero fills the left half, info+controls card on the right.
+      HStack(spacing: landscapeColumnGap) {
         coverFlow(coverSize: expandedCoverSize(containerWidth: containerWidth, isLandscape: true))
-        VStack(spacing: 24) {
-          Spacer()
-          songLabel(inlineHistoryTime: true)
-          liveIndicator()
-          Spacer().frame(height: 32)
-          PlaybackControlsView(
-            viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
-          Spacer().frame(height: 32)
-          volumeControl()
-          Spacer()
+        controlsCard(attachedTo: .trailing) {
+          VStack(spacing: 24) {
+            Spacer()
+            // Air time on its own line: this column has the height for a third line, unlike the
+            // phone's. Still capped at one line per field, to keep the label's height constant.
+            songLabel(maxLines: 1, contrastOverride: cardContrast)
+            liveIndicator()
+            Spacer().frame(height: 32)
+            PlaybackControlsView(
+              viewModel: viewModel, contrastDarkFade: cardContrastDarkFade)
+            Spacer().frame(height: 32)
+            volumeControl()
+            Spacer()
+          }
+          .padding(.horizontal, 20)
+          .padding(.top, landscapeCardTopInset)
         }
         // Cap the info/controls column so the hero keeps enough horizontal room for its
         // left/right neighbor covers to stay on screen (they were clipping when the column
         // expanded to fill half the width), while still giving the title/controls real presence.
         .frame(maxWidth: expandedColumnWidth)
       }
-      .padding(.horizontal, expandedHPadding)
+      // Leading only: the card is flush to the trailing edge, so a trailing inset would leave a
+      // strip of wash beside it.
+      .padding(.leading, expandedHPadding)
+      .frame(height: containerHeight)
     } else {
-      HStack(spacing: 24) {
+      HStack(spacing: landscapeColumnGap) {
         coverFlow(coverSize: compactLandscapeCoverSize(containerWidth: containerWidth))
 
-        VStack(spacing: 16) {
-          Spacer()
-          songLabel(inlineHistoryTime: true)
-          liveIndicator()
-          Spacer()
-          PlaybackControlsView(
-            viewModel: viewModel, contrastDarkFade: playbackControlsContrastFade)
-          volumeControl()
-          Spacer()
+        controlsCard(attachedTo: .trailing) {
+          VStack(spacing: 16) {
+            Spacer()
+            songLabel(inlineHistoryTime: true, maxLines: 1, contrastOverride: cardContrast)
+            liveIndicator()
+            Spacer()
+            PlaybackControlsView(
+              viewModel: viewModel, contrastDarkFade: cardContrastDarkFade)
+            volumeControl()
+            Spacer()
+          }
+          .padding(.horizontal, 16)
+          .padding(.top, landscapeCardTopInset)
         }
       }
-      .padding()
+      // Leading + top only: the card is flush to the trailing and bottom edges, as in portrait.
+      .padding([.leading, .top])
+      .frame(height: containerHeight)
     }
   }
 

@@ -34,6 +34,10 @@ struct VolumeSliderView: View {
     .padding(.horizontal)
   }
 
+  /// Point size of the Android speaker glyphs, and the height the slider between them is pinned to
+  /// so the track and the glyphs share one centre line.
+  private var speakerGlyphSize: CGFloat { 22 }
+
   /// A speaker glyph flanking the slider. SF Symbol on Apple; on Android the `speaker.*` symbols
   /// aren't in SkipUI's core-icon map, so draw the matching extended Material volume icon.
   @ViewBuilder
@@ -41,7 +45,7 @@ struct VolumeSliderView: View {
     #if os(Android)
       // `.secondary` doesn't adapt to the forced scheme on Android (stays dark, invisible on the
       // dark branded background), so tint with an explicit adaptive gray — matches the controls row.
-      AndroidIcon(symbol: android, size: 22, tint: secondaryControlColor)
+      AndroidIcon(symbol: android, size: speakerGlyphSize, tint: secondaryControlColor)
     #else
       Image(systemName: systemName)
         .foregroundStyle(.secondary)
@@ -72,12 +76,25 @@ struct VolumeSliderView: View {
       // nothing so the phone-only VolumeSliderView still compiles into the tvOS binary.
       EmptyView()
     #else
-      // macOS: no system-volume view — fall back to the app-relative player volume.
+      // macOS and Android: no system-volume view — fall back to the app-relative player volume.
       Slider(
         value: Binding(get: { viewModel.volume }, set: { viewModel.setVolume($0) }),
         in: 0...1
       )
-      .tint(Color.secondary)
+      #if os(Android)
+        // SkipUI forwards the tint to Compose as the thumb and active-track colors, and `.secondary`
+        // does not follow the forced scheme on Android (see `speakerIcon`), so it would leave both
+        // too dark to read on the card's charcoal surface in dark mode. Use the same adaptive gray
+        // as the speaker glyphs flanking it.
+        .tint(secondaryControlColor)
+        // Compose gives the slider a touch target taller than its track and draws the track
+        // top-biased within it, so at its natural height the track floats above the centre-aligned
+        // speaker glyphs and crowds the tray above. Constraining the frame to the glyph height
+        // leaves no vertical slack for that bias — the same reason the iOS branch pins its frame.
+        .frame(height: speakerGlyphSize)
+      #else
+        .tint(Color.secondary)
+      #endif
     #endif
   }
 }
