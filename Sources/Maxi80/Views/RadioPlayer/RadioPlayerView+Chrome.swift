@@ -9,8 +9,18 @@ extension RadioPlayerView {
   /// the secondary line, and the browsed entry's air time — placed per `inlineHistoryTime`, since
   /// portrait and landscape have opposite vertical budgets. `SongLabelView` renders all three; this
   /// wrapper supplies the phone's sizes/contrast and the Android tear workaround below.
+  ///
+  /// `inlineHistoryTime` and `maxLines` are independent, because the layouts need them in different
+  /// combinations: the phone's landscape column is short enough to want both the inline air time and
+  /// a one-line cap, while the expanded landscape column has the height for a third air-time line but
+  /// still wants the cap, since a constant label height is what keeps the column from resizing the
+  /// height-linked row it shares with the carousel.
   @ViewBuilder
-  func songLabel(inlineHistoryTime: Bool = false) -> some View {
+  func songLabel(
+    inlineHistoryTime: Bool = false,
+    maxLines: Int = 2,
+    contrastOverride: ContrastStyle? = nil
+  ) -> some View {
     // Both platforms render the label's color INSTANTLY (no fade): the title/artist STRING
     // changes in the same view update as the contrast decision, so the new text appears in
     // its final color from its first frame — matching iOS. Fading is reserved for elements
@@ -30,7 +40,8 @@ extension RadioPlayerView {
       secondarySize: subtitleFontSize,
       airTimeSize: airTimeFontSize,
       inlineAirTime: inlineHistoryTime,
-      contrast: contrast
+      maxLines: maxLines,
+      contrast: contrastOverride ?? contrast
     )
     .padding(.horizontal, 20)
 
