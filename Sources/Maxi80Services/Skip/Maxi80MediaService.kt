@@ -13,9 +13,11 @@ import androidx.media3.common.C
 import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Metadata
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.extractor.metadata.icy.IcyInfo
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaController
@@ -279,6 +281,57 @@ class Maxi80MediaService : MediaLibraryService() {
 
     private var session: MediaLibrarySession? = null
 
+    /**
+     * Service-owned ICY listener, so live song text reaches the car card even when the app UI has
+     * never opened (issue #61).
+     *
+     * WHY the service needs its own: the native `MetadataPlayerListener` is attached by
+     * `androidPlay()` / `syncWithExternalPlayback()`, both of which live in the app-side Swift and
+     * run only once the app UI exists. On an Android Auto cold start the service + shared player
+     * stream entirely on their own, so ICY events were dropped and the card stayed on the static
+     * "Maxi 80 / Live" placeholder until the app was opened once.
+     *
+     * Coexists with the native listener rather than replacing it: `onMetadata`/`IcyInfo` is a
+     * Player-pipeline event delivered to EVERY listener registered on the player in this process, so
+     * both fire. The native side then overwrites this item with properly-parsed artist/title —
+     * last-writer-wins on the same string is harmless.
+     *
+     * Deliberately DISPLAY-ONLY: it puts the raw "ARTIST - TITLE" line in the title and the station
+     * name in the artist, and does NOT split it. Splitting would duplicate MetadataParser's contract
+     * (which must match the backend's algorithm exactly — spaced " - " LAST, else bare "-" FIRST) in
+     * a second language, where it would drift and silently break artwork matching. Slight
+     * inconsistency with in-app rendering for the app-never-opened window is the cheaper trade.
+     */
+    private val icyListener = object : Player.Listener {
+        override fun onMetadata(metadata: Metadata) {
+            for (index in 0 until metadata.length()) {
+                val entry = metadata.get(index)
+                if (entry is IcyInfo) {
+                    val title = entry.title
+                    if (!title.isNullOrEmpty()) applyIcyTitle(title)
+                }
+            }
+        }
+    }
+
+    /**
+     * Write a raw ICY line onto the session's current media item so the notification / lock screen /
+     * Auto card shows it. Reuses the current item's artwork URI so this never clears artwork the
+     * native side may already have published.
+     */
+    private fun applyIcyTitle(rawTitle: String) {
+        val player = session?.player ?: return
+        val current = player.currentMediaItem ?: return
+        val metadata = current.mediaMetadata.buildUpon()
+            .setTitle(rawTitle)
+            .setArtist("Maxi 80")
+            .build()
+        player.replaceMediaItem(
+            player.currentMediaItemIndex,
+            current.buildUpon().setMediaMetadata(metadata).build()
+        )
+    }
+
     companion object {
         // Versioned channel ID. Android freezes a channel's importance at creation time: once a
         // channel exists, later createNotificationChannel() calls with a lower/higher importance are
@@ -491,7 +544,11 @@ class Maxi80MediaService : MediaLibraryService() {
         // Wrap the shared player so every transport "pause" (notification, lock screen, Android Auto,
         // media button) becomes a true STOP + live-edge reconnect on the next play — matching the
         // in-app button. See StopOnPausePlayer.
-        val player = StopOnPausePlayer(SharedAudioPlayer.shared(applicationContext), buildStreamItem())
+        // Listen on the RAW shared player, not the StopOnPausePlayer wrapper: ICY arrives on the
+        // player pipeline, and the wrapper's presented state is a remap for the car's transport.
+        val sharedPlayer = SharedAudioPlayer.shared(applicationContext)
+        sharedPlayer.addListener(icyListener)
+        val player = StopOnPausePlayer(sharedPlayer, buildStreamItem())
         session = MediaLibrarySession.Builder(this, player, libraryCallback)
             .apply {
                 // Tapping the notification / lock-screen card returns the user to the app — this was
@@ -560,6 +617,7 @@ class Maxi80MediaService : MediaLibraryService() {
      * launch always starts fresh. Everything is already torn down above, so this loses nothing.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
+        SharedAudioPlayer.current?.removeListener(icyListener)
         MediaControllerHolder.release()
         session?.release()
         session = null
@@ -607,6 +665,10 @@ class Maxi80MediaService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        // Detach from the SHARED player, which outlives this service (see the note below on why the
+        // player itself is never released here) — otherwise every service destroy/recreate cycle
+        // would stack another listener on the same long-lived player.
+        SharedAudioPlayer.current?.removeListener(icyListener)
         // Release ONLY the session, never the shared player. media3's MediaSessionService stops
         // (and destroys) the service whenever playback pauses; if this also released the shared
         // player, every pause would tear the player down and the next play would build a fresh one
