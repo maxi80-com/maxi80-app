@@ -9,7 +9,6 @@ import Foundation
     import android.os.Handler
     import android.os.Looper
     import android.provider.Settings
-    import androidx.media3.common.AudioAttributes
     import androidx.media3.common.C
     import androidx.media3.common.Metadata
     import androidx.media3.common.Player
@@ -146,20 +145,11 @@ import Foundation
         }
         self._exoPlayer = exoPlayer
 
-        // Configure ExoPlayer to manage audio focus internally. Called unconditionally on every
-        // play: setAudioAttributes with unchanged attributes is idempotent, and doing it here
-        // guarantees focus handling is (re)wired against whatever ExoPlayer instance is current —
-        // even one rebuilt after SharedAudioPlayer.releaseShared(). A per-AudioStreamPlayer
-        // "already configured" flag could go stale against a fresh player and silently skip this,
-        // bringing back the permanent-wedge bug. ExoPlayer then requests focus on play(), ducks/
-        // pauses on transient loss, and resumes on regain — replacing the manual AudioFocusRequest
-        // management that could leave orphaned requests, making the system immediately fire
-        // AUDIOFOCUS_LOSS back and wedge the player permanently.
-        let audioAttributes = AudioAttributes.Builder()
-          .setUsage(C.USAGE_MEDIA)
-          .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-          .build()
-        exoPlayer.setAudioAttributes(audioAttributes, /* handleAudioFocusInternally: */ true)
+        // Audio focus and attributes are NOT configured here: they are baked into the player by
+        // `SharedAudioPlayer.shared()`, so every entry path gets them — including the Android Auto
+        // cold start, where this method never runs and a play-time-only configuration left the
+        // stream playing silently with no focus request. A rebuilt player (releaseShared()) is
+        // configured by its own construction, so there is nothing to re-apply on each play.
 
         // Attach the metadata listener DIRECTLY to the shared ExoPlayer once. This must stay on the
         // ExoPlayer itself (not the MediaController): `onMetadata`/`IcyInfo` (the live SHOUTcast
