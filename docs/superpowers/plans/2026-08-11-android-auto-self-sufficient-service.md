@@ -669,7 +669,7 @@ The Task 1 fix cannot be unit-tested (Android-only ExoPlayer construction), so t
 - Consumes: the behavior changes from Tasks 1–3.
 - Produces: a documented procedure; no code symbols.
 
-- [ ] **Step 1: Write the procedure document**
+- [x] **Step 1: Write the procedure document**
 
 Create `docs/testing/android-auto-dhu-procedure.md` with exactly this content:
 
@@ -809,7 +809,7 @@ Record, for each of A–E: pass/fail, the device, the build number from `Skip.en
 necessary but **not sufficient for the auto-resume path** — that one needs a real car.
 ````
 
-- [ ] **Step 2: Verify the document renders and links are accurate**
+- [x] **Step 2: Verify the document renders and links are accurate**
 
 Confirm the file exists and the referenced paths are real:
 
@@ -827,7 +827,7 @@ grep -n "PRODUCT_BUNDLE_IDENTIFIER\|applicationId\|ANDROID_PACKAGE" Skip.env
 
 If it is not `com.stormacq.android.maxi80`, correct every occurrence in the document.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/testing/android-auto-dhu-procedure.md
