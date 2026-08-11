@@ -37,6 +37,29 @@ adb -s "$DEV" shell getprop ro.product.model    # expect SM-A075F
 The DHU port forward requires **USB** data mode; wireless adb is fine for `logcat`/`dumpsys` but
 cannot carry the head-unit transport.
 
+## Pre-flight: confirm you are testing the build you think you are
+
+`Skip.env`'s `CURRENT_PROJECT_VERSION` is bumped per release, not per build, so a fixed and an
+unfixed debug APK routinely carry the **same versionCode and versionName**. `versionName` therefore
+proves nothing. Check for the code itself instead — grep the packaged dex for a symbol the fix
+introduced:
+
+```bash
+APK=.build/Android/app/outputs/apk/debug/app-debug.apk
+T=$(mktemp -d) && (cd "$T" && unzip -qo "$OLDPWD/$APK" 'classes*.dex' &&
+  for d in classes*.dex; do
+    strings "$d" | grep -q applyIcyTitle && echo "Task 2 (#61 ICY): $d"
+    strings "$d" | grep -q androidDrawableName && echo "Task 3 (#80 cover): $d"
+  done)
+$(ls ~/Library/Android/sdk/build-tools/*/aapt2 | tail -1) dump permissions "$APK" | grep WAKE_LOCK
+```
+
+All three must print. `WAKE_LOCK` is the Task 1 marker — `setWakeMode` requires it, so its absence
+means the audio-focus change is not in this APK.
+
+This is the known "stale Kotlin half" trap in another guise: `skip app launch` can install a fresh
+`.so` alongside stale dex, so verify **after** installing, not just before.
+
 ## One-time setup
 
 ```bash
