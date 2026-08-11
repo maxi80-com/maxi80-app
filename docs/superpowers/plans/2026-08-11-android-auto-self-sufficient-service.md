@@ -365,25 +365,22 @@ This is issue #80's option 1 (drawables), chosen over option 2 (an Android mater
 
 - [x] **Step 1: Generate the Android drawables**
 
-Android resource names allow only lowercase letters, digits and underscores, so `NoCover-25ans-2` becomes `nocover_25ans_2`. The source PNGs are 1440² and 0.77–1.5 MB each; downscale to 1024² to match `media_placeholder.png` (1024², 315 KB) — plenty for a notification and the car's artwork surface, and it keeps seven extra copies off the APK budget.
+Android resource names allow only lowercase letters, digits and underscores, so `NoCover-25ans-2` becomes `nocover_25ans_2`. The source PNGs are 1440²; downscale to 1024² to match `media_placeholder.png` (1024², 315 KB) — plenty for a notification and the car's artwork surface, and it keeps seven extra copies off the APK budget.
 
-Run:
+**Do NOT use `sips -Z`.** Three of the seven sources (`NoCover-25ans-2/3/4`) are 8-bit *palette* PNGs; `sips` decodes them to truecolor, so the 1024² output comes out **larger than the 1440² source** (872 KB → 1.92 MB) and the seven drawables cost 8.0 MB instead of 3.9 MB. Preserve each source's color depth instead — re-quantizing a palette source back to 256 colors is not a fidelity loss, since 256 colors is all the shipped iOS asset has.
+
+Run the committed generator, which resizes, preserves palette depth, and runs `optipng -o2`:
 
 ```bash
 cd /Users/sst/code/maxi80/maxi80-2026/Maxi80
-for src in Sources/Maxi80/Resources/Assets.xcassets/NoCover-*.imageset/*.png; do
-  base=$(basename "$src" .png)                       # e.g. nocover-25ans-2
-  dest="Android/app/src/main/res/drawable-nodpi/$(echo "$base" | tr '-' '_').png"
-  sips -Z 1024 "$src" --out "$dest" >/dev/null
-  echo "$dest  $(du -h "$dest" | cut -f1)"
-done
+python3 brand/make-android-drawables.py
 ```
 
-Expected: seven files printed — `nocover_a.png`, `nocover_b.png`, `nocover_c.png`, `nocover_25ans.png`, `nocover_25ans_2.png`, `nocover_25ans_3.png`, `nocover_25ans_4.png`. Confirm each is 1024²:
+Expected: seven files, ~3.9 MB total — `nocover_a.png`, `nocover_b.png`, `nocover_c.png`, `nocover_25ans.png`, `nocover_25ans_2.png`, `nocover_25ans_3.png`, `nocover_25ans_4.png`. Confirm the dimensions and that the palette sources stayed `8-bit colormap`:
 
 ```bash
 for f in Android/app/src/main/res/drawable-nodpi/nocover_*.png; do
-  echo -n "$f: "; sips -g pixelWidth -g pixelHeight "$f" | tail -2 | tr '\n' ' '; echo
+  printf "%-24s %9s  %s\n" "$(basename $f)" "$(stat -f%z $f)" "$(file -b $f)"
 done
 ```
 
