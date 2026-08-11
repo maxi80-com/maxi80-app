@@ -42,8 +42,13 @@ import Foundation
         // MARK: - Now Playing Info
 
         /// Update the now-playing info center with current metadata.
+        ///
+        /// `artworkAssetName` is deliberately unused: the coordinator has already materialized the
+        /// generic cover to a `file://` URL in `artworkURL` here, so the asset name carries nothing
+        /// this path needs — it exists for Android, which has no image APIs to make that URL.
         func platformUpdateNowPlaying(
-          artist: String, title: String, artworkURL: String?, isPlaying: Bool
+          artist: String, title: String, artworkURL: String?, artworkAssetName: String?,
+          isPlaying: Bool
         ) {
           setupRemoteCommands()
 

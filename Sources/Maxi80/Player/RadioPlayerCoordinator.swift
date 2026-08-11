@@ -586,10 +586,11 @@ public final class RadioPlayerCoordinator {
     // On CarPlay, substitute the bundled generic cover for a missing remote one so the car's
     // Now Playing template is never blank. Both sinks load artwork by URL and accept a `file://`
     // URL, so the placeholder rides the same path.
-    let publishedArtworkURL =
-      shouldPublishPlaceholderArtwork(forArtworkURL: artworkURL)
-      ? placeholderArtworkFileURL
-      : artworkURL
+    // One decision, two sinks: Apple platforms publish a materialized `file://` URL, Android has no
+    // image APIs to make one and resolves the asset NAME to a drawable instead (issue #80). Deriving
+    // both from the same gate is what keeps them from disagreeing.
+    let substitutingPlaceholder = shouldPublishPlaceholderArtwork(forArtworkURL: artworkURL)
+    let publishedArtworkURL = substitutingPlaceholder ? placeholderArtworkFileURL : artworkURL
 
     nowPlayingPublisher.activate()
     nowPlayingPublisher.update(
@@ -597,6 +598,10 @@ public final class RadioPlayerCoordinator {
       artist: artist,
       title: title,
       artworkURL: publishedArtworkURL,
+      // The cover the now slot is actually displaying. Read off the current entry via
+      // `nowPlaceholderCover` — never re-rolled here, or the card and the carousel would show
+      // different covers for the same song.
+      artworkAssetName: substitutingPlaceholder ? nowPlaceholderCover : nil,
       isPlaying: isPlaying
     )
   }

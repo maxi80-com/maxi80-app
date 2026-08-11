@@ -198,7 +198,7 @@ The ICY metadata listener is attached by `androidPlay()`/`syncWithExternalPlayba
 
 **Design decision — do NOT reimplement `MetadataParser` in Kotlin.** The client parser must match the backend's split algorithm exactly (spaced `" - "` on its LAST occurrence, else bare `-` on its FIRST); a second copy in Kotlin would drift and silently break artwork matching. This listener is **display-only** and puts the raw ICY line in the *title* with the station name as artist. Once the app opens, the native writeback (`platformUpdateNowPlaying` → `replaceMediaItem`) overwrites it with the properly-parsed artist/title. Last-writer-wins on the same media item is harmless.
 
-- [ ] **Step 1: Add the imports**
+- [x] **Step 1: Add the imports**
 
 In `Sources/Maxi80Services/Skip/Maxi80MediaService.kt`, add to the import block:
 
@@ -207,7 +207,7 @@ import androidx.media3.common.Metadata
 import androidx.media3.extractor.metadata.icy.IcyInfo
 ```
 
-- [ ] **Step 2: Add the listener field and the writeback helper**
+- [x] **Step 2: Add the listener field and the writeback helper**
 
 Inside `class Maxi80MediaService`, directly below `private var session: MediaLibrarySession? = null`, add:
 
@@ -264,7 +264,7 @@ Inside `class Maxi80MediaService`, directly below `private var session: MediaLib
     }
 ```
 
-- [ ] **Step 3: Register the listener in `onCreate`**
+- [x] **Step 3: Register the listener in `onCreate`**
 
 In `onCreate`, the shared player is currently created inline inside the `StopOnPausePlayer(...)` call at line 494. Split that so the raw player can be listened to. Replace:
 
@@ -282,7 +282,7 @@ with:
         val player = StopOnPausePlayer(sharedPlayer, buildStreamItem())
 ```
 
-- [ ] **Step 4: Unregister in `onDestroy` and `onTaskRemoved`**
+- [x] **Step 4: Unregister in `onDestroy` and `onTaskRemoved`**
 
 In `onDestroy`, before `session?.release()`, add:
 
@@ -302,17 +302,17 @@ In `onTaskRemoved`, before `MediaControllerHolder.release()`, add the same line:
 **Note on the accessor:** `SharedAudioPlayer.current` is a Swift computed property (`static var current: ExoPlayer?`), which Skip transpiles to a Kotlin *function* `current()`. Verify the emitted form before trusting either spelling: after running `skip android build`, grep the generated Kotlin with
 `grep -rn "fun current\|val current" .build/*/Maxi80Services/skipstone/ 2>/dev/null | head` (or search the generated `SharedAudioPlayer.kt` under `.build`). Use whichever the transpiler produced. If it resolves awkwardly, the fallback is to capture `sharedPlayer` from Step 3 in a `private var listenedPlayer: Player?` field and call `listenedPlayer?.removeListener(icyListener)` — this avoids the accessor entirely and is equally correct.
 
-- [ ] **Step 5: Verify both halves build**
+- [x] **Step 5: Verify both halves build**
 
 Run: `make build-android`
 Expected: `BUILD SUCCESSFUL`. A Kotlin compile error here most likely means the `SharedAudioPlayer.current` accessor spelling from Step 4 is wrong — apply the fallback in that step.
 
-- [ ] **Step 6: Verify the host suite is untouched**
+- [x] **Step 6: Verify the host suite is untouched**
 
 Run: `make test`
 Expected: PASS, exit 0 (this task changed only Kotlin).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Sources/Maxi80Services/Skip/Maxi80MediaService.kt
@@ -363,7 +363,7 @@ This is issue #80's option 1 (drawables), chosen over option 2 (an Android mater
   - `NowPlayingController.updateNowPlaying(artist:title:artworkURL:artworkAssetName:isPlaying:)` — `artworkAssetName: String?`
   - `NowPlayingController.androidDrawableName(for:) -> String?` — maps an asset name to a drawable resource name
 
-- [ ] **Step 1: Generate the Android drawables**
+- [x] **Step 1: Generate the Android drawables**
 
 Android resource names allow only lowercase letters, digits and underscores, so `NoCover-25ans-2` becomes `nocover_25ans_2`. The source PNGs are 1440² and 0.77–1.5 MB each; downscale to 1024² to match `media_placeholder.png` (1024², 315 KB) — plenty for a notification and the car's artwork surface, and it keeps seven extra copies off the APK budget.
 
@@ -389,7 +389,7 @@ done
 
 They must be **raster PNGs** — this is the #41 trap: media3's `RawResourceDataSource`/`ImageDecoder` cannot rasterize an adaptive-icon XML, which is why `media_placeholder` is a PNG.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `Tests/Maxi80Tests/AndroidPlaceholderArtworkTests.swift`:
 
@@ -450,12 +450,12 @@ struct AndroidPlaceholderArtworkTests {
 }
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `make test 2>&1 | tail -30`
 Expected: FAIL — compile error, because `FakeNowPlayingPublisher.Update` has no `artworkAssetName` member. That is the correct first failure; the next steps add the parameter through the seam.
 
-- [ ] **Step 4: Add `artworkAssetName` to the publisher protocol**
+- [x] **Step 4: Add `artworkAssetName` to the publisher protocol**
 
 In `Sources/Maxi80/Services/NowPlayingPublishing.swift`, change the protocol requirement to:
 
@@ -483,7 +483,7 @@ In the same file, update `NowPlayingSession.update(...)` (inside `#if !SKIP && c
 
 Leave that method's body unchanged — Apple platforms materialize a real `file://` URL, so `artworkURL` is already populated and the asset name adds nothing.
 
-- [ ] **Step 5: Forward it through the bridged publisher**
+- [x] **Step 5: Forward it through the bridged publisher**
 
 In `Sources/Maxi80/Services/BridgedNowPlayingPublisher.swift`, replace the `update` method with:
 
@@ -498,7 +498,7 @@ In `Sources/Maxi80/Services/BridgedNowPlayingPublisher.swift`, replace the `upda
   }
 ```
 
-- [ ] **Step 6: Add the parameter to the bridged controller and both platform implementations**
+- [x] **Step 6: Add the parameter to the bridged controller and both platform implementations**
 
 In `Sources/Maxi80Services/NowPlayingController.swift`, add `artworkAssetName: String?` to `updateNowPlaying` and thread it into the platform dispatch. Read the file first and match its existing dispatch shape (`#if SKIP` / `#elseif os(iOS) || os(tvOS)` / `#elseif os(macOS)`), adding the parameter to each branch's call.
 
@@ -546,7 +546,7 @@ Add this helper to the same extension:
 
 In `Sources/Maxi80Services/Platform/iOS/IOSNowPlayingController.swift`, add `artworkAssetName: String?` to `platformUpdateNowPlaying`'s signature and ignore it (iOS already receives a materialized `file://` URL). Add a one-line comment saying so. Do the same for the macOS implementation if it declares its own `platformUpdateNowPlaying` — check with `grep -rn "platformUpdateNowPlaying" Sources/Maxi80Services/`.
 
-- [ ] **Step 7: Pass the asset name from the coordinator**
+- [x] **Step 7: Pass the asset name from the coordinator**
 
 In `Sources/Maxi80/Player/RadioPlayerCoordinator.swift`, the `publishNowPlaying(artist:title:artworkURL:isPlaying:)` method (line 583) currently reads:
 
@@ -589,7 +589,7 @@ Hoist the existing gate — `shouldPublishPlaceholderArtwork(forArtworkURL:)`, d
     )
 ```
 
-- [ ] **Step 8: Record the asset name in the fake**
+- [x] **Step 8: Record the asset name in the fake**
 
 In `Tests/Maxi80Tests/Fakes/FakeNowPlayingPublisher.swift`, add `let artworkAssetName: String?` to `struct Update` (after `artworkURL`), and update the `update` method:
 
@@ -606,18 +606,18 @@ In `Tests/Maxi80Tests/Fakes/FakeNowPlayingPublisher.swift`, add `let artworkAsse
   }
 ```
 
-- [ ] **Step 9: Fix the other call sites the new parameter breaks**
+- [x] **Step 9: Fix the other call sites the new parameter breaks**
 
 Run: `make test 2>&1 | grep -E "error:" | head -20`
 
 Update every reported call site — expect `Tests/Maxi80Tests/NowPlayingPublishingTests.swift` (it constructs `Update` values and/or calls `update(...)` directly) and possibly `CarPlayNowPlayingTests.swift`. Add `artworkAssetName: nil` to existing expectations, since those tests were written for the artwork-URL path and their behavior is unchanged.
 
-- [ ] **Step 10: Run the tests to verify they pass**
+- [x] **Step 10: Run the tests to verify they pass**
 
 Run: `make test`
 Expected: PASS, exit 0, with `AndroidPlaceholderArtworkTests` among the suites run. If `coverlessSongPublishesItsOwnCoverAssetName` fails with a nil `artworkAssetName`, the Step 7 gate is wrong — the coordinator is not treating this as a placeholder substitution; re-read the publish method and use its real condition.
 
-- [ ] **Step 11: Verify the Android build**
+- [x] **Step 11: Verify the Android build**
 
 Run: `make build-android`
 Expected: `BUILD SUCCESSFUL`. Confirm the drawables were packaged:
@@ -628,7 +628,7 @@ unzip -l .build/Android/app/outputs/apk/debug/app-debug.apk | grep nocover
 
 Expected: seven `res/...nocover_*.png` entries (the exact res path may be shortened by AAPT).
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add Android/app/src/main/res/drawable-nodpi/nocover_*.png \

@@ -21,8 +21,15 @@ public protocol NowPlayingPublishing: AnyObject {
   /// Begin publishing the session to the system (Lock Screen, Control Center, accessories).
   func activate()
   /// Update the currently-playing metadata.
+  ///
+  /// `artworkAssetName` is the bundled asset name of the generic cover being displayed, passed
+  /// alongside `artworkURL` because Android cannot produce a URL for it: it has no platform image
+  /// APIs, so `materializePlaceholderArtwork` returns nil there and the Android sink resolves this
+  /// name to an `android.resource://…/drawable/…` URI instead (issue #80). Nil when the song has
+  /// real remote artwork. Apple sinks ignore it — they already have a `file://` URL.
   func update(
-    stationName: String, artist: String, title: String, artworkURL: String?, isPlaying: Bool)
+    stationName: String, artist: String, title: String, artworkURL: String?,
+    artworkAssetName: String?, isPlaying: Bool)
   /// Update only the play/pause state.
   func updatePlaybackState(isPlaying: Bool)
 }
@@ -125,7 +132,8 @@ public protocol NowPlayingPublishing: AnyObject {
     }
 
     func update(
-      stationName: String, artist: String, title: String, artworkURL: String?, isPlaying: Bool
+      stationName: String, artist: String, title: String, artworkURL: String?,
+      artworkAssetName: String?, isPlaying: Bool
     ) {
       self.stationName = stationName
       // Preserves the exact format the coordinator built inline before unification.

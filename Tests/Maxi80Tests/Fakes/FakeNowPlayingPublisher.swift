@@ -11,6 +11,7 @@ final class FakeNowPlayingPublisher: NowPlayingPublishing {
     let artist: String
     let title: String
     let artworkURL: String?
+    let artworkAssetName: String?
     let isPlaying: Bool
   }
 
@@ -35,11 +36,12 @@ final class FakeNowPlayingPublisher: NowPlayingPublishing {
   }
 
   func update(
-    stationName: String, artist: String, title: String, artworkURL: String?, isPlaying: Bool
+    stationName: String, artist: String, title: String, artworkURL: String?,
+    artworkAssetName: String?, isPlaying: Bool
   ) {
     let update = Update(
       stationName: stationName, artist: artist, title: title, artworkURL: artworkURL,
-      isPlaying: isPlaying)
+      artworkAssetName: artworkAssetName, isPlaying: isPlaying)
     updates.append(update)
     calls.append(.update(update))
   }
