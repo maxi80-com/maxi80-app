@@ -33,6 +33,7 @@ keystore.properties
 .skip/
 Android/.gradle
 Android/.kotlin/
+Android/app/release
 
 # API secrets — never commit real keys
 Sources/Maxi80/Resources/Configuration.plist
