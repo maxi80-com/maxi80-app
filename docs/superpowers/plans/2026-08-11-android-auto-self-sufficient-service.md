@@ -6,6 +6,8 @@
 
 **Architecture:** All three symptoms share one root cause: everything the car needs (audio focus, the ICY metadata listener, per-song artwork) is wired only in the native Swift app-side `androidPlay()` / `RadioPlayerCoordinator`, which never runs on an Android Auto cold start. The fix moves the *player-intrinsic* concerns (audio focus, wake mode) to where the player is **constructed** (`SharedAudioPlayer.shared`), so every entry path inherits them, and gives the service its own ICY listener so the car card is populated without the app. Artwork is fixed by shipping the generic covers as Android drawables and resolving a `android.resource://` URI on the Android publish path.
 
+> **⚠️ Architecture note (superseded):** The "service-owned ICY listener" approach above was the original plan but was replaced during implementation. The shipped solution bootstraps the **native Swift pipeline** at process start instead (`Maxi80AppDelegate.onInit()` → `SharedPlayer.handleProcessStart()`), which lets the existing `MetadataParser` + `ArtworkService` run in the service-only process. The service-owned Kotlin ICY listener was subsequently **removed** because having two writers on the same MediaItem caused a last-writer-wins regression on pause→play reconnects (the Kotlin write was raw/unsplit; the native side skipped unchanged metadata; the card degraded). The shipped architecture has one writer — the native pipeline — and zero Kotlin parsing or artwork logic. Do not reintroduce the Kotlin listener.
+
 **Tech Stack:** Swift 6 (Skip transpiled module), Kotlin (raw, `Maxi80MediaService.kt`), androidx.media3 1.9.4 (exoplayer + session), Swift Testing, Gradle, Android Auto Desktop Head Unit (DHU).
 
 ## Global Constraints

@@ -54,17 +54,22 @@ present or not — a false negative that reads exactly like a stale build.
 APK=.build/Android/app/outputs/apk/debug/app-debug.apk
 T=$(mktemp -d) && (cd "$T" && unzip -qo "$OLDPWD/$APK" 'classes*.dex' 'lib/arm64-v8a/libMaxi80.so' &&
   for d in classes*.dex; do
-    strings "$d" | grep -q applyIcyTitle && echo "Task 2 (#61 ICY, transpiled): $d"
     strings "$d" | grep -q androidDrawableName && echo "Task 3 (#80 cover, transpiled): $d"
   done
-  # Cold-start fix: native module → mangled Swift symbol in the .so, NOT the dex.
+  # Cold-start fix lives in the native module (Maxi80 is Fuse/native → libMaxi80.so, NOT the dex).
   strings lib/arm64-v8a/libMaxi80.so | grep -q handleProcessStart &&
-    echo "Cold-start pipeline (#61/#80, native): libMaxi80.so")
+    echo "Cold-start pipeline (#61/#80, native): libMaxi80.so"
+  # Absence check: the removed Kotlin ICY writer must NOT be present.
+  for d in classes*.dex; do
+    strings "$d" | grep -q applyIcyTitle && echo "STALE: applyIcyTitle still in $d (old build)"
+  done)
 $(ls ~/Library/Android/sdk/build-tools/*/aapt2 | tail -1) dump permissions "$APK" | grep WAKE_LOCK
 ```
 
-All four must print. `WAKE_LOCK` is the Task 1 marker — `setWakeMode` requires it, so its absence
-means the audio-focus change is not in this APK.
+Three lines must print (one per dex for `androidDrawableName`, one for `libMaxi80.so`, one for
+`WAKE_LOCK`). Any `STALE` line is a regression — `applyIcyTitle` was removed to prevent the
+two-writer race. `WAKE_LOCK` is the audio-focus marker — its absence means the focus change is not
+in this APK.
 
 This is the known "stale Kotlin half" trap in another guise: `skip app launch` can install a fresh
 `.so` alongside stale dex, so verify **after** installing, not just before.

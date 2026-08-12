@@ -32,22 +32,38 @@ struct AndroidPlaceholderArtworkTests {
     #expect(published?.artworkAssetName == coordinator.nowPlaceholderCover)
   }
 
-  @Test("a song with real artwork publishes no placeholder asset name")
+  @Test("when a placeholder asset name is published it always matches the displayed cover")
   @MainActor
-  func songWithRealArtworkPublishesNoAssetName() async {
+  func publishedAssetNameAlwaysMatchesDisplayedCover() async {
+    // The guard this tests: the coordinator must never publish an asset name that disagrees with
+    // the cover the carousel is showing. A fresh roll here instead of reading `nowPlaceholderCover`
+    // would make the card and carousel show different covers for the same song.
+    //
+    // Note: `ArtworkService.fetchArtwork` does a real `URLSession` download, so a host test cannot
+    // produce a non-default `ArtworkResult` without a live HTTP server. Asserting `artworkAssetName
+    // == nil` (the real-artwork branch) therefore requires a protocol seam on `ArtworkService` that
+    // does not currently exist. The invariant testable here — that the published name always matches
+    // the *displayed* cover — is the critical one: a nil case where real artwork is served is
+    // covered by the coordinator's `shouldPublishPlaceholderArtwork` logic (forArtworkURL: non-nil
+    // → substitutingPlaceholder = false → artworkAssetName = nil) and visible in code review.
     let publisher = FakeNowPlayingPublisher()
-    let (coordinator, _) = makeTestCoordinator(
-      nowPlaying: publisher, placeholderArtworkURL: "file:///tmp/sentinel.png")
+    let (coordinator, _) = makeTestCoordinator(nowPlaying: publisher)
 
     coordinator.play()
     await coordinator.handleMetadataChanged("Some Artist - Some Song")
 
-    // With a materialized placeholder URL available, the URL path is used; the asset name is for
-    // platforms that cannot materialize one. Whichever branch wins, the two must not disagree: a
-    // published asset name must always match the displayed cover.
     let published = publisher.updates.last
     #expect(published != nil)
+    // When a name is published it must be the cover the carousel is displaying — never a stale or
+    // re-rolled value that would make the card and carousel disagree.
     if let name = published?.artworkAssetName {
+      #expect(name == coordinator.nowPlaceholderCover)
+    }
+
+    // A second song: the name must follow the new entry's cover, not reuse the first song's.
+    await coordinator.handleMetadataChanged("Other Artist - Other Song")
+    let second = publisher.updates.last
+    if let name = second?.artworkAssetName {
       #expect(name == coordinator.nowPlaceholderCover)
     }
   }
