@@ -11,5 +11,5 @@ build:
         - 'implementation("androidx.media3:media3-extractor:1.9.4")'
         # Supplies androidx.core.app.NotificationCompat, used by Maxi80MediaService to build the
         # MediaStyle foreground/lock-screen notification. Not pulled in transitively by media3.
-        - 'implementation("androidx.core:core-ktx:1.15.0")'
+        - 'implementation("androidx.core:core-ktx:1.16.0")'
         - 'implementation("com.google.guava:guava:31.1-android")'
