@@ -137,6 +137,8 @@ extension RadioPlayerView {
             PlaybackControlsView(
               viewModel: viewModel, contrastDarkFade: cardContrastDarkFade)
 
+            Spacer()
+              
             volumeControl()
 
             Spacer(minLength: 0)
@@ -210,8 +212,9 @@ extension RadioPlayerView {
             Spacer()
             PlaybackControlsView(
               viewModel: viewModel, contrastDarkFade: cardContrastDarkFade)
-            volumeControl()
             Spacer()
+            volumeControl()
+            Spacer(minLength: 0)
           }
           .padding(.horizontal, 16)
           .padding(.top, landscapeCardTopInset)
