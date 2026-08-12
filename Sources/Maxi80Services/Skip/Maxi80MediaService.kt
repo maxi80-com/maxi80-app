@@ -279,6 +279,28 @@ class Maxi80MediaService : MediaLibraryService() {
 
     private var session: MediaLibrarySession? = null
 
+    // NO ICY listener here, deliberately. Song text and artwork on the card are published by the
+    // NATIVE pipeline only — `MetadataPlayerListener` → `MetadataParser` → `ArtworkService` →
+    // `AndroidNowPlayingController.platformUpdateNowPlaying` — which reaches this process even on an
+    // Android Auto cold start with no Activity: the bridge loads the Swift half from
+    // `Application.onCreate`, and `SharedPlayer.handleProcessStart()` builds the pipeline and attaches
+    // that listener there.
+    //
+    // A service-owned display-only listener DID live here (issue #61, when the native side was
+    // reachable only through the app UI). It is gone because a SECOND writer to the same media item
+    // can only ever make the card worse, and did: `onMetadata`/`IcyInfo` is delivered to every
+    // listener in the process, so both fired on each event. This one wrote the raw "ARTIST - TITLE"
+    // line with "Maxi 80" as the artist synchronously; the native side overwrote it ~700 ms later,
+    // after resolving artwork. Then a pause→play reconnect re-delivered ICY for the SAME song, the
+    // native side short-circuited on `metadata unchanged`, nothing overwrote the raw write, and the
+    // card degraded back to exactly the #61 symptom it was added to fix. Its raw text also flashed
+    // before every native publish.
+    //
+    // So: one writer, and it is the one that splits correctly. Do not reintroduce a Kotlin fallback —
+    // splitting here would duplicate `MetadataParser`'s contract (which must match the backend's
+    // algorithm exactly: spaced " - " LAST, else bare "-" FIRST) in a second language, where it would
+    // drift and silently break artwork matching.
+
     companion object {
         // Versioned channel ID. Android freezes a channel's importance at creation time: once a
         // channel exists, later createNotificationChannel() calls with a lower/higher importance are
@@ -491,7 +513,8 @@ class Maxi80MediaService : MediaLibraryService() {
         // Wrap the shared player so every transport "pause" (notification, lock screen, Android Auto,
         // media button) becomes a true STOP + live-edge reconnect on the next play — matching the
         // in-app button. See StopOnPausePlayer.
-        val player = StopOnPausePlayer(SharedAudioPlayer.shared(applicationContext), buildStreamItem())
+        val sharedPlayer = SharedAudioPlayer.shared(applicationContext)
+        val player = StopOnPausePlayer(sharedPlayer, buildStreamItem())
         session = MediaLibrarySession.Builder(this, player, libraryCallback)
             .apply {
                 // Tapping the notification / lock-screen card returns the user to the app — this was

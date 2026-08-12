@@ -12,6 +12,10 @@
     <!-- permissions needed for foreground media playback service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Required by ExoPlayer's setWakeMode(WAKE_MODE_NETWORK) in SharedAudioPlayer: holds a
+         PowerManager + WifiLock while playing so a backgrounded/car session isn't stalled by doze.
+         media3 holds the locks only while READY/BUFFERING with playWhenReady. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Required on Android 13+ (API 33) for the media notification to appear in the
          notification drawer and lock screen. Without this, the foreground service still runs
          but the notification is suppressed from user-visible surfaces. -->

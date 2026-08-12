@@ -25,10 +25,12 @@ final class BridgedNowPlayingPublisher: NowPlayingPublishing {
   /// `stationName` is unused here: the bridged surface carries artist/title directly, whereas the
   /// modern framework models a station with a current program.
   func update(
-    stationName: String, artist: String, title: String, artworkURL: String?, isPlaying: Bool
+    stationName: String, artist: String, title: String, artworkURL: String?,
+    artworkAssetName: String?, isPlaying: Bool
   ) {
     controller.updateNowPlaying(
-      artist: artist, title: title, artworkURL: artworkURL, isPlaying: isPlaying)
+      artist: artist, title: title, artworkURL: artworkURL, artworkAssetName: artworkAssetName,
+      isPlaying: isPlaying)
   }
 
   func updatePlaybackState(isPlaying: Bool) {

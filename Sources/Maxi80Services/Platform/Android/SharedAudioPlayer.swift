@@ -3,6 +3,8 @@ import Foundation
 #if !SKIP_BRIDGE
 
   #if SKIP
+    import androidx.media3.common.AudioAttributes
+    import androidx.media3.common.C
     import androidx.media3.datasource.DefaultHttpDataSource
     import androidx.media3.exoplayer.ExoPlayer
     import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -28,8 +30,30 @@ import Foundation
           .setAllowCrossProtocolRedirects(true)
         let mediaSourceFactory = DefaultMediaSourceFactory(context)
           .setDataSourceFactory(httpDataSourceFactory)
+        // Audio focus is configured HERE, at construction, not on each play. media3's
+        // `ExoPlayer.Builder` never assigns `handleAudioFocus` (verified in 1.9.4:
+        // `ExoPlayer.java`'s Builder ctor sets only `audioAttributes = AudioAttributes.DEFAULT`,
+        // and `ExoPlayerImpl` passes `builder.handleAudioFocus` straight through), so it defaults
+        // to FALSE. Configuring it from `androidPlay()` — the previous design — meant a player
+        // started from ANY other entry point never requested focus at all: on an Android Auto cold
+        // start `StopOnPausePlayer` drives this player directly and `androidPlay()` never runs, so
+        // the stream decoded with no focus request. media3 reported READY + playWhenReady, so the
+        // car rendered a playing button, but the car's audio policy routed no stream — playback was
+        // "playing" and SILENT. (Tell-tale symptom: starting voice dictation forced a real focus
+        // transaction and the already-running AudioTrack became briefly audible.) Building focus
+        // into the player makes every path — in-app, car cold start, media button, auto-resume —
+        // audible by construction, with no entry point left to forget it.
+        let audioAttributes = AudioAttributes.Builder()
+          .setUsage(C.USAGE_MEDIA)
+          .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+          .build()
         let created = ExoPlayer.Builder(context)
           .setMediaSourceFactory(mediaSourceFactory)
+          .setAudioAttributes(audioAttributes, /* handleAudioFocus: */ true)
+          // Hold a network wake lock while playing so a backgrounded car session isn't stalled by
+          // doze. media3 holds the lock only in READY/BUFFERING with playWhenReady, and releases it
+          // on stop, so this costs nothing when idle. Requires WAKE_LOCK in the manifest.
+          .setWakeMode(C.WAKE_MODE_NETWORK)
           .setHandleAudioBecomingNoisy(true)
           .build()
         player = created

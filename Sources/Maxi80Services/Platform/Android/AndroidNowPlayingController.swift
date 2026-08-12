@@ -22,17 +22,28 @@ import Foundation
       /// The session is hosted by Maxi80MediaService; this method publishes metadata to the shared
       /// player, which the service's session reflects automatically.
       func platformUpdateNowPlaying(
-        artist: String, title: String, artworkURL: String?, isPlaying: Bool
+        artist: String, title: String, artworkURL: String?, artworkAssetName: String?,
+        isPlaying: Bool
       ) {
         let metadata = MediaMetadata.Builder()
           .setTitle(title)
           .setArtist(artist)
         if let urlString = artworkURL, !urlString.isEmpty {
           _ = metadata.setArtworkUri(android.net.Uri.parse(urlString))
+        } else if let assetName = artworkAssetName,
+          let drawable = Self.androidDrawableName(for: assetName)
+        {
+          // The song's own generic cover, shipped as an Android drawable (issue #80). Android has no
+          // platform image APIs, so the coordinator cannot materialize a file:// URL for it the way
+          // Apple does — it passes the asset NAME and we resolve the drawable here. Without this the
+          // card fell through to the station logo below while the carousel showed a per-song cover.
+          _ = metadata.setArtworkUri(
+            android.net.Uri.parse(
+              "android.resource://\(context.packageName)/drawable/\(drawable)"))
         } else {
-          // No live cover: fall back to the bundled station logo rather than clearing artwork,
-          // so a coverless song does not flicker the card to no-art. Mirrors the initial MediaItem
-          // built in ExoPlayerStreamPlayer.androidPlay() and Maxi80MediaService.stationArtworkUri().
+          // Genuinely nothing to show (no song yet): the bundled station logo rather than clearing
+          // artwork, so the card does not flicker to no-art. Mirrors the initial MediaItem built in
+          // ExoPlayerStreamPlayer.androidPlay() and Maxi80MediaService.stationArtworkUri().
           // `drawable/media_placeholder` is a dedicated 1024px raster PNG (NOT the small
           // ic_launcher_foreground, and NOT the ic_launcher adaptive-icon XML which media3's
           // RawResourceDataSource can't rasterize — issue #41): high-res so Android Auto's large
@@ -50,6 +61,16 @@ import Foundation
           .setMediaMetadata(metadata.build())
           .build()
         player.replaceMediaItem(player.getCurrentMediaItemIndex(), updated)
+      }
+
+      /// Map a bundled cover asset name (`NoCover-25ans-2`) to its Android drawable resource name
+      /// (`nocover_25ans_2`). Android resource names allow only lowercase, digits and underscores,
+      /// so the asset catalog's mixed case and hyphens are normalized. Returns nil for a name with
+      /// no shipped drawable, so the caller falls back to the station logo rather than publishing a
+      /// URI that media3 cannot resolve.
+      static func androidDrawableName(for assetName: String) -> String? {
+        let normalized = assetName.lowercased().replacingOccurrences(of: "-", with: "_")
+        return normalized.hasPrefix("nocover_") ? normalized : nil
       }
 
       // MARK: - Playback State
