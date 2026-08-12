@@ -44,17 +44,26 @@ unfixed debug APK routinely carry the **same versionCode and versionName**. `ver
 proves nothing. Check for the code itself instead — grep the packaged dex for a symbol the fix
 introduced:
 
+**Grep the right half of the APK.** A Skip hybrid APK has two: transpiled modules
+(`Maxi80Services`) become Kotlin and land in `classes*.dex`, but native/Fuse modules (`Maxi80`)
+compile to machine code in `lib/<abi>/libMaxi80.so` and appear in **neither** the dex nor the
+generated Kotlin. Grepping the dex for a `Sources/Maxi80/` symbol finds nothing whether the fix is
+present or not — a false negative that reads exactly like a stale build.
+
 ```bash
 APK=.build/Android/app/outputs/apk/debug/app-debug.apk
-T=$(mktemp -d) && (cd "$T" && unzip -qo "$OLDPWD/$APK" 'classes*.dex' &&
+T=$(mktemp -d) && (cd "$T" && unzip -qo "$OLDPWD/$APK" 'classes*.dex' 'lib/arm64-v8a/libMaxi80.so' &&
   for d in classes*.dex; do
-    strings "$d" | grep -q applyIcyTitle && echo "Task 2 (#61 ICY): $d"
-    strings "$d" | grep -q androidDrawableName && echo "Task 3 (#80 cover): $d"
-  done)
+    strings "$d" | grep -q applyIcyTitle && echo "Task 2 (#61 ICY, transpiled): $d"
+    strings "$d" | grep -q androidDrawableName && echo "Task 3 (#80 cover, transpiled): $d"
+  done
+  # Cold-start fix: native module → mangled Swift symbol in the .so, NOT the dex.
+  strings lib/arm64-v8a/libMaxi80.so | grep -q handleProcessStart &&
+    echo "Cold-start pipeline (#61/#80, native): libMaxi80.so")
 $(ls ~/Library/Android/sdk/build-tools/*/aapt2 | tail -1) dump permissions "$APK" | grep WAKE_LOCK
 ```
 
-All three must print. `WAKE_LOCK` is the Task 1 marker — `setWakeMode` requires it, so its absence
+All four must print. `WAKE_LOCK` is the Task 1 marker — `setWakeMode` requires it, so its absence
 means the audio-focus change is not in this APK.
 
 This is the known "stale Kotlin half" trap in another guise: `skip app launch` can install a fresh
@@ -124,35 +133,98 @@ Continuing from Test A, without opening the app:
 2. Press **play** again → audio resumes at the live edge, audible.
 3. Repeat twice. **FAIL:** the play button greys out or becomes unresponsive (the
    `STATE_IDLE` → legacy `STATE_NONE` mapping regressing) or audio does not return.
+4. **Read the card's text after every cycle, not just the transport state.** This is what caught the
+   two-writer race: a pause→play reconnect re-delivers ICY for the SAME song, the native side skips
+   it as unchanged, and any second writer's text then stands unopposed. Automatable:
+   ```bash
+   for i in 1 2 3; do
+     adb -s "$DEV" shell cmd media_session dispatch pause; sleep 4
+     adb -s "$DEV" shell cmd media_session dispatch play;  sleep 8
+     adb -s "$DEV" shell dumpsys media_session | grep -oE "description=.*" | head -1
+   done
+   ```
+   **PASS:** every line stays `<TITLE>, <ARTIST>`. **FAIL:** it degrades to
+   `<ARTIST> - <TITLE>, Maxi 80` — a second writer has been reintroduced (see the "NO ICY listener"
+   note in `Maxi80MediaService.onCreate`). A genuine song change mid-loop is fine; judge the shape.
 
-## Test C — live song text without the app (#61)
+## Test C — split song text without the app ever being opened (#61)
+
+The claim under test is that the **native** pipeline (`MetadataParser` → `ArtworkService` → Now
+Playing publish) runs in a process started for the media service alone. It only does because
+`Maxi80AppDelegate.onInit()` calls `SharedPlayer.handleProcessStart()`; before that fix nothing in
+such a process ever touched the composition root, and the card was left to the service's
+display-only Kotlin listener.
+
+Judge that by the **shape** of the text, which is what tells the two publishers apart:
+
+| Publisher | Title | Artist |
+|-----------|-------|--------|
+| Kotlin listener (display-only, the pre-fix state) | whole `ARTIST - TITLE` line | `Maxi 80` |
+| Native pipeline (expected) | title only | artist only |
 
 1. Still without ever opening the app, let playback run through a song change (up to ~4 minutes).
-2. **PASS:** the DHU card's title changes from `Live` to the current song line
-   (raw `ARTIST - TITLE`, with `Maxi 80` as the artist — the service listener is display-only by
-   design and does not split the string).
-   **FAIL:** the card stays on `Maxi 80` / `Live` indefinitely.
-3. Confirm ICY is reaching the service:
+2. **PASS:** the DHU card shows the title alone with the artist on its own line.
+   **FAIL:** the card stays on `Maxi 80` / `Live`, or shows one `ARTIST - TITLE` line with `Maxi 80`
+   as the artist (the Kotlin fallback — the native pipeline did not run).
+3. Read the card's actual fields rather than trusting the rendering. **Wait for
+   `state=PLAYING` first** — a dump taken while `PAUSED`, or after the process died, shows the
+   startup placeholder and reads exactly like the bug:
    ```bash
-   adb -s "$DEV" logcat -d | grep -i "icy\|metadata" | tail -20
+   until adb -s "$DEV" shell dumpsys media_session | grep -q "state=PLAYING"; do sleep 2; done
+   adb -s "$DEV" shell dumpsys media_session | grep -E "description=|state=PLAYING"
    ```
-4. Now open the app on the phone. **PASS:** the card's text switches to properly-split
-   artist/title (the native writeback taking over) and does not flicker back.
+   Expect `description=<TITLE>, <ARTIST>` — two separate values, not one line ending in `Maxi 80`.
+4. Confirm the native half is what produced them:
+   ```bash
+   PID=$(adb -s "$DEV" shell pidof com.stormacq.android.maxi80 | tr -d '\r')
+   adb -s "$DEV" logcat -d | grep -E " $PID " | grep -E "NowPlaying path|metadata received|artwork resolved"
+   ```
+   All three must appear. `NowPlaying path:` is logged by `SharedPlayer`'s composition root, so its
+   presence alone proves the root was built in a service-only process.
+5. Prove no Activity was ever involved, or the test proves nothing:
+   ```bash
+   adb -s "$DEV" logcat -d | grep -E "Start proc .*maxi80"
+   ```
+   Expect `for service {…Maxi80MediaService}`. If it says `for next-top-activity` or a
+   `MainActivity` line appears, the app was opened — force-stop and start over.
+6. Then open the app on the phone. **PASS:** the text stays as it was and does not flicker.
 
-## Test D — the song's generic cover on the card (#80)
+## Test D — the song's cover on the card, app never opened (#80)
 
-1. With a **coverless** song playing (a DJ program or any track the backend has no artwork for),
-   compare the DHU card's artwork with the app carousel's now slot.
-2. **PASS:** both show the **same** generic cover.
-   **FAIL:** the card shows the Maxi 80 station logo while the carousel shows a generic cover.
-3. Confirm media3 could rasterize the drawable — the #41 trap:
+Do **not** compare against the app carousel: on a cold start there is no carousel, and opening the
+app to get one destroys the very condition being tested. Compare against the two known-wrong
+outcomes instead — the station logo, and a blank slot.
+
+Run this while still in the Test A/C process, having never opened the app.
+
+1. With a song the backend **has** artwork for, look at the DHU card and the phone's notification
+   shade (`adb -s "$DEV" shell cmd statusbar expand-notifications`, then screenshot with
+   `adb -s "$DEV" exec-out screencap -p > /tmp/shade.png`).
+   **PASS:** the song's own cover art.
+   **FAIL:** the Maxi 80 station logo (`drawable/media_placeholder` — the service's only artwork
+   source, which is all a process without the native pipeline can publish), or a blank slot.
+2. Screenshot rather than `dumpsys notification` size numbers. `android.largeIcon=Icon(typ=BITMAP
+   size=68x68)` is the system's scaled copy: the logo and a real cover both land at 68x68, so the
+   size is **not** evidence either way.
+3. Confirm the URL the native service resolved, and that it was published:
+   ```bash
+   PID=$(adb -s "$DEV" shell pidof com.stormacq.android.maxi80 | tr -d '\r')
+   adb -s "$DEV" logcat -d | grep -E " $PID " | grep "artwork resolved"
+   ```
+   Expect `url=https://s3…artwork.maxi80.com/…`. `hasImage=false` is **correct** on Android: image
+   decoding is Apple-only (`canImport(UIKit)`), so Android publishes the URL and media3 fetches it.
+   `MediaDataLoader: Invalid album art uri` from **systemui's** pid is the legacy system panel
+   choking on the long presigned URL and does not affect our card — only hits from `$PID` matter.
+4. With a **coverless** song (a DJ program, or any track the backend has no artwork for):
+   **PASS:** one of the generic covers. **FAIL:** the station logo. Confirm media3 could rasterize
+   the drawable — the #41 trap:
    ```bash
    adb -s "$DEV" logcat -d | grep -E "RawResourceDataSource|Failed to load bitmap"
    ```
-   Expected: no hits **from our pid**. (`systemui`'s `ImageLoader` loading `ic_launcher` is the
-   launcher badge and is unrelated.)
-4. With the `anniversary_cover` flag on, confirm an anniversary cover can also appear there.
-5. Startup / no song yet → still the station logo, with no blank-artwork flicker.
+   Expected: no hits from our pid. (`systemui`'s `ImageLoader` loading `ic_launcher` is the launcher
+   badge and is unrelated.)
+5. With the `anniversary_cover` flag on, confirm an anniversary cover can also appear there.
+6. Startup / no song yet → still the station logo, with no blank-artwork flicker.
 
 ## Test E — no phone-path regression
 

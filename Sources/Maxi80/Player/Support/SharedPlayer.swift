@@ -112,4 +112,29 @@ public enum SharedPlayer {
   public static func handleForeground() {
     coordinator.reconcileWithPlayer()
   }
+
+  /// Build the pipeline at PROCESS start, before any UI exists.
+  ///
+  /// Why this exists: on Android the process can start for the media service alone — Android Auto
+  /// connecting and pressing play never creates an Activity. The native Swift half *is* loaded in
+  /// that process (the bridge initializes from `Application.onCreate`), but nothing referenced this
+  /// composition root, whose only other caller is `Maxi80RootView.init()`. So `MetadataParser`,
+  /// `ArtworkService` and the Now Playing publish all sat dormant behind a UI that never appeared,
+  /// and the car card was left to the service's deliberately display-only Kotlin listener: raw
+  /// unsplit "ARTIST - TITLE" text and the station logo for every song, however much real artwork
+  /// existed. Touching `coordinator` here runs that same existing Swift pipeline in the service
+  /// process, so no parsing or artwork logic is duplicated in Kotlin.
+  ///
+  /// `reconcileWithPlayer()` rather than a bare `coordinator` reference: adopting the shared
+  /// ExoPlayer is what ATTACHES the native ICY listener (`syncWithExternalPlayback`), which is the
+  /// actual subscription to song changes. It also promotes `playbackState` when the car already
+  /// started audio, and is a no-op when the player is genuinely idle — so this is safe on a plain
+  /// app launch, where it runs just before `Maxi80RootView` resolves the same singletons.
+  ///
+  /// Deliberately does NOT start playback or load the station: a process started for a *bind*
+  /// (Android Auto browsing, the media-app scanner) must not begin streaming. Artwork resolution
+  /// needs only `APIConfiguration`, which `ConfigurationLoader` reads from the bundle.
+  public static func handleProcessStart() {
+    coordinator.reconcileWithPlayer()
+  }
 }

@@ -187,7 +187,16 @@ import Foundation
       /// app UI opens showing a play button over a live stream — `isPlaying` is a plain flag that
       /// only `androidPlay`/`androidStop` or an attached listener ever set.
       func androidSyncWithExternalPlayback() -> Bool {
-        guard let exoPlayer = SharedAudioPlayer.current else { return isPlaying }
+        // `shared()` (creating), NOT `current` (nil until someone else creates one). On an Android
+        // Auto cold start this runs from `Application.onCreate` — see
+        // `SharedPlayer.handleProcessStart()` — which the system runs BEFORE the service that the
+        // process was started for, so `current` is still nil at that moment and a non-creating read
+        // returned early without ever attaching the listener below. That left the whole native
+        // metadata path (split + artwork) dormant for the life of the process. Creating the player
+        // here instead is free of ordering assumptions: `shared()` is idempotent, so whichever of
+        // this method and the service's `onCreate` runs first builds the one player and the other
+        // adopts it, and both listeners end up attached either way.
+        let exoPlayer = SharedAudioPlayer.shared(context: context)
         if _exoPlayer !== exoPlayer {
           _metadataListener = nil
         }

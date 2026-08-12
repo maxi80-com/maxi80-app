@@ -63,7 +63,21 @@ import SwiftUI
   /* SKIP @bridge */public static let shared = Maxi80AppDelegate()
   private init() {}
 
-  /* SKIP @bridge */public func onInit() {}
+  /// Called at PROCESS start — `Application.onCreate` on Android, `willFinishLaunching` on Apple —
+  /// which on Android includes a process started for the media service alone, with no Activity
+  /// (Android Auto connecting and pressing play). Building the pipeline here is what lets the car
+  /// show properly-split song text and real cover art without the app ever being opened: the work is
+  /// done by the existing native `MetadataParser` / `ArtworkService`, so the service's Kotlin needs
+  /// no parsing or artwork logic of its own. See `SharedPlayer.handleProcessStart()`.
+  ///
+  /// Apple platforms only ever reach this with a UI on the way, where it merely warms the same
+  /// singletons `Maxi80RootView.init()` resolves moments later.
+  /* SKIP @bridge */public func onInit() {
+    Task { @MainActor in
+      SharedPlayer.handleProcessStart()
+    }
+  }
+
   /* SKIP @bridge */public func onLaunch() {}
 
   /// Called from `MainActivity.onResume` (Android). A background→foreground resume destroys and
