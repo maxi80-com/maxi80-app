@@ -87,7 +87,7 @@ KEYSTORE_PROPS := Android/app/keystore.properties
         publish-ios publish-ios-open publish-tvos publish-tvos-open \
         publish-macos publish-android publish-android-open \
         publish-all publish-all-open \
-        promote-ios promote-android promote-all bump release push-release \
+        promote-ios promote-tvos promote-macos promote-android promote-all bump release push-release \
         ship ship-with-metadata release-apk screenshots screenshots-copy-locales
 
 # ------------------------------------------------------------------------------
@@ -622,12 +622,20 @@ promote-ios: ## Promote the uploaded iOS build to the App Store (submit for revi
 	@echo "    NOTE: requires a GM (non-beta) Xcode, or Apple rejects the submission."
 	cd Darwin && fastlane release
 
+promote-tvos: ## Promote the uploaded tvOS build to the App Store (submit for review)
+	@echo "==> Submitting tvOS for App Store REVIEW"
+	cd Darwin && fastlane release_tvos
+
+promote-macos: ## Promote the uploaded macOS build to the App Store (submit for review)
+	@echo "==> Submitting macOS for App Store REVIEW"
+	cd Darwin && fastlane release_mac
+
 promote-android: ## Promote the internal build to Play PRODUCTION (100% rollout)
 	@echo "==> Promoting Play internal build to PRODUCTION (full rollout)"
 	@echo "    Staged rollout instead: cd Android && fastlane promote_production release_status:inProgress rollout:0.1"
 	cd Android && fastlane promote_production
 
-promote-all: promote-ios promote-android ## Promote both platforms to production
+promote-all: promote-ios promote-tvos promote-macos promote-android ## Promote all platforms to production
 
 # ------------------------------------------------------------------------------
 # Misc

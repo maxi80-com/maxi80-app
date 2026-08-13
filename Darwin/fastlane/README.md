@@ -53,6 +53,14 @@ iOS: submit the LATEST uploaded build FOR REVIEW (attach build + metadata + subm
 
 tvOS: push store listing (text + Apple TV screenshots) as a DRAFT — no binary, no review
 
+### release_tvos
+
+```sh
+[bundle exec] fastlane release_tvos
+```
+
+tvOS: submit the uploaded build FOR REVIEW (attach build + metadata + submit)
+
 ### metadata_mac
 
 ```sh
@@ -60,6 +68,14 @@ tvOS: push store listing (text + Apple TV screenshots) as a DRAFT — no binary,
 ```
 
 macOS: push store listing (text + Mac screenshots) as a DRAFT — no binary, no review
+
+### release_mac
+
+```sh
+[bundle exec] fastlane release_mac
+```
+
+macOS: submit the uploaded build FOR REVIEW (attach build + metadata + submit)
 
 ----
 

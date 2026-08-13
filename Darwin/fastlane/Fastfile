@@ -305,6 +305,7 @@ lane :metadata_tvos do |options|
   ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
   upload_to_app_store(
     platform: "appletvos",
+    app_version: ENV["MARKETING_VERSION"],
     # ABSOLUTE — see the note in the `metadata` lane. A relative path resolves
     # against CWD=Darwin/, i.e. the empty Darwin/screenshots/appletv, so deliver
     # loaded 0 tvOS screenshots and silently uploaded none.
@@ -328,6 +329,21 @@ end
 # binary lane, parametrize `assemble` with an `sdk: "appletvos"` build and
 # ensure the xcconfig permits the appletvos platform.
 
+desc "tvOS: submit the uploaded build FOR REVIEW (attach build + metadata + submit)"
+lane :release_tvos do |options|
+  ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
+  upload_to_app_store(
+    platform: "appletvos",
+    app_version: ENV["MARKETING_VERSION"],
+    screenshots_path: File.expand_path("screenshots/appletv", __dir__),
+    api_key_path: "fastlane/apikey.json",
+    app_rating_config_path: "fastlane/metadata/rating.json",
+    skip_binary_upload: true,
+    sync_screenshots: true,
+    release_notes: { default: "Fixes and improvements." }
+  )
+end
+
 # === macOS ================================================================
 
 desc "macOS: push store listing (text + Mac screenshots) as a DRAFT — no binary, no review"
@@ -341,6 +357,7 @@ lane :metadata_mac do |options|
   ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
   upload_to_app_store(
     platform: "osx",
+    app_version: ENV["MARKETING_VERSION"],
     # ABSOLUTE — see the note in the `metadata` lane. A relative path resolves
     # against CWD=Darwin/, i.e. the empty Darwin/screenshots/mac, so deliver
     # loaded 0 Mac screenshots and silently uploaded none.
@@ -360,4 +377,19 @@ end
 # Like tvOS, `assemble` builds sdk: iphoneos only. For a Mac binary, parametrize
 # assemble with an sdk: "macosx" build (the "Maxi80 App" target already supports
 # macosx) and add a release_mac lane. Listing+screenshots work via metadata_mac.
+
+desc "macOS: submit the uploaded build FOR REVIEW (attach build + metadata + submit)"
+lane :release_mac do |options|
+  ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "1"
+  upload_to_app_store(
+    platform: "osx",
+    app_version: ENV["MARKETING_VERSION"],
+    screenshots_path: File.expand_path("screenshots/mac", __dir__),
+    api_key_path: "fastlane/apikey.json",
+    app_rating_config_path: "fastlane/metadata/rating.json",
+    skip_binary_upload: true,
+    sync_screenshots: true,
+    release_notes: { default: "Fixes and improvements." }
+  )
+end
 

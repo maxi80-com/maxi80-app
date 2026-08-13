@@ -1,10 +1,10 @@
-Joyeux 25e anniversaire ! Des pochettes tournantes pour fêter les 25 ans de Maxi 80.
+Joyeux 25e anniversaire ! Des pochettes tournantes pour les 25 ans de Maxi 80.
 
-Découvrez à quelle heure chaque titre a été diffusé dans l'historique.
-Les commandes du lecteur sont regroupées dans une carte teintée élégante.
-Le Cover Flow est plus fluide avec l'inertie de défilement et des animations sans coupure.
-Correction du démarrage à froid d'Android Auto, métadonnées et pochettes se chargent correctement.
+Heure de diffusion de chaque titre dans l'historique.
+Commandes du lecteur dans une carte teintée.
+Cover Flow plus fluide avec inertie et animations sans coupure.
+Correction du démarrage à froid d'Android Auto.
 Affichage bord à bord sur Android 15.
-Améliorations de stabilité et de reconnexion sous le capot.
+Stabilité et reconnexion améliorées.
 
-Merci de votre écoute, et vivement les 25 prochaines années.
+Merci de votre écoute, vivement les 25 prochaines.
