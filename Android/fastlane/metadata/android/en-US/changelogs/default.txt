@@ -1,8 +1,10 @@
-A brand-new Maxi 80, rebuilt from the ground up.
+Happy 25th anniversary! Special rotating covers celebrate 25 years of Maxi 80.
 
-Flip back through everything that just played in a slick Cover Flow carousel.
-Album covers now in crisp high resolution.
-Android Auto is here, so the 80s ride along.
-Faster, smoother, and a fresh new look.
+See when each song aired with the new "Played at" time in your history.
+Player controls grouped into a sleek tinted card.
+Cover Flow feels snappier with restored wheel inertia and smooth animations.
+Android Auto cold-start fix, metadata and artwork load reliably now.
+Edge-to-edge display on Android 15.
+Stability and reconnection improvements under the hood.
 
-Thanks for listening. Now go turn it up.
+Thanks for listening, here's to 25 more.

@@ -88,7 +88,7 @@ KEYSTORE_PROPS := Android/app/keystore.properties
         publish-macos publish-android publish-android-open \
         publish-all publish-all-open \
         promote-ios promote-android promote-all bump release push-release \
-        ship ship-with-metadata release-apk screenshots
+        ship ship-with-metadata release-apk screenshots screenshots-copy-locales
 
 # ------------------------------------------------------------------------------
 # Help / info
@@ -639,9 +639,35 @@ screenshots: ## Capture a store screenshot (wraps fastlane/capture_screenshots.s
 	@if [ -z "$(ARGS)" ]; then \
 	  echo "usage: make screenshots ARGS=\"<ios|tvos|droid> <locale> <order> <name> [form-factor]\""; \
 	  echo "example: make screenshots ARGS=\"ios en-US 1 now-playing\""; \
+	  echo "         make screenshots ARGS=\"ios en-US 1 ipad-now-playing\"  (boot iPad sim)"; \
 	  exit 1; \
 	fi
 	./fastlane/capture_screenshots.sh $(ARGS)
+
+screenshots-copy-locales: ## Copy en-US screenshots to fr-FR and fr-CA (when no locale-specific text is visible)
+	# The app's UI is mostly language-neutral (song metadata, artwork). If you avoid
+	# capturing the "Back to Live" pill, one set of screenshots covers all locales.
+	# This copies en-US to fr-FR and fr-CA for every platform.
+	@set -e; \
+	for dir in Darwin/fastlane/screenshots/ios Darwin/fastlane/screenshots/appletv Darwin/fastlane/screenshots/mac; do \
+	  if [ -d "$$dir/en-US" ]; then \
+	    for locale in fr-FR fr-CA; do \
+	      mkdir -p "$$dir/$$locale"; \
+	      cp -f "$$dir/en-US/"*.png "$$dir/$$locale/" 2>/dev/null || true; \
+	    done; \
+	  fi; \
+	done; \
+	for kind in phoneScreenshots sevenInchScreenshots tenInchScreenshots tvScreenshots; do \
+	  SRC="Android/fastlane/metadata/android/en-US/images/$$kind"; \
+	  if [ -d "$$SRC" ] && ls "$$SRC"/*.png >/dev/null 2>&1; then \
+	    for locale in fr-FR fr-CA; do \
+	      DEST="Android/fastlane/metadata/android/$$locale/images/$$kind"; \
+	      mkdir -p "$$DEST"; \
+	      cp -f "$$SRC/"*.png "$$DEST/"; \
+	    done; \
+	  fi; \
+	done; \
+	echo "==> copied en-US screenshots to fr-FR and fr-CA (all platforms)"
 
 start-android-auto: ## Launch the Android Auto Desktop Head Unit (DHU) against a USB-connected phone
 	# Phone one-time setup (do once, then per session):

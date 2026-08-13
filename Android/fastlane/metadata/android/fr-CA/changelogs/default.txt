@@ -1,8 +1,10 @@
-Un tout nouveau Maxi 80, reconstruit de zéro.
+Joyeux 25e anniversaire ! Des pochettes tournantes pour fêter les 25 ans de Maxi 80.
 
-Revenez sur tout ce qui vient de passer dans un carrousel Cover Flow.
-Des pochettes désormais en haute résolution.
-Android Auto est là, pour emmener les années 80 avec vous.
-Plus rapide, plus fluide, et un tout nouveau look.
+Découvrez à quelle heure chaque titre a été diffusé dans l'historique.
+Les commandes du lecteur sont regroupées dans une carte teintée élégante.
+Le Cover Flow est plus fluide avec l'inertie de défilement et des animations sans coupure.
+Correction du démarrage à froid d'Android Auto, métadonnées et pochettes se chargent correctement.
+Affichage bord à bord sur Android 15.
+Améliorations de stabilité et de reconnexion sous le capot.
 
-Merci de votre écoute. Allez, montez le son.
+Merci de votre écoute, et vivement les 25 prochaines années.

@@ -32,8 +32,11 @@
 #           "tv" targets the Android TV screenshot set in the Play listing.
 #
 # EXAMPLES
-#   # iOS: capture the booted simulator's current screen as en-US shot #1
+#   # iPhone: capture the booted iPhone simulator as en-US shot #1
 #   ./fastlane/capture_screenshots.sh ios en-US 1 now-playing
+#
+#   # iPad: boot an iPad Pro 13-inch, prefix name with "ipad-" to avoid collisions
+#   ./fastlane/capture_screenshots.sh ios en-US 1 ipad-now-playing
 #
 #   # Apple TV: capture the booted tvOS simulator as en-US shot #1
 #   ./fastlane/capture_screenshots.sh tvos en-US 1 now-playing
