@@ -2,7 +2,7 @@
 copyright "#{Time.now.year}"
 
 force(true) # Skip HTML report verification
-automatic_release(true)
+automatic_release(false)
 skip_screenshots(false)
 precheck_include_in_app_purchases(false)
 
