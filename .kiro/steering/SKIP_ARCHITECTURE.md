@@ -194,3 +194,36 @@ hello-world/
 - [skip-keychain Package.swift](https://github.com/skiptools/skip-keychain/blob/main/Package.swift) — same pattern
 - [skipapp-hiya](https://github.com/nicklama/skipapp-hiya) — transpiled → native example
 - [skipapp-ahoy](https://github.com/nicklama/skipapp-ahoy) — native → native example
+
+---
+
+## Android Build Pitfalls (Native Fuse Modules)
+
+Hard-won lessons from debugging Android build failures:
+
+### Always verify with `skip android build`
+
+The macOS `swift build` only compiles the Apple path. It will miss Android-specific errors. Always run `skip android build` before considering a change done.
+
+### Never `import Foundation` alongside `import SwiftUI`
+
+In native fuse modules, `import Foundation` introduces a `CGFloat` ambiguity: both CoreGraphics (via Foundation) and SkipSwiftUI define `CGFloat`. The compiler cannot resolve it. `SwiftUI` already re-exports everything you need from Foundation — use it alone.
+
+```swift
+// BAD — CGFloat ambiguity on Android
+import Foundation
+import SwiftUI
+
+// GOOD
+import SwiftUI
+```
+
+If you need Foundation-only (no SwiftUI), e.g. a pure formatting helper, `import Foundation` alone is fine.
+
+### `Bundle.module.preferredLocalizations` is unavailable on Android
+
+The Android bridge context does not support `preferredLocalizations`. Use `Locale.current` instead when you need locale information for formatting.
+
+### `Date.formatted(date:time:)` doesn't respect locale on Android
+
+SkipFoundation's implementation creates a `DateFormatter` without setting `.locale`, so `java.text.DateFormat` falls back to the JVM default which may not match the app locale. Workaround: use an explicit `DateFormatter` with `formatter.locale = Locale.current` inside `#if os(Android)`.

@@ -272,6 +272,17 @@
           }
         }
       }
+    },
+    "h:mm a": {
+      "comment": "DateFormatter pattern for short time display. Use 'HH:mm' for 24-hour locales, 'h:mm a' for 12-hour locales. Used only on Android where Locale.current is unreliable.",
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HH:mm"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

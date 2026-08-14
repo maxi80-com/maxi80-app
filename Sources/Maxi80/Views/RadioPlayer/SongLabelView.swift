@@ -53,12 +53,13 @@ struct SongLabelView: View {
 
       if inlineAirTime {
         // Baseline-aligned so the smaller time sits on the secondary line's baseline. Bare
-        // parenthesized locale time (no "Played at" prefix) keeps the line short;
-        // `formatted(date:time:)` is the SkipFoundation-safe form and picks 24h vs AM-PM.
+        // parenthesized locale time (no "Played at" prefix) keeps the line short.
+        // `shortTimeString(from:)` handles the Android locale workaround; on iOS it uses
+        // `Date.formatted(date:time:)`.
         HStack(alignment: .firstTextBaseline, spacing: 6) {
           secondaryText
           if let airDate {
-            Text(verbatim: "(\(airDate.formatted(date: .omitted, time: .shortened)))")
+            Text(verbatim: "(\(shortTimeString(from: airDate)))")
               .font(.system(size: airTimeSize, weight: .regular))
               .foregroundStyle(contrast.subtitle.opacity(0.6))
               .lineLimit(1)
@@ -67,15 +68,15 @@ struct SongLabelView: View {
       } else {
         secondaryText
 
-        // "Diffusé à 14:30", so the block reads as history. Locale picks 24h vs AM-PM.
-        // `formatted(date:time:)` and `Bundle.localizedString` (not the `.hour().minute()` builder /
-        // `String(localized:)`) because those are the forms SkipFoundation provides. Dimmed from
-        // `contrast.subtitle` so it tracks the background like the lines above it.
+        // "Diffusé à 14:30", so the block reads as history.
+        // `shortTimeString(from:)` handles the Android locale workaround; on iOS it uses
+        // `Date.formatted(date:time:)`. Dimmed from `contrast.subtitle` so it tracks the
+        // background like the lines above it.
         if let airDate {
           Text(
             String(
               format: Bundle.module.localizedString(forKey: "Played at %@", value: nil, table: nil),
-              airDate.formatted(date: .omitted, time: .shortened)
+              shortTimeString(from: airDate)
             )
           )
           .font(.system(size: airTimeSize, weight: .regular))
@@ -92,5 +93,31 @@ struct SongLabelView: View {
       .font(.system(size: secondarySize, weight: .semibold))
       .foregroundStyle(contrast.subtitle)
       .lineLimit(maxLines)
+  }
+
+  // MARK: - Time formatting
+
+  /// Formats a date as a short locale-aware time string (e.g. "14:30" in French, "2:30 PM" in English).
+  ///
+  /// On iOS, `Date.formatted(date:time:)` correctly picks up the device locale. On Android (native
+  /// fuse mode), both `Date.formatted` and `Locale.current` are broken — they don't reflect the
+  /// Android app locale. Work around this by using an explicit `DateFormatter` with a localized
+  /// date-format pattern from the string catalog (which uses the Android resource system that works).
+  /// See: https://github.com/skiptools/skip-foundation/issues/128
+  #if os(Android)
+  private static let androidTimeFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    // The pattern is looked up once from the string catalog: "HH:mm" for French, "h:mm a" for English.
+    formatter.dateFormat = Bundle.module.localizedString(forKey: "h:mm a", value: nil, table: nil)
+    return formatter
+  }()
+  #endif
+
+  private func shortTimeString(from date: Date) -> String {
+    #if os(Android)
+    return Self.androidTimeFormatter.string(from: date)
+    #else
+    return date.formatted(date: .omitted, time: .shortened)
+    #endif
   }
 }
