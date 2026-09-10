@@ -87,6 +87,7 @@ KEYSTORE_PROPS := Android/app/keystore.properties
         publish-ios publish-ios-open publish-tvos publish-tvos-open \
         publish-macos publish-android publish-android-open \
         publish-all publish-all-open \
+        publish-website \
         promote-ios promote-tvos promote-macos promote-android promote-all bump release push-release \
         ship ship-with-metadata release-apk screenshots screenshots-copy-locales
 
@@ -164,6 +165,9 @@ help: ## Show this help (default target)
 	@echo ""
 	@echo "  Typical:  make clean && make ship        (then make promote-all after testing)"
 	@echo "            use 'make ship-with-metadata' when the store listing changed"
+	@echo ""
+	@echo "  Website"
+	@echo "    publish-website   Sync website/ to s3://stormacq.net/maxi80/ (stormacq.net/maxi80)"
 	@echo ""
 	@echo "  Misc"
 	@echo "    screenshots       Helper wrapping fastlane/capture_screenshots.sh"
@@ -327,7 +331,20 @@ build-ios: check-config ## Build the Swift/iOS side
 	# Skip transpiler (skipstone) only runs for the macOS destination, so a plain
 	# `swift build` here doubles as the "does the native Swift compile" check for
 	# the iOS side without needing a full Xcode archive (that's `package-ios`).
-	swift build
+	#
+	# --scratch-path IS REQUIRED, not tidiness. Without it this build writes its
+	# macOS-destination skipstone output into the DEFAULT .build/plugins/outputs —
+	# the same tree `skip android build` uses. The Android build then reuses those
+	# macOS-destination outputs instead of transpiling for Android, the module jars
+	# come out containing only R.class, and gradle fails at :app:compileDebugKotlin
+	# with dozens of misleading "Unresolved reference 'SkipLogger' / 'Maxi80RootView'
+	# / 'ComposeContext'" errors. Symptom looks like a Kotlin or cache problem; the
+	# actual cause is two destinations sharing one scratch directory.
+	#
+	# Verified: `build-ios` then `build-android` FAILS on a shared scratch path and
+	# SUCCEEDS with this flag. `test` isolates itself the same way, for the same
+	# reason. Keep the two paths distinct (.build/host-build vs .build/host-test).
+	swift build --scratch-path .build/host-build
 
 build-android: check-config ## Skip transpile + gradle build (both halves)
 	# Two halves, run explicitly (the user wants BOTH, not just the transpile):
@@ -336,6 +353,13 @@ build-android: check-config ## Skip transpile + gradle build (both halves)
 	#   2. gradle assembleDebug — compiles the generated Kotlin/Android project.
 	#      (Debug avoids requiring a release signing key for a routine dev build;
 	#       use `package-android` for the signed release AAB.)
+	# Skip cross-compiles with a swift.org toolchain matching the installed Android
+	# SDK (`skip android sdk list`), and `xcode-select -p` must ship that SAME Swift
+	# version — currently 6.3.3 / Xcode 26.6. Selecting a NEWER Xcode breaks the
+	# build with only "error: build planning stopped due to build-tool plugin
+	# failures" to go on (real cause under -v: unknown argument
+	# '-target-arch-variant'). Do not move to Xcode 27 / Swift 6.4 until
+	# https://github.com/skiptools/skip/issues/714 ships.
 	skip android build
 	# --no-daemon: the build's JVM exits when it finishes rather than leaving a
 	# long-lived daemon lingering between builds. This Homebrew `gradle` and the
@@ -344,7 +368,13 @@ build-android: check-config ## Skip transpile + gradle build (both halves)
 	# composite, and a version mismatch corrupts its Kotlin caches (see android-studio).
 	cd Android && gradle --no-daemon --warning-mode none -x lint assembleDebug
 
-build-all: build-ios build-android ## Build both platforms
+# Sequential $(MAKE) calls, not prerequisites, so the order holds under `make -j`.
+# These two builds must not run concurrently: they share Android/ gradle state and
+# the skipstone composite, and build-ios only stays out of the Android build's way
+# because of its --scratch-path (see build-ios).
+build-all: ## Build both platforms
+	@$(MAKE) --no-print-directory build-ios
+	@$(MAKE) --no-print-directory build-android
 
 # ------------------------------------------------------------------------------
 # Package (signed artifacts, no upload)
@@ -636,6 +666,23 @@ promote-android: ## Promote the internal build to Play PRODUCTION (100% rollout)
 	cd Android && fastlane promote_production
 
 promote-all: promote-ios promote-tvos promote-macos promote-android ## Promote all platforms to production
+
+# ------------------------------------------------------------------------------
+# Website (stormacq.net/maxi80)
+# ------------------------------------------------------------------------------
+publish-website: ## Sync website/ to S3 (stormacq.net/maxi80, --profile default)
+	# Deploys the static promo site to s3://stormacq.net/maxi80/. The bucket is
+	# fronted by CloudFront on the default AWS account; DNS for stormacq.net/maxi80
+	# is handled externally. GitHub Pages (app.maxi80.com) remains the primary
+	# deploy via the pages.yml workflow; this is the secondary mirror.
+	# --delete removes files from S3 that no longer exist locally.
+	# Excludes CNAME (GitHub Pages artifact) and CLAUDE.md (internal docs).
+	aws s3 sync website/ s3://stormacq.net/maxi80/ \
+		--profile default \
+		--delete \
+		--exclude "CNAME" \
+		--exclude "CLAUDE.md"
+	@echo "==> website published to s3://stormacq.net/maxi80/"
 
 # ------------------------------------------------------------------------------
 # Misc
