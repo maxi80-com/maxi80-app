@@ -79,6 +79,35 @@ APK_DESKTOP_COPY := $(HOME)/Desktop/maxi80-$(MARKETING_VERSION)-$(BUILD_NUMBER).
 # Signing config for the extracted APK (same UPLOAD key the AAB is signed with).
 KEYSTORE_PROPS := Android/app/keystore.properties
 
+# --- Toolchain workaround: Swift 6.4 static-library duplication ---------------
+# Swift 6.4's SwiftPM defaults to `--build-system swiftbuild`, where the
+# "linked as a static library by X and Y … duplication of library code"
+# diagnostic is a HARD ERROR instead of a warning. Any Skip Fuse graph trips it:
+# skip-fuse-ui / skip-fuse / skip-bridge / skip-android-bridge hardcode
+# `type: .dynamic` products, and each of those statically embeds its own copy of
+# SkipLib / SkipUnit / SkipFoundation / SkipModel / SkipUI (which declare no
+# explicit type, so SwiftPM links them statically on Apple triples). Without
+# this, a bare `swift build` fails before compiling a single file.
+#
+# SKIP_DYNAMIC_LIBRARIES=1 engages the `forceDylib` gate already present in
+# those five manifests, promoting them to dynamic so there is ONE shared copy of
+# each. Verified on a stock `skip init --native-app` project: fails without,
+# builds with. Skip's own commands (`skip export`) set the mode internally and
+# do not need it; direct `swift build` / `swift test` / Xcode do.
+#
+# TRADEOFF: ~5 extra dylibs to embed, sign and load at launch, and the linker
+# can no longer dead-strip those libraries per consumer (measured on the stock
+# template, debug: 6 -> 11 dylibs, 13,456 KB -> 13,796 KB, +2.5%). Flipping it
+# only re-links an existing scratch dir; it does not force a recompile.
+#
+# `export` so every recipe inherits it — swift build/test, `skip android build`,
+# and the fastlane→xcodebuild lanes. NOTE: opening Darwin/Maxi80.xcodeproj in
+# Xcode.app directly does NOT inherit this; set it in the scheme's environment
+# there, or build through make.
+#
+# Remove once https://github.com/skiptools/skip/issues/735 is fixed.
+export SKIP_DYNAMIC_LIBRARIES := 1
+
 .PHONY: help version doctor verify check-config check-clean-tree test \
         clean kill-daemons android-studio build-ios build-android build-all \
         package-ios package-tvos package-macos package-android package-all \

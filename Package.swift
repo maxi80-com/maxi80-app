@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.4
 // This is a Skip (https://skip.tools) package for the Maxi80 radio player.
 import PackageDescription
 
@@ -41,10 +41,10 @@ let package = Package(
     .library(name: "Maxi80Services", type: .dynamic, targets: ["Maxi80Services"]),
   ],
   dependencies: [
-    .package(url: "https://source.skip.tools/skip.git", from: "1.0.0"),
-    .package(url: "https://source.skip.tools/skip-fuse-ui.git", from: "1.0.0"),
-    .package(url: "https://source.skip.tools/skip-fuse.git", from: "1.0.0"),
-    .package(url: "https://source.skip.tools/skip-foundation.git", from: "1.0.0"),
+    .package(url: "https://source.skip.tools/skip.git", from: "1.9.16"),
+    .package(url: "https://source.skip.tools/skip-fuse-ui.git", from: "1.19.1"),
+    .package(url: "https://source.skip.tools/skip-fuse.git", from: "1.0.3"),
+    .package(url: "https://source.skip.tools/skip-foundation.git", from: "1.4.7"),
   ] + swiftCheckDependencies,
   targets: [
     .target(
