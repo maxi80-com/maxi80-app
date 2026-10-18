@@ -384,11 +384,9 @@ build-android: check-config ## Skip transpile + gradle build (both halves)
 	#       use `package-android` for the signed release AAB.)
 	# Skip cross-compiles with a swift.org toolchain matching the installed Android
 	# SDK (`skip android sdk list`), and `xcode-select -p` must ship that SAME Swift
-	# version — currently 6.3.3 / Xcode 26.6. Selecting a NEWER Xcode breaks the
-	# build with only "error: build planning stopped due to build-tool plugin
-	# failures" to go on (real cause under -v: unknown argument
-	# '-target-arch-variant'). Do not move to Xcode 27 / Swift 6.4 until
-	# https://github.com/skiptools/skip/issues/714 ships.
+	# version — currently Swift 6.4 / Xcode 27. A mismatch breaks the build with
+	# only "error: build planning stopped due to build-tool plugin failures" to go
+	# on (real cause under -v, e.g. unknown argument '-target-arch-variant').
 	skip android build
 	# --no-daemon: the build's JVM exits when it finishes rather than leaving a
 	# long-lived daemon lingering between builds. This Homebrew `gradle` and the
