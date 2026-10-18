@@ -114,7 +114,7 @@ export SKIP_DYNAMIC_LIBRARIES := 1
         publish-metadata-ios publish-metadata-tvos publish-metadata-mac \
         publish-metadata-android publish-metadata-all \
         publish-ios publish-ios-open publish-tvos publish-tvos-open \
-        publish-macos publish-android publish-android-open \
+        publish-macos publish-macos-open publish-android publish-android-open \
         publish-all publish-all-open \
         publish-website \
         promote-ios promote-tvos promote-macos promote-android promote-all bump release push-release \
@@ -176,16 +176,15 @@ help: ## Show this help (default target)
 	@echo "    publish-metadata-android              Play — TRIGGERS Play review"
 	@echo "    publish-metadata-all                  all of the above"
 	@echo ""
-	@echo "  Publish binaries — INTERNAL (private/fast; macOS→App Store, no TestFlight)"
-	@echo "    publish-ios / publish-tvos   TestFlight internal"
-	@echo "    publish-macos                App Store Connect (pkg)"
+	@echo "  Publish binaries — INTERNAL (private/fast)"
+	@echo "    publish-ios / publish-tvos / publish-macos   TestFlight internal"
 	@echo "    publish-android              Play internal (draft)"
 	@echo "    publish-all                  all internal binaries (NO metadata)"
 	@echo ""
 	@echo "  Publish binaries — OPEN (public, store review)"
-	@echo "    publish-ios-open / publish-tvos-open   TestFlight 'Public Beta'"
+	@echo "    publish-ios-open / publish-tvos-open / publish-macos-open   TestFlight 'Public Beta'"
 	@echo "    publish-android-open                   Play open (beta) track"
-	@echo "    publish-all-open                       all open binaries (NO metadata; macOS→App Store)"
+	@echo "    publish-all-open                       all open binaries (NO metadata)"
 	@echo ""
 	@echo "  Promote to production (opt-in, AFTER testing the staged build)"
 	@echo "    promote-ios      Submit iOS build for App Store review (needs GM Xcode)"
@@ -556,7 +555,7 @@ push-release: ## Push the release commit + tag to origin, then create the GitHub
 		echo "ERROR: tag $$TAG does not exist locally — run 'make release' first." >&2; exit 1; \
 	fi; \
 	echo "==> Pushing branch + tag $$TAG to origin"; \
-	git push; \
+	git push -u origin HEAD; \
 	git push origin "$$TAG"; \
 	echo "==> Pushed $$TAG."; \
 	if ! command -v gh >/dev/null 2>&1; then \
@@ -642,11 +641,13 @@ publish-tvos-open: ## tvOS → TestFlight OPEN/external "Public Beta" (public, B
 	@ls $(TVOS_DIR)/*.ipa >/dev/null 2>&1 || { echo "no tvOS IPA in $(TVOS_DIR) — run 'make package-tvos' (or release) first"; exit 1; }
 	cd Darwin && fastlane upload platform:tvos open:true
 
-publish-macos: ## macOS → App Store Connect (pkg; no TestFlight — submit via promote-ios)
-	# macOS pkg isn't TestFlight-eligible here, so it uploads straight to App Store
-	# Connect. There's no -open variant (no macOS TestFlight); review it in the Console.
+publish-macos: ## macOS → TestFlight internal (private, no review)
 	@ls $(MACOS_DIR)/*.pkg >/dev/null 2>&1 || { echo "no macOS pkg in $(MACOS_DIR) — run 'make package-macos' (or release) first"; exit 1; }
 	cd Darwin && fastlane upload platform:macos
+
+publish-macos-open: ## macOS → TestFlight OPEN/external "Public Beta" (public, Beta App Review)
+	@ls $(MACOS_DIR)/*.pkg >/dev/null 2>&1 || { echo "no macOS pkg in $(MACOS_DIR) — run 'make package-macos' (or release) first"; exit 1; }
+	cd Darwin && fastlane upload platform:macos open:true
 
 publish-android: ## Android → Play internal track (private, draft; binary only, no review)
 	# Binary only. The `upload` lane pins skip_upload_metadata/images/screenshots — see
@@ -666,10 +667,9 @@ publish-android-open: ## Android → Play OPEN (beta) track (public, Play review
 # often than the build. The common flow is: make clean && make release && make publish-all.
 # When the listing text/screenshots DID change, run `make publish-metadata-all` too.
 publish-all: publish-ios publish-tvos publish-macos publish-android ## Binaries → private test tracks (no metadata)
-# publish-all-open: OPEN tiers where they exist (iOS/tvOS TestFlight external,
-# Play beta). macOS has no TestFlight tier — it uploads to App Store via publish-macos.
+# publish-all-open: OPEN tiers (TestFlight external "Public Beta", Play beta).
 # Binaries only, same as publish-all — pair with publish-metadata-all if the listing changed.
-publish-all-open: publish-ios-open publish-tvos-open publish-macos publish-android-open ## Binaries → OPEN/public test tracks (no metadata; +macOS→App Store)
+publish-all-open: publish-ios-open publish-tvos-open publish-macos-open publish-android-open ## Binaries → OPEN/public test tracks (no metadata)
 
 # --- PROMOTE TO PRODUCTION (opt-in, after you've tested the staged build) ------
 # Run these only after verifying the build on TestFlight / Play internal.

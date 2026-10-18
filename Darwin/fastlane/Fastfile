@@ -74,30 +74,16 @@ lane :assemble do |options|
     #     Distribution cert, inside-out (frameworks/bundles first, main app last),
     #     so the app's outer signature seals over correct inner signatures.
     #
-    #   - We sign the nested code CLEAN (no entitlements) and embed NO provisioning
-    #     profile. This is NOT because of Skip's executableless resource bundles (an
-    #     old, WRONG theory — disproved by real altool trials, see below); it's the
-    #     only combination that validates for THIS app's legacy App ID.
+    #   - Nested code is signed CLEAN (no entitlements).
     #
-    #   - Why no profile: macOS App Store validation hard-requires the signature's
-    #     `application-identifier` to (a) match the embedded profile AND (b) start
-    #     with the Team ID 56U756R2L2 (error 90286). But App ID
-    #     com.stormacq.sebastien.iphone.maxi80 (Apple ID 335551519, ~2009) has an
-    #     IMMUTABLE legacy seed prefix JPLCX562X7 (!= Team ID; confirmed via the ASC
-    #     API). Every profile Apple issues for this bundle ID carries JPLCX562X7.…,
-    #     so embedding it + sealing with JPLCX562X7.… → 90286 + a 91130 cascade over
-    #     every nested component (INCLUDING the SkipFuse/SwiftJNI frameworks that DO
-    #     have Mach-O executables — which is what kills the "executableless bundle"
-    #     theory). Sealing with 56U756R2L2.… instead → 90288 (signature != profile).
-    #     iOS/tvOS accept the legacy prefix, which is why iOS TestFlight works.
+    #   - Main app: embed the App Store profile (TestFlight requires it, else
+    #     ITMS-90889) and seal with Entitlements-macOS.plist plus the profile's
+    #     application-identifier + team-identifier. macOS validation requires the
+    #     signature's app-id to match the profile (90288) AND start with the Team ID
+    #     (90286). The App ID's legacy seed prefix JPLCX562X7 failed the latter until
+    #     Apple Developer Support migrated it to 56U756R2L2 (Oct 2026), which is why
+    #     macOS shipped profile-less, without TestFlight, before 5.3.0.
     #
-    #   - Net: WITHOUT the profile the pkg validates with 0 errors and uploads
-    #     straight to the Mac App Store. The only cost is macOS TestFlight (warning
-    #     90889 "main bundle missing provisioning profile") — unavailable for this
-    #     app until the App ID's seed prefix is migrated to the Team ID (Apple Dev
-    #     Support) or a new Team-ID-prefixed bundle ID is used. See docs/publish.md.
-    #
-    #   - Main app: sandbox entitlements only (Entitlements-macOS.plist), no app-id.
     #   - productbuild the installer .pkg with the installer cert.
     app_cert     = "Apple Distribution: Sebastien Stormacq (56U756R2L2)"
     inst_cert    = "3rd Party Mac Developer Installer: Sebastien Stormacq (56U756R2L2)"
@@ -123,9 +109,20 @@ lane :assemble do |options|
     Dir["#{app}/Contents/Resources/*.bundle"].each do |b|
       sh("codesign --force --timestamp=none --sign '#{app_cert}' '#{b}'")
     end
-    # 3. seal the main app (sandbox entitlements only, NO embedded profile)
+    # 3. embed the profile, then seal the main app with its app-id + team-id
+    profile = lane_context[SharedValues::SIGH_PROFILE_PATH]
+    UI.user_error!("sigh returned no macOS profile") unless profile && File.exist?(profile)
+    FileUtils.cp(profile, "#{app}/Contents/embedded.provisionprofile")
+    profile_plist = File.join(Dir.tmpdir, "maxi80-macos-profile.plist")
+    signing_entitlements = File.join(Dir.tmpdir, "maxi80-macos-entitlements.plist")
+    sh("security cms -D -i '#{profile}' > '#{profile_plist}'")
+    app_id  = sh("plutil -extract 'Entitlements.com\\.apple\\.application-identifier' raw '#{profile_plist}'").strip
+    team_id = sh("plutil -extract 'Entitlements.com\\.apple\\.developer\\.team-identifier' raw '#{profile_plist}'").strip
+    FileUtils.cp(entitlements, signing_entitlements)
+    sh("plutil -replace 'com\\.apple\\.application-identifier' -string '#{app_id}' '#{signing_entitlements}'")
+    sh("plutil -replace 'com\\.apple\\.developer\\.team-identifier' -string '#{team_id}' '#{signing_entitlements}'")
     sh("codesign --force --timestamp=none --options runtime " \
-       "--entitlements '#{entitlements}' --sign '#{app_cert}' '#{app}'")
+       "--entitlements '#{signing_entitlements}' --sign '#{app_cert}' '#{app}'")
     # 4. productbuild the installer pkg
     FileUtils.mkdir_p(out_dir)
     pkg = File.join(out_dir, "Maxi80.pkg")
@@ -225,24 +222,12 @@ lane :upload do |options|
   artifact = Dir["#{dir}/*.#{ext}"].max_by { |f| File.mtime(f) }
   UI.user_error!("No #{ext.upcase} in #{dir} — run `make package-#{platform}` first") unless artifact
 
+  args = { :api_key_path => "fastlane/apikey.json" }
   if platform == "macos"
-    # macOS pkg is NOT TestFlight-eligible here (the app's legacy App-ID seed prefix
-    # JPLCX562X7 != Team ID 56U756R2L2, and macOS validation requires the Team-ID
-    # prefix — embedding the profile triggers 90286 + a 91130 cascade; see `assemble`).
-    # So it uploads straight to App Store Connect via deliver; submit for review in
-    # the Console / promote-ios.
-    upload_to_app_store(
-      platform: "osx", pkg: artifact, api_key_path: "fastlane/apikey.json",
-      skip_screenshots: true, skip_metadata: true,
-      submit_for_review: false, run_precheck_before_submit: false
-    )
-    next
+    args.merge!(pkg: artifact, app_platform: "osx")
+  else
+    args[:ipa] = artifact
   end
-
-  args = {
-    :api_key_path => "fastlane/apikey.json",
-    :ipa => artifact,
-  }
   if is_open
     # OPEN/EXTERNAL: distribute to the external group. Must wait for processing
     # (external distribution can't happen until Apple finishes processing) and

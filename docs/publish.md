@@ -126,30 +126,19 @@ make promote-android     # promote the Play internal build to production (100%)
     export signs the nested frameworks (SkipFuse, SwiftJNI, SkipAndroidBridge, …)
     with an *Apple Development* cert (→ App Store errors 90284/91130). It re-signs
     every `*.framework` and Skip SPM `*.bundle` with the **Distribution** cert
-    (clean, no entitlements), seals the main app with sandbox entitlements, and
-    `productbuild`s the `.pkg`. Result: **`altool --validate-app` passes with 0
-    errors.**
-  - **No macOS TestFlight — caused by a legacy App-ID prefix, NOT by Skip.**
-    TestFlight needs an embedded provisioning profile. macOS App Store validation
-    hard-requires the signature's `application-identifier` to (a) match the
-    profile's and (b) start with the **Team ID** (`56U756R2L2`) — error **90286**
-    says so verbatim. But this app's App ID `com.stormacq.sebastien.iphone.maxi80`
-    (Apple ID 335551519, registered ~2009) has an immutable legacy **seed prefix
-    `JPLCX562X7`** (≠ Team ID; confirmed via the App Store Connect API). Every
-    profile Apple issues for this bundle ID therefore carries `JPLCX562X7.…`, so:
-    embed it and seal with `JPLCX562X7.…` → 90286 + a cascade of **91130** across
-    every nested component (including the SkipFuse/SwiftJNI frameworks that *have*
-    executables — which is why the old "executableless bundles" explanation was
-    wrong); seal with `56U756R2L2.…` instead → **90288** (signature ≠ profile).
-    iOS/tvOS accept the legacy prefix, which is why iOS TestFlight works. The seed
-    prefix on an existing App ID cannot be changed — only an Apple Developer
-    Support migration, or a new Team-ID-prefixed bundle ID (= new app record),
-    would unblock macOS TestFlight; neither is worth it just for beta. Shipping
-    *without* the profile validates cleanly for the App Store; the only cost is the
-    non-blocking `90889` "missing provisioning profile" warning (the ITMS-90889
-    email Apple sends). `publish-macos` therefore uploads the pkg straight to
-    **App Store Connect**; review it in the Console (or via `make promote-ios`).
-    There is no `publish-macos-open`.
+    (clean, no entitlements), embeds the Mac App Store profile, seals the main app with sandbox entitlements
+    plus the profile's `application-identifier`/`team-identifier`, and
+    `productbuild`s the `.pkg`. It ships through **TestFlight** like iOS/tvOS
+    (`publish-macos` / `publish-macos-open`).
+  - **App ID prefix history.** This App ID (Apple ID 335551519, registered ~2009)
+    had a legacy seed prefix `JPLCX562X7` ≠ Team ID `56U756R2L2`. macOS validation
+    requires the signature's app-id to match the profile (**90288**) *and* start
+    with the Team ID (**90286**), so until Apple Developer Support migrated the
+    prefix (Oct 2026, see `apple-support-macos-testflight.md`) the macOS pkg
+    shipped without a profile and without TestFlight (ITMS-90889). The first
+    build after the migration (5.3.0) triggers a one-time **ITMS-90076** "potential
+    loss of keychain access" warning; harmless, the app stores nothing keyed to
+    the prefix (no keychain, iCloud KVS, app groups or associated domains).
 - **Secrets** (`secrets/`, `*/apikey.json`, `*.p8`, `keystore.properties`,
   `*.mobileprovision`, `*.provisionprofile`) are git-ignored — never commit them.
 - Build-number scheme `yyyyMMddNN`: must exceed the last published Play

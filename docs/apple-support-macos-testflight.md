@@ -1,6 +1,6 @@
 # Apple Developer Support request — macOS TestFlight blocked by legacy App-ID prefix
 
-**Status:** Posted.
+**Status:** Resolved (Oct 2026) — prefix migrated to `56U756R2L2` for iOS, tvOS and macOS; macOS now embeds its profile and ships via TestFlight.
 **Case ID:** 102945986741
 
 **Where to submit:** Apple Developer → Contact Us → *App ID & Provisioning
