@@ -49,8 +49,7 @@ jobs:
   # ---------------------------------------------------------------------------
   apple:
     name: Apple build + test (unsigned)
-    # macos-26 ships Xcode 26, which this project assumes (Xcode 26+).
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -120,7 +119,7 @@ jobs:
   # ---------------------------------------------------------------------------
   android-debug:
     name: Android debug (transpile + gradle)
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -177,7 +176,7 @@ jobs:
   # ---------------------------------------------------------------------------
   android-release:
     name: Android release (R8) + verify bridged classes survive
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
